@@ -43,6 +43,9 @@
 #define LICENSE_PATH "/root/licence.dat"
 #define RTSP_PORT 8554
 #define CAM_FRAME_SIZE (CAM_STRIDE * CAM_H * 3 / 2)
+#define MAIN_ROTATE_SECONDS 5
+#define TILE_FIRST_INDEX 4
+#define TILE_ROTATE_COUNT 16
 
 typedef struct {
     const char *name;
@@ -586,6 +589,78 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
     draw_text(dst, stride, x + w - 68, y + 12, tile_status_text(g_tiles[idx].status), 1, sr, sg, sb);
 }
 
+static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int h,
+                              int idx, int frame, const uint8_t *cam, const uint8_t *osd_live) {
+    loop_asset_t *loop = find_loop_asset(g_tiles[idx].name);
+    fill_rect_nv12(dst, stride, x, y, w, h, 7, 13, 24);
+
+    if (strcmp(g_tiles[idx].name, "OSD") == 0 && osd_live) {
+        draw_camera_tile(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                         osd_live, CAM_W, CAM_H, CAM_STRIDE);
+        return;
+    }
+
+    if (strcmp(g_tiles[idx].name, "VI") == 0 && cam) {
+        draw_camera_tile(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                         cam, CAM_W, CAM_H, CAM_STRIDE);
+        return;
+    }
+
+    if (loop && loop->loaded_count > 0) {
+        const image_asset_t *img = &loop->images[(frame / FPS) % loop->loaded_count];
+        draw_rgb_image_nv12(dst, stride, x + 12, y + 12, w - 24, h - 24, img);
+        return;
+    }
+
+    uint8_t sr, sg, sb;
+    tile_status_color(g_tiles[idx].status, &sr, &sg, &sb);
+    fill_rect_nv12(dst, stride, x + 60, y + 70, w - 120, 150, 10, 22, 34);
+    stroke_rect_nv12(dst, stride, x + 60, y + 70, w - 120, 150, 5, sr, sg, sb);
+    draw_text(dst, stride, x + 92, y + 114, g_tiles[idx].name, strlen(g_tiles[idx].name) > 11 ? 3 : 4, 190, 255, 230);
+    draw_text(dst, stride, x + 92, y + 198,
+              g_tiles[idx].status == TILE_PROBED ? "INIT OK  NO LIVE OUTPUT" : "SYNTHETIC PLACEHOLDER",
+              2, 170, 210, 240);
+
+    for (int i = 0; i < 6; ++i) {
+        int bx = x + 90 + i * 140;
+        int bh = 42 + ((frame / 4 + i * 17 + idx * 9) % 140);
+        fill_rect_nv12(dst, stride, bx, y + h - 90 - bh, 62, bh, sr / 2, sg / 2, sb / 2);
+    }
+}
+
+static void draw_main_showcase(uint8_t *canvas, int stride, int frame,
+                               int rotate_main, const uint8_t *cam, const uint8_t *osd_live) {
+    const int x = 28;
+    const int y = 116;
+    const int w = 1024;
+    const int h = 612;
+    int idx = -1;
+
+    if (rotate_main) {
+        idx = TILE_FIRST_INDEX + (frame / (FPS * MAIN_ROTATE_SECONDS)) % TILE_ROTATE_COUNT;
+    }
+
+    fill_rect_nv12(canvas, stride, x, y, w, h, 7, 13, 24);
+    if (idx >= 0) {
+        uint8_t sr, sg, sb;
+        tile_status_color(g_tiles[idx].status, &sr, &sg, &sb);
+        draw_tile_content(canvas, stride, x + 14, y + 14, w - 28, h - 70,
+                          idx, frame, cam, osd_live);
+        fill_rect_nv12(canvas, stride, x + 14, y + h - 50, w - 28, 34, 0, 0, 0);
+        draw_text(canvas, stride, x + 32, y + h - 42, "MAIN ROTATE", 2, 190, 230, 255);
+        draw_text(canvas, stride, x + 268, y + h - 42, g_tiles[idx].name,
+                  strlen(g_tiles[idx].name) > 11 ? 1 : 2, 170, 255, 220);
+        draw_text(canvas, stride, x + 786, y + h - 42, tile_status_text(g_tiles[idx].status), 2, sr, sg, sb);
+    } else if (cam) {
+        draw_camera_tile(canvas, stride, 42, 130, 996, 560, cam, CAM_W, CAM_H, CAM_STRIDE);
+        draw_text(canvas, stride, 52, 704, "LIVE VISIBLE CAMERA  VI > VPSS > WALL", 2, 190, 255, 230);
+    } else {
+        draw_text(canvas, stride, 294, 336, "CAMERA OFFLINE", 4, 255, 180, 80);
+        draw_text(canvas, stride, 318, 406, CAMERA_DEVICE, 2, 190, 230, 255);
+    }
+    stroke_rect_nv12(canvas, stride, x, y, w, h, 4, 0, 220, 180);
+}
+
 static int map_buffer(MEDIA_BUFFER buf, void **addr, size_t *size, int prot) {
     int fd = -1;
     if (MEDIA_POOL_GetFd(buf, &fd, size) != 0 || fd < 0 || *size == 0) return -1;
@@ -1034,22 +1109,14 @@ static void draw_health_line(uint8_t *canvas, int stride, int y, const char *lef
     draw_text(canvas, stride, 130, y, left, 2, 190, 230, 255);
 }
 
-static void draw_dashboard(uint8_t *canvas, int stride, int frame,
+static void draw_dashboard(uint8_t *canvas, int stride, int frame, int rotate_main,
                            const uint8_t *cam, const uint8_t *osd_live) {
     fill_rect_nv12(canvas, stride, 0, 0, SCREEN_W, SCREEN_H, 4, 9, 16);
     fill_rect_nv12(canvas, stride, 0, 0, SCREEN_W, 90, 10, 18, 34);
     draw_text(canvas, stride, 28, 24, "RKTOHI VISUAL ENGINE", 4, 160, 255, 220);
     draw_text(canvas, stride, 760, 26, "1080X1920", 2, 90, 180, 255);
 
-    fill_rect_nv12(canvas, stride, 28, 116, 1024, 612, 7, 13, 24);
-    if (cam) {
-        draw_camera_tile(canvas, stride, 42, 130, 996, 560, cam, CAM_W, CAM_H, CAM_STRIDE);
-    } else {
-        draw_text(canvas, stride, 294, 336, "CAMERA OFFLINE", 4, 255, 180, 80);
-        draw_text(canvas, stride, 318, 406, CAMERA_DEVICE, 2, 190, 230, 255);
-    }
-    stroke_rect_nv12(canvas, stride, 28, 116, 1024, 612, 4, 0, 220, 180);
-    draw_text(canvas, stride, 52, 704, "LIVE VISIBLE CAMERA  VI > VPSS > WALL", 2, 190, 255, 230);
+    draw_main_showcase(canvas, stride, frame, rotate_main, cam, osd_live);
 
     int cols = 4;
     int tile_w = 250;
@@ -1057,11 +1124,10 @@ static void draw_dashboard(uint8_t *canvas, int stride, int frame,
     int start_x = 28;
     int start_y = 760;
     int gap = 14;
-    const int first_tile = 4;
     for (int i = 0; i < 16; ++i) {
         int cx = start_x + (i % cols) * (tile_w + gap);
         int cy = start_y + (i / cols) * (tile_h + gap);
-        int tile_idx = first_tile + i;
+        int tile_idx = TILE_FIRST_INDEX + i;
         draw_effect_tile(canvas, stride, cx, cy, tile_w, tile_h, tile_idx, frame,
                          g_tiles[tile_idx].active, osd_live);
     }
@@ -1115,11 +1181,13 @@ int main(int argc, char **argv) {
     int asset_check = 0;
     int self_test = 0;
     int solid_test = 0;
+    int rotate_main = 1;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--probe") == 0) heavy_probe = 1;
         if (strcmp(argv[i], "--asset-check") == 0) asset_check = 1;
         if (strcmp(argv[i], "--self-test") == 0) self_test = 1;
         if (strcmp(argv[i], "--solid-test") == 0) solid_test = 1;
+        if (strcmp(argv[i], "--no-rotate-main") == 0) rotate_main = 0;
     }
 
     if (self_test) {
@@ -1198,8 +1266,9 @@ int main(int argc, char **argv) {
     }
     g_health.camera_running = camera_ok;
 
-    printf("alldemo running on DSI 1080x1920%s. Ctrl+C to stop.\n",
-           solid_test ? " solid-test" : "");
+    printf("alldemo running on DSI 1080x1920%s%s. Ctrl+C to stop.\n",
+           solid_test ? " solid-test" : "",
+           (!solid_test && rotate_main) ? " rotate-main" : "");
     printf("RTSP showcase address reserved: rtsp://172.16.9.195:8554/rktohi_all\n");
 
     int frame = 0;
@@ -1221,13 +1290,13 @@ int main(int argc, char **argv) {
                         size_t need = CAM_STRIDE * CAM_H * 3 / 2;
                         if (last_cam && size >= need) {
                             memcpy(last_cam, addr, need);
-                        cam_frames++;
-                        g_health.camera_frames = cam_frames;
-                        if (live_osd_ok && last_osd &&
-                            process_live_osd(last_cam, last_osd) == 0) {
-                            osd_frames++;
+                            cam_frames++;
+                            g_health.camera_frames = cam_frames;
+                            if (live_osd_ok && last_osd &&
+                                process_live_osd(last_cam, last_osd) == 0) {
+                                osd_frames++;
+                            }
                         }
-                    }
                         munmap(addr, size);
                     }
                     (void)MEDIA_POOL_EndCpuAccess(cbuf, DMA_BUF_SYNC_READ);
@@ -1256,7 +1325,7 @@ int main(int argc, char **argv) {
         if (solid_test) {
             draw_solid_test((uint8_t *)addr, dstride);
         } else {
-            draw_dashboard((uint8_t *)addr, dstride, frame,
+            draw_dashboard((uint8_t *)addr, dstride, frame, rotate_main,
                            cam_frames > 0 ? last_cam : NULL,
                            osd_frames > 0 ? last_osd : NULL);
         }

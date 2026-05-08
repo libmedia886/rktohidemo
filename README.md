@@ -20,10 +20,16 @@ cmake --build build -j
 
 - 屏幕：DSI/MIPI 竖屏 `1080x1920`
 - 摄像头：`/dev/video-camera0`
-- 主画面：实时可见光摄像头 + 竖屏视觉墙
+- 主画面：默认每 5 秒轮播一个下方小窗体内容 + 竖屏视觉墙
 - 缺真实传感器输入的模块：用生成帧/循环素材方式参与
 
 按 `Ctrl+C` 退出。
+
+如果只想固定主画面为实时摄像头：
+
+```bash
+/userdata/alldemo/scripts/run_alldemo.sh --no-rotate-main
+```
 
 ## 快速自检
 
