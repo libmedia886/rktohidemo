@@ -1,0 +1,1042 @@
+#define _GNU_SOURCE
+
+#include <errno.h>
+#include <fcntl.h>
+#include <linux/dma-buf.h>
+#include <linux/videodev2.h>
+#include <math.h>
+#include <netinet/in.h>
+#include <signal.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
+#include <time.h>
+#include <unistd.h>
+
+#include <jpeglib.h>
+#include <png.h>
+
+#include "media_api.h"
+
+#define ALIGN_UP(x, a) (((x) + (a) - 1) & ~((a) - 1))
+
+#define SCREEN_W 1080
+#define SCREEN_H 1920
+#define DISPLAY_POOL 1
+#define CAMERA_POOL 2
+#define WORK_POOL_NV12 3
+#define WORK_POOL_RGB 4
+#define WORK_POOL_OUT 5
+
+#define CAM_W 640
+#define CAM_H 640
+#define CAM_STRIDE 640
+#define FPS 30
+#define CAMERA_DEVICE "/dev/video-camera0"
+#define LICENSE_PATH "/root/licence.dat"
+#define RTSP_PORT 8554
+
+typedef struct {
+    const char *name;
+    int active;
+    int frames;
+} module_tile_t;
+
+typedef struct {
+    int width;
+    int height;
+    uint8_t *rgb;
+} image_asset_t;
+
+typedef struct {
+    const char *tile_name;
+    const char *caption;
+    const char *paths[4];
+    int path_count;
+    image_asset_t images[4];
+    int loaded_count;
+} loop_asset_t;
+
+typedef struct {
+    int license_ok;
+    int camera_node_ok;
+    int drm_ok;
+    int media_lib_ok;
+    int rtsp_port_free;
+    int npu_model_ok;
+    int avm_lut_ok;
+    int pano_calib_ok;
+    int svm_assets_ok;
+    int loop_loaded;
+    int loop_expected;
+    int camera_running;
+    int camera_frames;
+} health_status_t;
+
+static volatile int g_running = 1;
+static health_status_t g_health = {0};
+
+static module_tile_t g_tiles[] = {
+    {"VI", 0, 0}, {"VPSS", 0, 0}, {"VO", 0, 0}, {"RGA", 0, 0},
+    {"RESIZE", 0, 0}, {"CSC_RGA", 0, 0}, {"CSC_CL", 0, 0}, {"OSD", 0, 0},
+    {"CLAHE", 0, 0}, {"RETINEX", 0, 0}, {"CAP", 0, 0}, {"DCP", 0, 0},
+    {"THERMAL", 0, 0}, {"CONV", 0, 0}, {"TRANS", 0, 0}, {"BLEND", 0, 0},
+    {"EDOF", 0, 0}, {"EXPO", 0, 0}, {"DUAL", 0, 0}, {"STEREO", 0, 0},
+    {"VMIX", 0, 0}, {"VMIX_RGA", 0, 0}, {"PANO", 0, 0}, {"AVM", 0, 0},
+    {"SVM3D", 0, 0}, {"NPU", 0, 0}, {"VENC", 0, 0}, {"VDEC", 0, 0},
+    {"RTSP_TX", 0, 0}, {"RTSP_RX", 0, 0}, {"PIC_IO", 0, 0}, {"LICENSE", 0, 0},
+};
+
+static loop_asset_t g_loop_assets[] = {
+    {"THERMAL", "THERMAL LOOP", {
+        "assets/loop/thermal/thermal_1.png",
+        "assets/loop/thermal/thermal_2.png",
+    }, 2, {{0}}, 0},
+    {"TRANS", "TRANSFORM LOOP", {
+        "assets/loop/transform/transform_1.png",
+    }, 1, {{0}}, 0},
+    {"VMIX", "VMIX LOOP", {
+        "assets/loop/vmix/vmix_1.png",
+        "assets/loop/vmix/vmix_2.png",
+    }, 2, {{0}}, 0},
+    {"AVM", "AVM INPUTS", {
+        "assets/loop/avm_inputs/src_1.jpg",
+        "assets/loop/avm_inputs/src_2.jpg",
+        "assets/loop/avm_inputs/src_3.jpg",
+        "assets/loop/avm_inputs/src_4.jpg",
+    }, 4, {{0}}, 0},
+};
+
+static void on_signal(int sig) {
+    (void)sig;
+    g_running = 0;
+}
+
+static int path_readable(const char *path) {
+    return access(path, R_OK) == 0;
+}
+
+static int tcp_port_free(int port) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return 0;
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons((uint16_t)port);
+
+    int ok = bind(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0;
+    close(fd);
+    return ok;
+}
+
+static int expected_loop_asset_count(void) {
+    int total = 0;
+    for (size_t i = 0; i < sizeof(g_loop_assets) / sizeof(g_loop_assets[0]); ++i) {
+        total += g_loop_assets[i].path_count;
+    }
+    return total;
+}
+
+static void collect_health(int loaded_assets) {
+    memset(&g_health, 0, sizeof(g_health));
+    g_health.license_ok = path_readable(LICENSE_PATH);
+    g_health.camera_node_ok = access(CAMERA_DEVICE, F_OK) == 0;
+    g_health.drm_ok = access("/dev/dri/card0", F_OK) == 0;
+    g_health.media_lib_ok = path_readable("lib/libmedia.so") && path_readable("lib/libmedia.a");
+    g_health.rtsp_port_free = tcp_port_free(RTSP_PORT);
+    g_health.npu_model_ok = path_readable("assets/npu/yolov5s-640-640.rknn");
+    g_health.avm_lut_ok = path_readable("assets/avm/avm_blend.lut");
+    g_health.pano_calib_ok = path_readable("assets/panorama/calib_file.pto");
+    g_health.svm_assets_ok = path_readable("assets/svm3d/svm_3d_assets.json");
+    g_health.loop_loaded = loaded_assets;
+    g_health.loop_expected = expected_loop_asset_count();
+}
+
+static int print_check(const char *name, int ok, const char *detail) {
+    printf("[%s] %-14s %s\n", ok ? "OK" : "FAIL", name, detail ? detail : "");
+    return ok ? 0 : 1;
+}
+
+static uint8_t clamp_u8(int v) {
+    if (v < 0) return 0;
+    if (v > 255) return 255;
+    return (uint8_t)v;
+}
+
+static void rgb_to_yuv(uint8_t r, uint8_t g, uint8_t b, uint8_t *y, uint8_t *u, uint8_t *v) {
+    *y = clamp_u8(((66 * r + 129 * g + 25 * b + 128) >> 8) + 16);
+    *u = clamp_u8(((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128);
+    *v = clamp_u8(((112 * r - 94 * g - 18 * b + 128) >> 8) + 128);
+}
+
+static int load_png_rgb(const char *path, image_asset_t *out) {
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return -1;
+
+    uint8_t sig[8];
+    if (fread(sig, 1, sizeof(sig), fp) != sizeof(sig) || png_sig_cmp(sig, 0, sizeof(sig))) {
+        fclose(fp);
+        return -1;
+    }
+
+    png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+    if (!png) {
+        fclose(fp);
+        return -1;
+    }
+    png_infop info = png_create_info_struct(png);
+    if (!info) {
+        png_destroy_read_struct(&png, NULL, NULL);
+        fclose(fp);
+        return -1;
+    }
+    if (setjmp(png_jmpbuf(png))) {
+        png_destroy_read_struct(&png, &info, NULL);
+        fclose(fp);
+        return -1;
+    }
+
+    png_init_io(png, fp);
+    png_set_sig_bytes(png, sizeof(sig));
+    png_read_info(png, info);
+
+    int width = (int)png_get_image_width(png, info);
+    int height = (int)png_get_image_height(png, info);
+    int color_type = png_get_color_type(png, info);
+    int bit_depth = png_get_bit_depth(png, info);
+
+    if (bit_depth == 16) png_set_strip_16(png);
+    if (color_type == PNG_COLOR_TYPE_PALETTE) png_set_palette_to_rgb(png);
+    if (color_type == PNG_COLOR_TYPE_GRAY && bit_depth < 8) png_set_expand_gray_1_2_4_to_8(png);
+    if (png_get_valid(png, info, PNG_INFO_tRNS)) png_set_tRNS_to_alpha(png);
+    if (color_type == PNG_COLOR_TYPE_GRAY || color_type == PNG_COLOR_TYPE_GRAY_ALPHA) png_set_gray_to_rgb(png);
+    if (color_type & PNG_COLOR_MASK_ALPHA) png_set_strip_alpha(png);
+
+    png_read_update_info(png, info);
+    int channels = png_get_channels(png, info);
+    png_size_t rowbytes = png_get_rowbytes(png, info);
+    uint8_t *raw = malloc((size_t)rowbytes * height);
+    png_bytep *rows = malloc(sizeof(png_bytep) * (size_t)height);
+    uint8_t *rgb = malloc((size_t)width * height * 3);
+    if (!raw || !rows || !rgb || width <= 0 || height <= 0) {
+        free(raw);
+        free(rows);
+        free(rgb);
+        png_destroy_read_struct(&png, &info, NULL);
+        fclose(fp);
+        return -1;
+    }
+
+    for (int y = 0; y < height; ++y) rows[y] = raw + (size_t)y * rowbytes;
+    png_read_image(png, rows);
+    for (int y = 0; y < height; ++y) {
+        uint8_t *src = rows[y];
+        uint8_t *dst = rgb + (size_t)y * width * 3;
+        for (int x = 0; x < width; ++x) {
+            if (channels >= 3) {
+                dst[x * 3 + 0] = src[x * channels + 0];
+                dst[x * 3 + 1] = src[x * channels + 1];
+                dst[x * 3 + 2] = src[x * channels + 2];
+            } else {
+                dst[x * 3 + 0] = src[x];
+                dst[x * 3 + 1] = src[x];
+                dst[x * 3 + 2] = src[x];
+            }
+        }
+    }
+
+    free(raw);
+    free(rows);
+    png_destroy_read_struct(&png, &info, NULL);
+    fclose(fp);
+    out->width = width;
+    out->height = height;
+    out->rgb = rgb;
+    return 0;
+}
+
+static int load_jpeg_rgb(const char *path, image_asset_t *out) {
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return -1;
+
+    struct jpeg_decompress_struct cinfo;
+    struct jpeg_error_mgr jerr;
+    cinfo.err = jpeg_std_error(&jerr);
+    jpeg_create_decompress(&cinfo);
+    jpeg_stdio_src(&cinfo, fp);
+    if (jpeg_read_header(&cinfo, TRUE) != JPEG_HEADER_OK) {
+        jpeg_destroy_decompress(&cinfo);
+        fclose(fp);
+        return -1;
+    }
+    cinfo.out_color_space = JCS_RGB;
+    jpeg_start_decompress(&cinfo);
+
+    int width = (int)cinfo.output_width;
+    int height = (int)cinfo.output_height;
+    int channels = (int)cinfo.output_components;
+    uint8_t *rgb = malloc((size_t)width * height * 3);
+    uint8_t *row = malloc((size_t)width * channels);
+    if (!rgb || !row || width <= 0 || height <= 0 || channels < 3) {
+        free(rgb);
+        free(row);
+        jpeg_destroy_decompress(&cinfo);
+        fclose(fp);
+        return -1;
+    }
+
+    while (cinfo.output_scanline < cinfo.output_height) {
+        JSAMPROW rows[1] = {row};
+        JDIMENSION y = cinfo.output_scanline;
+        jpeg_read_scanlines(&cinfo, rows, 1);
+        memcpy(rgb + (size_t)y * width * 3, row, (size_t)width * 3);
+    }
+
+    free(row);
+    jpeg_finish_decompress(&cinfo);
+    jpeg_destroy_decompress(&cinfo);
+    fclose(fp);
+    out->width = width;
+    out->height = height;
+    out->rgb = rgb;
+    return 0;
+}
+
+static int load_image_rgb(const char *path, image_asset_t *out) {
+    const char *ext = strrchr(path, '.');
+    memset(out, 0, sizeof(*out));
+    if (ext && strcasecmp(ext, ".png") == 0) return load_png_rgb(path, out);
+    if (ext && (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0)) {
+        return load_jpeg_rgb(path, out);
+    }
+    return -1;
+}
+
+static void fill_rect_nv12(uint8_t *dst, int stride, int x, int y, int w, int h,
+                           uint8_t r, uint8_t g, uint8_t b) {
+    uint8_t yy, uu, vv;
+    rgb_to_yuv(r, g, b, &yy, &uu, &vv);
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > SCREEN_W) w = SCREEN_W - x;
+    if (y + h > SCREEN_H) h = SCREEN_H - y;
+    if (w <= 0 || h <= 0) return;
+
+    uint8_t *yp = dst;
+    uint8_t *uv = dst + stride * SCREEN_H;
+    for (int row = y; row < y + h; ++row) {
+        memset(yp + row * stride + x, yy, (size_t)w);
+    }
+    int uv_y0 = y / 2;
+    int uv_y1 = (y + h + 1) / 2;
+    int uv_x0 = x & ~1;
+    int uv_x1 = (x + w + 1) & ~1;
+    for (int row = uv_y0; row < uv_y1; ++row) {
+        uint8_t *p = uv + row * stride + uv_x0;
+        for (int col = uv_x0; col < uv_x1; col += 2) {
+            p[0] = uu;
+            p[1] = vv;
+            p += 2;
+        }
+    }
+}
+
+static loop_asset_t *find_loop_asset(const char *tile_name) {
+    for (size_t i = 0; i < sizeof(g_loop_assets) / sizeof(g_loop_assets[0]); ++i) {
+        if (strcmp(g_loop_assets[i].tile_name, tile_name) == 0) return &g_loop_assets[i];
+    }
+    return NULL;
+}
+
+static void draw_rgb_image_nv12(uint8_t *dst, int stride, int x, int y, int w, int h,
+                                const image_asset_t *img) {
+    if (!img || !img->rgb || img->width <= 0 || img->height <= 0 || w <= 0 || h <= 0) return;
+
+    int out_w = w;
+    int out_h = (int)((int64_t)img->height * w / img->width);
+    if (out_h > h) {
+        out_h = h;
+        out_w = (int)((int64_t)img->width * h / img->height);
+    }
+    if (out_w <= 0 || out_h <= 0) return;
+
+    int ox = x + (w - out_w) / 2;
+    int oy = y + (h - out_h) / 2;
+    uint8_t *yp = dst;
+    uint8_t *uv = dst + stride * SCREEN_H;
+
+    for (int dy = 0; dy < out_h; ++dy) {
+        int sy = dy * img->height / out_h;
+        int yy = oy + dy;
+        if (yy < 0 || yy >= SCREEN_H) continue;
+        uint8_t *drow = yp + yy * stride;
+        for (int dx = 0; dx < out_w; ++dx) {
+            int sx = dx * img->width / out_w;
+            int xx = ox + dx;
+            if (xx < 0 || xx >= SCREEN_W) continue;
+            const uint8_t *rgb = img->rgb + ((size_t)sy * img->width + sx) * 3;
+            uint8_t yv, u, v;
+            rgb_to_yuv(rgb[0], rgb[1], rgb[2], &yv, &u, &v);
+            (void)u;
+            (void)v;
+            drow[xx] = yv;
+        }
+    }
+
+    for (int dy = 0; dy < out_h; dy += 2) {
+        int sy = dy * img->height / out_h;
+        int yy = oy + dy;
+        if (yy < 0 || yy >= SCREEN_H) continue;
+        uint8_t *drow = uv + (yy / 2) * stride;
+        for (int dx = 0; dx < out_w; dx += 2) {
+            int sx = dx * img->width / out_w;
+            int xx = (ox + dx) & ~1;
+            if (xx < 0 || xx + 1 >= SCREEN_W) continue;
+            const uint8_t *rgb = img->rgb + ((size_t)sy * img->width + sx) * 3;
+            uint8_t yv, u, v;
+            rgb_to_yuv(rgb[0], rgb[1], rgb[2], &yv, &u, &v);
+            (void)yv;
+            drow[xx] = u;
+            drow[xx + 1] = v;
+        }
+    }
+}
+
+static void stroke_rect_nv12(uint8_t *dst, int stride, int x, int y, int w, int h,
+                             int thick, uint8_t r, uint8_t g, uint8_t b) {
+    fill_rect_nv12(dst, stride, x, y, w, thick, r, g, b);
+    fill_rect_nv12(dst, stride, x, y + h - thick, w, thick, r, g, b);
+    fill_rect_nv12(dst, stride, x, y, thick, h, r, g, b);
+    fill_rect_nv12(dst, stride, x + w - thick, y, thick, h, r, g, b);
+}
+
+static uint8_t glyph_row(char c, int row) {
+    static const uint8_t digits[10][7] = {
+        {31,17,19,21,25,17,31}, {4,12,4,4,4,4,14}, {31,1,1,31,16,16,31},
+        {31,1,1,15,1,1,31}, {17,17,17,31,1,1,1}, {31,16,16,31,1,1,31},
+        {31,16,16,31,17,17,31}, {31,1,2,4,8,8,8}, {31,17,17,31,17,17,31},
+        {31,17,17,31,1,1,31},
+    };
+    static const uint8_t letters[26][7] = {
+        {14,17,17,31,17,17,17}, {30,17,17,30,17,17,30}, {15,16,16,16,16,16,15},
+        {30,17,17,17,17,17,30}, {31,16,16,30,16,16,31}, {31,16,16,30,16,16,16},
+        {15,16,16,23,17,17,15}, {17,17,17,31,17,17,17}, {14,4,4,4,4,4,14},
+        {7,2,2,2,18,18,12}, {17,18,20,24,20,18,17}, {16,16,16,16,16,16,31},
+        {17,27,21,21,17,17,17}, {17,25,21,19,17,17,17}, {14,17,17,17,17,17,14},
+        {30,17,17,30,16,16,16}, {14,17,17,17,21,18,13}, {30,17,17,30,20,18,17},
+        {15,16,16,14,1,1,30}, {31,4,4,4,4,4,4}, {17,17,17,17,17,17,14},
+        {17,17,17,17,17,10,4}, {17,17,17,21,21,27,17}, {17,17,10,4,10,17,17},
+        {17,17,10,4,4,4,4}, {31,1,2,4,8,16,31},
+    };
+    if (c >= '0' && c <= '9') return digits[c - '0'][row];
+    if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+    if (c >= 'A' && c <= 'Z') return letters[c - 'A'][row];
+    if (c == '-') return row == 3 ? 31 : 0;
+    if (c == '_') return row == 6 ? 31 : 0;
+    if (c == ':') return (row == 2 || row == 4) ? 4 : 0;
+    if (c == '.') return row == 6 ? 4 : 0;
+    if (c == '/') return 1 << (6 - row > 4 ? 4 : (6 - row));
+    if (c == '>') return row < 3 ? (1 << row) : (row == 3 ? 16 : (1 << (6 - row)));
+    return 0;
+}
+
+static void draw_text(uint8_t *dst, int stride, int x, int y, const char *text,
+                      int scale, uint8_t r, uint8_t g, uint8_t b) {
+    int cx = x;
+    for (const char *p = text; *p; ++p) {
+        if (*p == ' ') {
+            cx += 4 * scale;
+            continue;
+        }
+        for (int row = 0; row < 7; ++row) {
+            uint8_t bits = glyph_row(*p, row);
+            for (int col = 0; col < 5; ++col) {
+                if (bits & (1 << (4 - col))) {
+                    fill_rect_nv12(dst, stride, cx + col * scale, y + row * scale,
+                                   scale, scale, r, g, b);
+                }
+            }
+        }
+        cx += 6 * scale;
+    }
+}
+
+static void draw_camera_tile(uint8_t *dst, int dstride, int dx, int dy, int dw, int dh,
+                             const uint8_t *src, int sw, int sh, int sstride) {
+    if (!src) return;
+    const uint8_t *sy = src;
+    const uint8_t *suv = src + sstride * sh;
+    uint8_t *dy_base = dst;
+    uint8_t *duv_base = dst + dstride * SCREEN_H;
+
+    for (int y = 0; y < dh; ++y) {
+        int src_y = y * sh / dh;
+        uint8_t *drow = dy_base + (dy + y) * dstride + dx;
+        const uint8_t *srow = sy + src_y * sstride;
+        for (int x = 0; x < dw; ++x) {
+            drow[x] = srow[x * sw / dw];
+        }
+    }
+    for (int y = 0; y < dh / 2; ++y) {
+        int src_y = (y * 2) * sh / dh;
+        const uint8_t *srow = suv + (src_y / 2) * sstride;
+        uint8_t *drow = duv_base + ((dy / 2) + y) * dstride + (dx & ~1);
+        for (int x = 0; x < dw; x += 2) {
+            int src_x = ((x * sw / dw) & ~1);
+            drow[x] = srow[src_x];
+            drow[x + 1] = srow[src_x + 1];
+        }
+    }
+}
+
+static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int h,
+                             int idx, int frame, int active) {
+    uint8_t r0 = (uint8_t)((idx * 47 + frame * 2) % 180 + 40);
+    uint8_t g0 = (uint8_t)((idx * 83 + frame * 3) % 180 + 40);
+    uint8_t b0 = (uint8_t)((idx * 29 + frame * 5) % 180 + 40);
+    fill_rect_nv12(dst, stride, x, y, w, h, 6, 12, 20);
+    loop_asset_t *loop = find_loop_asset(g_tiles[idx].name);
+    if (loop && loop->loaded_count > 0) {
+        const image_asset_t *img = &loop->images[(frame / 30) % loop->loaded_count];
+        draw_rgb_image_nv12(dst, stride, x + 6, y + 30, w - 12, h - 38, img);
+        fill_rect_nv12(dst, stride, x + 6, y + h - 24, w - 12, 18, 0, 0, 0);
+        draw_text(dst, stride, x + 12, y + h - 22, loop->caption, 1, 220, 255, 230);
+    } else {
+        fill_rect_nv12(dst, stride, x + 14, y + 48, 44, 44, r0, g0, b0);
+        fill_rect_nv12(dst, stride, x + 66, y + 52, w - 82, 12, 16, 28, 42);
+        fill_rect_nv12(dst, stride, x + 66, y + 74, (w - 82) * 3 / 4, 12, 16, 28, 42);
+        draw_text(dst, stride, x + 14, y + 108, "SYNTHETIC FEED", 1, 190, 230, 255);
+        draw_text(dst, stride, x + 14, y + 126, "NO LIVE ALGO", 1, 140, 170, 200);
+    }
+    stroke_rect_nv12(dst, stride, x, y, w, h, active ? 3 : 1,
+                     active ? 0 : 70, active ? 240 : 70, active ? 190 : 70);
+    draw_text(dst, stride, x + 10, y + 10, g_tiles[idx].name, 2,
+              active ? 170 : 90, active ? 255 : 90, active ? 220 : 90);
+}
+
+static int map_buffer(MEDIA_BUFFER buf, void **addr, size_t *size, int prot) {
+    int fd = -1;
+    if (MEDIA_POOL_GetFd(buf, &fd, size) != 0 || fd < 0 || *size == 0) return -1;
+    *addr = mmap(NULL, *size, prot, MAP_SHARED, fd, 0);
+    if (*addr == MAP_FAILED) {
+        *addr = NULL;
+        return -1;
+    }
+    return 0;
+}
+
+static void fill_synthetic_nv12(uint8_t *p, int w, int h, int stride, int frame) {
+    for (int yy = 0; yy < h; ++yy) {
+        for (int xx = 0; xx < w; ++xx) {
+            p[yy * stride + xx] = (uint8_t)((xx * 2 + yy + frame * 5) & 255);
+        }
+    }
+    uint8_t *uv = p + stride * h;
+    for (int yy = 0; yy < h / 2; ++yy) {
+        for (int xx = 0; xx < w; xx += 2) {
+            uv[yy * stride + xx] = (uint8_t)(90 + ((xx + frame) & 63));
+            uv[yy * stride + xx + 1] = (uint8_t)(130 + ((yy * 2 + frame) & 63));
+        }
+    }
+}
+
+static MEDIA_BUFFER make_work_frame(int pool, int w, int h, int stride, int frame) {
+    MEDIA_BUFFER buf = {-1, -1};
+    if (MEDIA_POOL_GetBuffer(pool, &buf) != 0) return buf;
+    void *addr = NULL;
+    size_t size = 0;
+    if (map_buffer(buf, &addr, &size, PROT_READ | PROT_WRITE) != 0) {
+        MEDIA_POOL_PutBuffer(buf);
+        buf.pool_id = -1;
+        return buf;
+    }
+    if (MEDIA_POOL_BeginCpuAccess(buf, DMA_BUF_SYNC_WRITE) != 0) {
+        munmap(addr, size);
+        MEDIA_POOL_PutBuffer(buf);
+        buf.pool_id = -1;
+        return buf;
+    }
+    (void)size;
+    fill_synthetic_nv12((uint8_t *)addr, w, h, stride, frame);
+    (void)MEDIA_POOL_EndCpuAccess(buf, DMA_BUF_SYNC_WRITE);
+    munmap(addr, size);
+    return buf;
+}
+
+static void mark(const char *name, int active) {
+    for (size_t i = 0; i < sizeof(g_tiles) / sizeof(g_tiles[0]); ++i) {
+        if (strcmp(g_tiles[i].name, name) == 0) {
+            g_tiles[i].active = active;
+            return;
+        }
+    }
+}
+
+static int load_loop_assets(void) {
+    int total = 0;
+    for (size_t i = 0; i < sizeof(g_loop_assets) / sizeof(g_loop_assets[0]); ++i) {
+        loop_asset_t *loop = &g_loop_assets[i];
+        loop->loaded_count = 0;
+        for (int j = 0; j < loop->path_count; ++j) {
+            image_asset_t img = {0};
+            if (load_image_rgb(loop->paths[j], &img) == 0) {
+                loop->images[loop->loaded_count++] = img;
+                total++;
+            } else {
+                fprintf(stderr, "warning: failed to load loop asset %s\n", loop->paths[j]);
+            }
+        }
+        if (loop->loaded_count > 0) mark(loop->tile_name, 1);
+    }
+    return total;
+}
+
+static void unload_loop_assets(void) {
+    for (size_t i = 0; i < sizeof(g_loop_assets) / sizeof(g_loop_assets[0]); ++i) {
+        loop_asset_t *loop = &g_loop_assets[i];
+        for (int j = 0; j < loop->loaded_count; ++j) {
+            free(loop->images[j].rgb);
+            loop->images[j].rgb = NULL;
+        }
+        loop->loaded_count = 0;
+    }
+}
+
+static void print_loop_asset_summary(void) {
+    for (size_t i = 0; i < sizeof(g_loop_assets) / sizeof(g_loop_assets[0]); ++i) {
+        const loop_asset_t *loop = &g_loop_assets[i];
+        printf("%-8s %d/%d", loop->tile_name, loop->loaded_count, loop->path_count);
+        for (int j = 0; j < loop->loaded_count; ++j) {
+            printf("  %dx%d", loop->images[j].width, loop->images[j].height);
+        }
+        printf("\n");
+    }
+}
+
+static int run_self_test(void) {
+    int loaded = load_loop_assets();
+    collect_health(loaded);
+
+    printf("RKTohi AllDemo self-test\n");
+    int failures = 0;
+    failures += print_check("license", g_health.license_ok, LICENSE_PATH);
+    failures += print_check("camera node", g_health.camera_node_ok, CAMERA_DEVICE);
+    failures += print_check("drm card", g_health.drm_ok, "/dev/dri/card0");
+    failures += print_check("media lib", g_health.media_lib_ok, "lib/libmedia.so lib/libmedia.a");
+    failures += print_check("rtsp port", g_health.rtsp_port_free, "8554");
+    failures += print_check("npu model", g_health.npu_model_ok, "assets/npu/yolov5s-640-640.rknn");
+    failures += print_check("avm lut", g_health.avm_lut_ok, "assets/avm/avm_blend.lut");
+    failures += print_check("pano calib", g_health.pano_calib_ok, "assets/panorama/calib_file.pto");
+    failures += print_check("svm assets", g_health.svm_assets_ok, "assets/svm3d/svm_3d_assets.json");
+
+    char detail[64];
+    snprintf(detail, sizeof(detail), "%d/%d decoded", g_health.loop_loaded, g_health.loop_expected);
+    failures += print_check("loop assets", g_health.loop_loaded == g_health.loop_expected, detail);
+    print_loop_asset_summary();
+
+    unload_loop_assets();
+    printf("summary: %s failures=%d\n", failures == 0 ? "PASS" : "FAIL", failures);
+    return failures == 0 ? 0 : 1;
+}
+
+static void mark_showcase_modules(void) {
+    for (size_t i = 0; i < sizeof(g_tiles) / sizeof(g_tiles[0]); ++i) {
+        g_tiles[i].active = 1;
+    }
+}
+
+static void probe_modules(void) {
+    const int w = 320, h = 180, stride = 320;
+    MEDIA_POOL_Create(WORK_POOL_NV12, stride * h * 3 / 2, 16);
+    MEDIA_POOL_Create(WORK_POOL_RGB, w * h * 3, 8);
+    MEDIA_POOL_Create(WORK_POOL_OUT, stride * h * 3 / 2, 16);
+
+    uint64_t dummy = 0;
+    if (MEDIA_SYS_GetVersion()) mark("LICENSE", 1);
+
+    MEDIA_VPSS_ATTR vpss = {0};
+    vpss.width = w; vpss.height = h; vpss.input_stride = stride; vpss.input_format = MEDIA_FORMAT_NV12;
+    vpss.input_depth = 2; vpss.output_count = 1;
+    vpss.outputs[0].output_id = 0; vpss.outputs[0].out_width = w; vpss.outputs[0].out_height = h;
+    vpss.outputs[0].out_stride = stride; vpss.outputs[0].pool_id = WORK_POOL_OUT;
+    vpss.outputs[0].output_format = MEDIA_FORMAT_NV12;
+    if (MEDIA_VPSS_SetAttr(20, &vpss) == 0) { mark("VPSS", 1); MEDIA_VPSS_DestroyGrp(20); }
+
+    MEDIA_RGA_GRP_ATTR rga = {0};
+    rga.algo = MEDIA_RGA_ALG_RESIZE; rga.input_count = 1; rga.output_count = 1; rga.input_depth = 2; rga.output_depth = 2;
+    rga.inputs[0].port_id = 0; rga.inputs[0].width = w; rga.inputs[0].height = h; rga.inputs[0].format = MEDIA_FORMAT_NV12; rga.inputs[0].queue_depth = 2;
+    rga.outputs[0].port_id = 0; rga.outputs[0].width = w; rga.outputs[0].height = h; rga.outputs[0].format = MEDIA_FORMAT_NV12; rga.outputs[0].pool_id = WORK_POOL_OUT;
+    if (MEDIA_RGA_CreateGrp(20, &rga) == 0) { mark("RGA", 1); MEDIA_RGA_DestroyChn(20); }
+
+    MEDIA_RESIZE_RGA_ATTR rz = {0};
+    rz.input_format = MEDIA_FORMAT_NV12; rz.input_stride = stride; rz.input_depth = 2;
+    rz.out_width = w; rz.out_height = h; rz.out_stride = stride; rz.output_format = MEDIA_FORMAT_NV12; rz.output_pool_id = WORK_POOL_OUT;
+    if (MEDIA_RESIZE_RGA_CreateGrp(21, &rz) == 0) { mark("RESIZE", 1); MEDIA_RESIZE_RGA_DestroyGrp(21); }
+
+    MEDIA_CSC_RGA_ATTR cr = {0};
+    cr.input_width = w; cr.input_height = h; cr.input_format = MEDIA_FORMAT_NV12; cr.output_format = MEDIA_FORMAT_RGB888;
+    cr.input_depth = 2; cr.output_pool_id = WORK_POOL_RGB; cr.input_stride = stride; cr.output_stride = w * 3;
+    if (MEDIA_CSC_RGA_CreateGrp(22, &cr) == 0) { mark("CSC_RGA", 1); MEDIA_CSC_RGA_DestroyGrp(22); }
+
+    MEDIA_CSC_CL_ATTR cc = {0};
+    cc.input_width = w; cc.input_height = h; cc.input_format = MEDIA_FORMAT_NV12; cc.output_format = MEDIA_FORMAT_RGB888;
+    cc.input_depth = 2; cc.output_pool_id = WORK_POOL_RGB; cc.input_stride = stride; cc.output_stride = w * 3;
+    if (MEDIA_CSC_CL_CreateGrp(23, &cc) == 0) { mark("CSC_CL", 1); MEDIA_CSC_CL_DestroyGrp(23); }
+
+    MEDIA_THERMAL_ATTR th = {0};
+    th.width = w; th.height = h; th.format = MEDIA_FORMAT_NV12; th.color_mode = MEDIA_THERMAL_COLOR_RAINBOW3;
+    th.input_depth = 2; th.output_depth = 2;
+    if (MEDIA_THERMAL_CreateGrp(24, &th) == 0) { mark("THERMAL", 1); MEDIA_THERMAL_DestroyGrp(24); }
+
+    MEDIA_OSD_ATTR osd = {0};
+    osd.input_width = w; osd.input_height = h; osd.format = MEDIA_FORMAT_NV12; osd.input_depth = 2;
+    osd.output_pool_id = WORK_POOL_OUT; osd.input_stride = stride; osd.output_stride = stride; osd.max_regions = 8;
+    if (MEDIA_OSD_CreateGrp(25, &osd) == 0) { mark("OSD", 1); MEDIA_OSD_DestroyGrp(25); }
+
+    MEDIA_CONV_CL_ATTR conv = {0};
+    conv.width = w; conv.height = h; conv.format = MEDIA_FORMAT_RGB888; conv.kernel_size = 5;
+    conv.input_depth = 2; conv.output_pool_id = WORK_POOL_RGB; conv.input_stride = w * 3; conv.output_stride = w * 3;
+    if (MEDIA_CONV_CL_CreateGrp(26, &conv) == 0) { mark("CONV", 1); MEDIA_CONV_CL_DestroyGrp(26); }
+
+    MEDIA_CLAHE_ATTR clahe = {0};
+    clahe.width = w; clahe.height = h; clahe.format = MEDIA_FORMAT_RGB888; clahe.tile_grid_x = 8; clahe.tile_grid_y = 8;
+    clahe.bins = 256; clahe.input_depth = 2; clahe.output_pool_id = WORK_POOL_RGB; clahe.input_stride = w * 3; clahe.output_stride = w * 3; clahe.clip_limit = 2.5f;
+    if (MEDIA_CLAHE_CreateGrp(27, &clahe) == 0) { mark("CLAHE", 1); MEDIA_CLAHE_DestroyGrp(27); }
+
+    MEDIA_RETINEX_ATTR ret = {0};
+    ret.scale_count = 1; ret.width = w; ret.height = h; ret.format = MEDIA_FORMAT_NV12; ret.output_depth = 2; ret.input_depth = 2;
+    ret.input_stride = stride; ret.output_stride = stride; ret.gain = 1.0f; ret.threshold = 0.01f; ret.log_min = 0.0f; ret.log_max = 1.0f;
+    if (MEDIA_RETINEX_CreateGrp(28, &ret) == 0) { mark("RETINEX", 1); MEDIA_RETINEX_DestroyGrp(28); }
+
+    MEDIA_CAP_DEHAZE_ATTR cap = {0};
+    cap.width = w; cap.height = h; cap.format = MEDIA_FORMAT_RGB888; cap.input_depth = 2; cap.output_pool_id = WORK_POOL_RGB;
+    cap.input_stride = w * 3; cap.output_stride = w * 3; cap.guided_radius = 8; cap.guided_eps = 0.01f; cap.t0 = 0.1f;
+    if (MEDIA_CAP_DEHAZE_CreateGrp(29, &cap) == 0) { mark("CAP", 1); MEDIA_CAP_DEHAZE_DestroyGrp(29); }
+
+    MEDIA_DCP_FAST_DEHAZE_ATTR dcp = {0};
+    dcp.width = w; dcp.height = h; dcp.format = MEDIA_FORMAT_RGB888; dcp.input_depth = 2; dcp.output_pool_id = WORK_POOL_RGB;
+    dcp.input_stride = w * 3; dcp.output_stride = w * 3; dcp.patch = 15; dcp.omega = 0.95f; dcp.t0 = 0.1f; dcp.airlight_percent = 0.001f; dcp.guided_radius = 8; dcp.guided_eps = 0.01f; dcp.refine_scale = 0.25f;
+    if (MEDIA_DCP_FAST_DEHAZE_CreateGrp(30, &dcp) == 0) { mark("DCP", 1); MEDIA_DCP_FAST_DEHAZE_DestroyGrp(30); }
+
+    MEDIA_BLEND_PYR_ATTR bp = {0};
+    bp.width = w; bp.height = h; bp.input_stride = stride; bp.input_depth = 2; bp.input_format = MEDIA_FORMAT_NV12; bp.output_stride = stride;
+    if (MEDIA_BLEND_PYR_SetAttr(31, &bp) == 0) { mark("BLEND", 1); MEDIA_BLEND_PYR_DestroyGrp(31); }
+
+    MEDIA_EDOF_CL_ATTR edof = {0};
+    edof.width = w; edof.height = h; edof.format = MEDIA_FORMAT_NV12; edof.focus_radius = 5; edof.input_depth = 2; edof.output_pool_id = WORK_POOL_OUT; edof.input_stride = stride; edof.output_stride = stride; edof.score_eps = 0.01f;
+    if (MEDIA_EDOF_CL_CreateGrp(32, &edof) == 0) { mark("EDOF", 1); MEDIA_EDOF_CL_DestroyGrp(32); }
+
+    MEDIA_EXPOSURE_FUSION_CL_ATTR ex = {0};
+    ex.width = w; ex.height = h; ex.format = MEDIA_FORMAT_NV12; ex.input_depth = 2; ex.output_pool_id = WORK_POOL_OUT; ex.input_stride = stride; ex.output_stride = stride;
+    ex.contrast_power = 1.0f; ex.saturation_power = 1.0f; ex.exposedness_power = 1.0f; ex.sigma = 0.2f; ex.epsilon = 0.0001f;
+    if (MEDIA_EXPOSURE_FUSION_CL_CreateGrp(33, &ex) == 0) { mark("EXPO", 1); MEDIA_EXPOSURE_FUSION_CL_DestroyGrp(33); }
+
+    MEDIA_DUALVIEW_ATTR dv = {0};
+    dv.input_width = w; dv.input_height = h; dv.input_stride = w * 3; dv.output_width = w * 2; dv.output_height = h; dv.output_stride = w * 6; dv.mode = MEDIA_DUALVIEW_MODE_SIDE_BY_SIDE;
+    dv.format = MEDIA_FORMAT_RGB888; dv.input_depth = 2; dv.output_pool_id = WORK_POOL_RGB; dv.inputs[0].enabled = 1; dv.inputs[1].enabled = 1;
+    if (MEDIA_DUALVIEW_CreateGrp(34, &dv) == 0) { mark("DUAL", 1); MEDIA_DUALVIEW_DestroyGrp(34); }
+
+    MEDIA_STEREO_3D_ATTR st = {0};
+    st.width = w; st.height = h; st.format = MEDIA_FORMAT_NV12; st.input_depth = 2; st.output_pool_id = WORK_POOL_OUT; st.input_stride = stride; st.output_stride = stride; st.mode = MEDIA_STEREO_3D_MODE_SIDE_BY_SIDE;
+    if (MEDIA_STEREO_3D_CreateGrp(35, &st) == 0) { mark("STEREO", 1); MEDIA_STEREO_3D_DestroyGrp(35); }
+
+    MEDIA_VMIX_ATTR vm = {0};
+    vm.input_count = 2; vm.output_width = w; vm.output_height = h; vm.format = MEDIA_FORMAT_NV12; vm.input_depth = 2; vm.output_pool_id = WORK_POOL_OUT; vm.output_stride = stride; vm.primary_index = 0;
+    vm.channels[0].enabled = 1; vm.channels[0].width = w; vm.channels[0].height = h; vm.channels[0].alpha = 1.0f; vm.channels[0].stride = stride;
+    vm.channels[1].enabled = 1; vm.channels[1].x = w / 2; vm.channels[1].width = w / 2; vm.channels[1].height = h / 2; vm.channels[1].alpha = 0.6f; vm.channels[1].stride = stride;
+    if (MEDIA_VMIX_CreateGrp(36, &vm) == 0) { mark("VMIX", 1); MEDIA_VMIX_DestroyGrp(36); }
+
+    MEDIA_VMIX_RGA_ATTR vr = {0};
+    vr.input_count = 2; vr.output_width = w; vr.output_height = h; vr.format = MEDIA_FORMAT_NV12; vr.input_depth = 2; vr.output_pool_id = WORK_POOL_OUT; vr.output_stride = stride; vr.primary_index = 0;
+    vr.channels[0].enabled = 1; vr.channels[0].width = w; vr.channels[0].height = h; vr.channels[0].stride = stride; vr.channels[0].format = MEDIA_FORMAT_NV12;
+    vr.channels[1].enabled = 1; vr.channels[1].x = w / 2; vr.channels[1].width = w / 2; vr.channels[1].height = h / 2; vr.channels[1].stride = stride; vr.channels[1].format = MEDIA_FORMAT_NV12;
+    if (MEDIA_VMIX_RGA_CreateGrp(37, &vr) == 0) { mark("VMIX_RGA", 1); MEDIA_VMIX_RGA_DestroyGrp(37); }
+
+    MEDIA_VENC_ATTR venc = {0};
+    venc.width = w; venc.height = h; venc.stride = stride; venc.fps = FPS; venc.buf_cnt = 4; venc.input_depth = 2; venc.bitrate = 1000000; venc.gop = FPS;
+    venc.video_format = MEDIA_FORMAT_H264; venc.rc_mode = MEDIA_VENC_RC_CBR; venc.input_format = MEDIA_FORMAT_NV12;
+    if (MEDIA_VENC_SetAttr(38, &venc) == 0) { mark("VENC", 1); MEDIA_VENC_DestroyChn(38); }
+
+    MEDIA_VDEC_ATTR vdec = {0};
+    vdec.width = w; vdec.height = h; vdec.stride = stride; vdec.buf_cnt = 4; vdec.video_type = MEDIA_VIDEO_H264; vdec.pool_id = WORK_POOL_OUT; vdec.has_input_port = 1; vdec.input_depth = 2;
+    if (MEDIA_VDEC_CreateChn(39, &vdec) == 0) { mark("VDEC", 1); MEDIA_VDEC_DestroyChn(39); }
+
+    MEDIA_RTSP_SEND_ATTR tx = {0};
+    tx.bind_addr = "0.0.0.0"; tx.port = 8554; tx.url_suffix = "rktohi_all"; tx.width = w; tx.height = h; tx.fps = FPS; tx.max_clients = 2; tx.transport_mode = RTSP_TRANSPORT_TCP; tx.video_format = MEDIA_FORMAT_H264;
+    if (MEDIA_RTSP_SEND_CreateGrp(40, &tx) == 0) { mark("RTSP_TX", 1); MEDIA_RTSP_SEND_DestroyGrp(40); }
+
+    MEDIA_RTSP_RECV_ATTR rx = {0};
+    rx.url = "rtsp://127.0.0.1:8554/rktohi_all"; rx.output_pool_id = WORK_POOL_OUT; rx.video_format = MEDIA_FORMAT_H264; rx.width = w; rx.height = h; rx.fps = FPS; rx.transport_mode = RTSP_TRANSPORT_TCP;
+    if (MEDIA_RTSP_RECV_CreateGrp(41, &rx) == 0) { mark("RTSP_RX", 1); MEDIA_RTSP_RECV_DestroyGrp(41); }
+
+    MEDIA_PANO_ATTR pano = {0};
+    pano.input_count = 2; pano.in_width = w; pano.in_height = h; pano.in_stride = stride; pano.out_width = w; pano.out_height = h; pano.out_stride = stride; pano.output_pool_id = WORK_POOL_OUT; pano.input_depth = 2; pano.output_depth = 2; pano.pto_path = "assets/panorama/calib_file.pto";
+    if (MEDIA_PANO_CreateGrp(42, &pano) == 0) { mark("PANO", 1); MEDIA_PANO_DestroyGrp(42); }
+
+    MEDIA_AVM_ATTR avm = {0};
+    avm.input_count = 4; avm.in_width = w; avm.in_height = h; avm.in_stride = stride; avm.out_width = w; avm.out_height = h; avm.out_stride = stride; avm.output_pool_id = WORK_POOL_OUT; avm.input_depth = 2; avm.output_depth = 2; avm.lut_path = "assets/avm/avm_blend.lut";
+    if (MEDIA_AVM_CreateGrp(43, &avm) == 0) { mark("AVM", 1); MEDIA_AVM_DestroyGrp(43); }
+
+    MEDIA_SVM3D_ATTR svm = {0};
+    svm.input_count = 4; svm.input_format = MEDIA_FORMAT_NV12; svm.in_width = w; svm.in_height = h; svm.in_stride = stride; svm.output_format = MEDIA_FORMAT_RGB888; svm.out_width = w; svm.out_height = h; svm.out_stride = w * 3; svm.output_pool_id = WORK_POOL_RGB; svm.input_depth = 2; svm.output_depth = 2; svm.asset_path = "assets/svm3d/svm_3d_assets.json";
+    if (MEDIA_SVM3D_CreateGrp(44, &svm) == 0) { mark("SVM3D", 1); MEDIA_SVM3D_DestroyGrp(44); }
+
+    MEDIA_NPU_ATTR npu = {0};
+    npu.model_path = "assets/npu/yolov5s-640-640.rknn"; npu.backend = MEDIA_NPU_BACKEND_RKNN; npu.task = MEDIA_NPU_TASK_DETECT;
+    npu.input_width = 640; npu.input_height = 640; npu.input_format = MEDIA_FORMAT_RGB888; npu.input_layout = MEDIA_NPU_LAYOUT_NHWC; npu.input_depth = 2; npu.passthrough = 1; npu.score_thresh = 0.25f; npu.nms_thresh = 0.45f;
+    if (MEDIA_NPU_CreateGrp(45, &npu) == 0) { mark("NPU", 1); MEDIA_NPU_DestroyGrp(45); }
+
+    mark("PIC_IO", 1);
+    (void)dummy;
+}
+
+static int active_module_count(void) {
+    int total = 0;
+    for (size_t i = 0; i < sizeof(g_tiles) / sizeof(g_tiles[0]); ++i) {
+        if (g_tiles[i].active) total++;
+    }
+    return total;
+}
+
+static void draw_health_line(uint8_t *canvas, int stride, int y, const char *left, int ok) {
+    fill_rect_nv12(canvas, stride, 52, y - 6, 976, 34, ok ? 3 : 34, ok ? 32 : 12, ok ? 24 : 8);
+    draw_text(canvas, stride, 64, y, ok ? "OK" : "NO", 2,
+              ok ? 150 : 255, ok ? 255 : 150, ok ? 190 : 90);
+    draw_text(canvas, stride, 130, y, left, 2, 190, 230, 255);
+}
+
+static void draw_dashboard(uint8_t *canvas, int stride, int frame, const uint8_t *cam) {
+    fill_rect_nv12(canvas, stride, 0, 0, SCREEN_W, SCREEN_H, 4, 9, 16);
+    fill_rect_nv12(canvas, stride, 0, 0, SCREEN_W, 90, 10, 18, 34);
+    draw_text(canvas, stride, 28, 24, "RKTOHI VISUAL ENGINE", 4, 160, 255, 220);
+    draw_text(canvas, stride, 760, 26, "1080X1920", 2, 90, 180, 255);
+
+    fill_rect_nv12(canvas, stride, 28, 116, 1024, 612, 7, 13, 24);
+    if (cam) {
+        draw_camera_tile(canvas, stride, 42, 130, 996, 560, cam, CAM_W, CAM_H, CAM_STRIDE);
+    } else {
+        draw_text(canvas, stride, 294, 336, "CAMERA OFFLINE", 4, 255, 180, 80);
+        draw_text(canvas, stride, 318, 406, CAMERA_DEVICE, 2, 190, 230, 255);
+    }
+    stroke_rect_nv12(canvas, stride, 28, 116, 1024, 612, 4, 0, 220, 180);
+    draw_text(canvas, stride, 52, 704, "LIVE VISIBLE CAMERA  VI > VPSS > WALL", 2, 190, 255, 230);
+
+    int cols = 4;
+    int tile_w = 250;
+    int tile_h = 150;
+    int start_x = 28;
+    int start_y = 760;
+    int gap = 14;
+    for (int i = 0; i < 16; ++i) {
+        int cx = start_x + (i % cols) * (tile_w + gap);
+        int cy = start_y + (i / cols) * (tile_h + gap);
+        draw_effect_tile(canvas, stride, cx, cy, tile_w, tile_h, i + 8, frame, g_tiles[i + 8].active);
+    }
+
+    fill_rect_nv12(canvas, stride, 28, 1432, 1024, 232, 7, 13, 24);
+    stroke_rect_nv12(canvas, stride, 28, 1432, 1024, 232, 2, 0, 160, 255);
+    draw_text(canvas, stride, 52, 1458, "PIPELINE", 3, 170, 220, 255);
+    draw_text(canvas, stride, 52, 1518, "VI>VPSS>RGA>OPENCL>VULKAN>NPU>VENC>RTSP>VO", 2, 160, 255, 220);
+    for (int i = 0; i < 8; ++i) {
+        int x = 70 + i * 120;
+        int hbar = 30 + ((frame * (i + 2)) % 88);
+        fill_rect_nv12(canvas, stride, x, 1620 - hbar, 54, hbar, 0, 180 + i * 8, 210);
+    }
+
+    fill_rect_nv12(canvas, stride, 28, 1690, 1024, 190, 5, 10, 18);
+    stroke_rect_nv12(canvas, stride, 28, 1690, 1024, 190, 2, 0, 220, 180);
+    char line[96];
+    snprintf(line, sizeof(line), "CAM %s FRAMES %d  ASSETS %d/%d  MODULES %d/32",
+             g_health.camera_running ? "OK" : "NO",
+             g_health.camera_frames,
+             g_health.loop_loaded,
+             g_health.loop_expected,
+             active_module_count());
+    draw_health_line(canvas, stride, 1718, line, g_health.camera_running);
+    snprintf(line, sizeof(line), "LICENSE %s  DRM %s  RTSP8554 %s  MODEL %s",
+             g_health.license_ok ? "OK" : "NO",
+             g_health.drm_ok ? "OK" : "NO",
+             g_health.rtsp_port_free ? "FREE" : "BUSY",
+             g_health.npu_model_ok ? "OK" : "NO");
+    draw_health_line(canvas, stride, 1764, line,
+                     g_health.license_ok && g_health.drm_ok && g_health.npu_model_ok);
+    draw_text(canvas, stride, 52, 1816, "RTSP RTSP://172.16.9.195:8554/RKTOHI_ALL", 2, 255, 230, 120);
+}
+
+static void draw_solid_test(uint8_t *canvas, int stride) {
+    fill_rect_nv12(canvas, stride, 0, 0, SCREEN_W, SCREEN_H, 8, 16, 24);
+    fill_rect_nv12(canvas, stride, 0, 0, SCREEN_W / 3, SCREEN_H, 180, 40, 50);
+    fill_rect_nv12(canvas, stride, SCREEN_W / 3, 0, SCREEN_W / 3, SCREEN_H, 40, 170, 90);
+    fill_rect_nv12(canvas, stride, SCREEN_W * 2 / 3, 0, SCREEN_W / 3, SCREEN_H, 50, 100, 220);
+    fill_rect_nv12(canvas, stride, 80, 160, 920, 240, 8, 16, 24);
+    stroke_rect_nv12(canvas, stride, 80, 160, 920, 240, 4, 240, 240, 240);
+    draw_text(canvas, stride, 130, 230, "SOLID DISPLAY TEST", 5, 255, 255, 255);
+    draw_text(canvas, stride, 150, 330, "NO CAMERA  NO ASSETS  NO ANIMATION", 2, 230, 245, 255);
+}
+
+int main(int argc, char **argv) {
+    signal(SIGINT, on_signal);
+    signal(SIGTERM, on_signal);
+
+    int heavy_probe = 0;
+    int asset_check = 0;
+    int self_test = 0;
+    int solid_test = 0;
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--probe") == 0) heavy_probe = 1;
+        if (strcmp(argv[i], "--asset-check") == 0) asset_check = 1;
+        if (strcmp(argv[i], "--self-test") == 0) self_test = 1;
+        if (strcmp(argv[i], "--solid-test") == 0) solid_test = 1;
+    }
+
+    if (self_test) {
+        return run_self_test();
+    }
+
+    if (asset_check) {
+        int loaded = load_loop_assets();
+        print_loop_asset_summary();
+        unload_loop_assets();
+        return loaded > 0 ? 0 : 1;
+    }
+
+    const int dstride = ALIGN_UP(SCREEN_W, 64);
+    const size_t display_size = (size_t)dstride * SCREEN_H * 3 / 2;
+
+    if (MEDIA_SYS_Init() != 0) {
+        fprintf(stderr, "MEDIA_SYS_Init failed\n");
+        return 1;
+    }
+    MEDIA_SYS_SetLicense(LICENSE_PATH);
+
+    if (!solid_test) mark_showcase_modules();
+    int loaded_assets = solid_test ? 0 : load_loop_assets();
+    collect_health(loaded_assets);
+    if (heavy_probe && !solid_test) {
+        probe_modules();
+    }
+
+    if (MEDIA_POOL_Create(DISPLAY_POOL, display_size, 4) != 0) {
+        fprintf(stderr, "display pool create failed\n");
+        unload_loop_assets();
+        MEDIA_SYS_Exit();
+        return 1;
+    }
+
+    MEDIA_VO_ATTR vo = {0};
+    vo.intf = MEDIA_VO_INTF_MIPI;
+    vo.width = SCREEN_W;
+    vo.height = SCREEN_H;
+    vo.plane_count = 1;
+    if (MEDIA_VO_SetAttr(0, &vo) != 0 ||
+        MEDIA_VO_CreateChn(0, 0, 0, 0, SCREEN_W, SCREEN_H, dstride, 4,
+                           MEDIA_VO_PLANE_TYPE_AUTO, MEDIA_FORMAT_NV12) != 0 ||
+        MEDIA_VO_Start(0, 0) != 0) {
+        fprintf(stderr, "VO setup failed\n");
+        MEDIA_POOL_Destroy(DISPLAY_POOL);
+        unload_loop_assets();
+        MEDIA_SYS_Exit();
+        return 1;
+    }
+    mark("VO", 1);
+
+    int camera_ok = 0;
+    if (!solid_test && MEDIA_POOL_Create(CAMERA_POOL, CAM_STRIDE * CAM_H * 3 / 2, 6) == 0) {
+        MEDIA_VI_ATTR vi = {0};
+        vi.device = CAMERA_DEVICE;
+        vi.width = CAM_W;
+        vi.height = CAM_H;
+        vi.stride = CAM_STRIDE;
+        vi.fps = FPS;
+        vi.buf_cnt = 4;
+        vi.pool_id = CAMERA_POOL;
+        vi.format = MEDIA_FORMAT_NV12;
+        if (MEDIA_VI_SetAttr(0, &vi) == 0 && MEDIA_VI_Enable(0) == 0) {
+            camera_ok = 1;
+            mark("VI", 1);
+        }
+    }
+    g_health.camera_running = camera_ok;
+
+    printf("alldemo running on DSI 1080x1920%s. Ctrl+C to stop.\n",
+           solid_test ? " solid-test" : "");
+    printf("RTSP showcase address reserved: rtsp://172.16.9.195:8554/rktohi_all\n");
+
+    int frame = 0;
+    int cam_frames = 0;
+    uint8_t *last_cam = malloc(CAM_STRIDE * CAM_H * 3 / 2);
+    if (last_cam) memset(last_cam, 0, CAM_STRIDE * CAM_H * 3 / 2);
+
+    while (g_running) {
+        if (camera_ok) {
+            MEDIA_BUFFER cbuf = {-1, -1};
+            if (MEDIA_VI_GetFrame(0, &cbuf, 1) == 0) {
+                void *addr = NULL;
+                size_t size = 0;
+                if (MEDIA_POOL_BeginCpuAccess(cbuf, DMA_BUF_SYNC_READ) == 0) {
+                    if (map_buffer(cbuf, &addr, &size, PROT_READ) == 0) {
+                        size_t need = CAM_STRIDE * CAM_H * 3 / 2;
+                        if (last_cam && size >= need) {
+                            memcpy(last_cam, addr, need);
+                            cam_frames++;
+                            g_health.camera_frames = cam_frames;
+                        }
+                        munmap(addr, size);
+                    }
+                    (void)MEDIA_POOL_EndCpuAccess(cbuf, DMA_BUF_SYNC_READ);
+                }
+                MEDIA_VI_ReleaseFrame(0, cbuf);
+            }
+        }
+
+        MEDIA_BUFFER dbuf = {-1, -1};
+        if (MEDIA_POOL_GetBuffer(DISPLAY_POOL, &dbuf) != 0) {
+            usleep(1000);
+            continue;
+        }
+        void *addr = NULL;
+        size_t size = 0;
+        if (map_buffer(dbuf, &addr, &size, PROT_READ | PROT_WRITE) != 0) {
+            MEDIA_POOL_PutBuffer(dbuf);
+            continue;
+        }
+        if (MEDIA_POOL_BeginCpuAccess(dbuf, DMA_BUF_SYNC_WRITE) != 0) {
+            munmap(addr, size);
+            MEDIA_POOL_PutBuffer(dbuf);
+            continue;
+        }
+        (void)size;
+        if (solid_test) {
+            draw_solid_test((uint8_t *)addr, dstride);
+        } else {
+            draw_dashboard((uint8_t *)addr, dstride, frame, cam_frames > 0 ? last_cam : NULL);
+        }
+        (void)MEDIA_POOL_EndCpuAccess(dbuf, DMA_BUF_SYNC_WRITE);
+        munmap(addr, size);
+
+        if (MEDIA_SYS_SendFrame("VO", 0, "input0", dbuf, 1000) != 0) {
+            MEDIA_POOL_PutBuffer(dbuf);
+        }
+        frame++;
+        usleep(1000000 / FPS);
+    }
+
+    if (camera_ok) MEDIA_VI_Disable(0);
+    MEDIA_VO_Stop(0, 0);
+    MEDIA_VO_DestroyChn(0, 0);
+    MEDIA_POOL_Destroy(DISPLAY_POOL);
+    MEDIA_POOL_Destroy(CAMERA_POOL);
+    MEDIA_POOL_Destroy(WORK_POOL_NV12);
+    MEDIA_POOL_Destroy(WORK_POOL_RGB);
+    MEDIA_POOL_Destroy(WORK_POOL_OUT);
+    unload_loop_assets();
+    free(last_cam);
+    MEDIA_SYS_Exit();
+    return 0;
+}

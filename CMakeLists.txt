@@ -1,0 +1,41 @@
+cmake_minimum_required(VERSION 3.10)
+project(alldemo C)
+
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+
+add_executable(alldemo src/alldemo.c)
+
+target_include_directories(alldemo PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    /usr/include/libdrm
+)
+
+target_link_libraries(alldemo
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/libmedia.a
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/libparrot_rtsp.a
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/libparrot_pomp.a
+    drm
+    rockchip_mpp
+    dbus-1
+    json-c
+    jpeg
+    png
+    glib-2.0
+    vulkan
+    rga
+    OpenCL
+    crypto
+    EGL
+    freetype
+    rknnrt
+    rt
+    m
+    pthread
+)
+
+set_target_properties(alldemo PROPERTIES
+    BUILD_RPATH "${CMAKE_CURRENT_SOURCE_DIR}/lib"
+    INSTALL_RPATH "$ORIGIN/../lib"
+)

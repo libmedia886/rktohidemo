@@ -1,0 +1,250 @@
+{
+  "format": "svm_3d_asset_v1",
+  "generator": "tools/avm_3d/export_svm_3d_assets.py",
+  "world_units": "pattern_max_dimension_normalized",
+  "input_count": 4,
+  "input_width": 1280,
+  "input_height": 800,
+  "plane_margin": 0.35,
+  "blend_angle_deg": 12.0,
+  "runtime_fusion": {
+    "quality_power": 1.1,
+    "quality_floor_ratio": 0.08,
+    "quality_max_cams": 2,
+    "depth_epsilon": 0.005
+  },
+  "grid": {
+    "angles": 60,
+    "start_angle": 4,
+    "step_x": 0.2,
+    "requested_nop_z": 80,
+    "effective_nop_z": 4,
+    "effective_nop_z_auto": 4,
+    "ground_rings": 20,
+    "bowl_rings": 18
+  },
+  "bowl": {
+    "profile": "piecewise_quadratic_flat_center",
+    "flat_radius": 0.627134,
+    "outer_radius": 1.427134,
+    "wall_height": 0.9,
+    "k": 0.5476405
+  },
+  "visibility": {
+    "min_view_cos": 0.05,
+    "edge_margin_px": 2.0,
+    "edge_fade_ratio": 0.06
+  },
+  "seam": {
+    "enabled": false,
+    "angle_bins": 360,
+    "search_angle_deg": 32.0,
+    "band_deg": 8.0,
+    "smoothness": 0.35,
+    "max_step": 4,
+    "color_weight": 1.0,
+    "quality_weight": 0.3,
+    "center_weight": 0.15,
+    "ground_rings": 0,
+    "bowl_rings": 0
+  },
+  "ground": {
+    "extent": {
+      "xmin": -0.598546,
+      "xmax": 0.597907,
+      "ymin": -0.598283,
+      "ymax": 0.598602
+    },
+    "preview_path": ""
+  },
+  "vehicle": {
+    "mesh_path": "/userdata/rktohi/build/avm_3d/vehicle_mesh.json",
+    "scale": 0.0
+  },
+  "cameras": [
+    {
+      "camera_id": 1,
+      "sorted_index": 3,
+      "center_yaw_deg": 90.751,
+      "left_boundary_deg": 46.261,
+      "right_boundary_deg": 135.888,
+      "camera_center_world": [
+        0.004632,
+        0.132791,
+        0.610888
+      ],
+      "camera_forward_world": [
+        -0.01141,
+        0.870253,
+        -0.492473
+      ],
+      "rotation_world_to_camera": [
+        [
+          0.999909,
+          0.006401,
+          -0.011857
+        ],
+        [
+          -0.007166,
+          -0.492564,
+          -0.870247
+        ],
+        [
+          -0.01141,
+          0.870253,
+          -0.492473
+        ]
+      ],
+      "translation_world_to_camera": [
+        0.001761,
+        0.597065,
+        0.185337
+      ],
+      "mesh_path": "array1",
+      "overlap_mesh_path": "array11",
+      "base_mesh_path": "array12",
+      "mask_path": "mask0.png",
+      "triangle_count": 2784,
+      "overlap_triangle_count": 1640,
+      "base_triangle_count": 438
+    },
+    {
+      "camera_id": 2,
+      "sorted_index": 2,
+      "center_yaw_deg": 1.77,
+      "left_boundary_deg": -43.825,
+      "right_boundary_deg": 46.261,
+      "camera_center_world": [
+        0.153914,
+        0.009054,
+        0.614281
+      ],
+      "camera_forward_world": [
+        0.863997,
+        0.026705,
+        -0.502788
+      ],
+      "rotation_world_to_camera": [
+        [
+          0.019442,
+          -0.999617,
+          -0.019684
+        ],
+        [
+          -0.503122,
+          0.007232,
+          -0.864185
+        ],
+        [
+          0.863997,
+          0.026705,
+          -0.502788
+        ]
+      ],
+      "translation_world_to_camera": [
+        0.01815,
+        0.608225,
+        0.17563
+      ],
+      "mesh_path": "array2",
+      "overlap_mesh_path": "array21",
+      "base_mesh_path": "array22",
+      "mask_path": "mask1.png",
+      "triangle_count": 2783,
+      "overlap_triangle_count": 1643,
+      "base_triangle_count": 415
+    },
+    {
+      "camera_id": 3,
+      "sorted_index": 1,
+      "center_yaw_deg": -89.421,
+      "left_boundary_deg": -134.198,
+      "right_boundary_deg": -43.825,
+      "camera_center_world": [
+        0.01286,
+        -0.132835,
+        0.60446
+      ],
+      "camera_forward_world": [
+        0.008978,
+        -0.88831,
+        -0.459156
+      ],
+      "rotation_world_to_camera": [
+        [
+          -0.999703,
+          -0.01838,
+          0.01601
+        ],
+        [
+          -0.022661,
+          0.458876,
+          -0.888211
+        ],
+        [
+          0.008978,
+          -0.88831,
+          -0.459156
+        ]
+      ],
+      "translation_world_to_camera": [
+        0.000738,
+        0.598134,
+        0.159427
+      ],
+      "mesh_path": "array3",
+      "overlap_mesh_path": "array31",
+      "base_mesh_path": "array32",
+      "mask_path": "mask2.png",
+      "triangle_count": 2926,
+      "overlap_triangle_count": 1722,
+      "base_triangle_count": 433
+    },
+    {
+      "camera_id": 4,
+      "sorted_index": 0,
+      "center_yaw_deg": -178.974,
+      "left_boundary_deg": -224.112,
+      "right_boundary_deg": -134.198,
+      "camera_center_world": [
+        -0.12605,
+        -0.003226,
+        0.601834
+      ],
+      "camera_forward_world": [
+        -0.870754,
+        -0.015591,
+        -0.491472
+      ],
+      "rotation_world_to_camera": [
+        [
+          -0.026339,
+          0.999541,
+          0.014957
+        ],
+        [
+          0.491013,
+          0.025968,
+          -0.870765
+        ],
+        [
+          -0.870754,
+          -0.015591,
+          -0.491472
+        ]
+      ],
+      "translation_world_to_camera": [
+        -0.009097,
+        0.586032,
+        0.185976
+      ],
+      "mesh_path": "array4",
+      "overlap_mesh_path": "array41",
+      "base_mesh_path": "array42",
+      "mask_path": "mask3.png",
+      "triangle_count": 2879,
+      "overlap_triangle_count": 1716,
+      "base_triangle_count": 447
+    }
+  ]
+}

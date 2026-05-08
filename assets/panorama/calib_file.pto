@@ -1,0 +1,48 @@
+# hugin project file
+#hugin_ptoversion 2
+p f2 w8378 h4189 v360  k0 E0 R0 n"TIFF_m c:LZW"
+m i0
+
+# image lines
+#-hugin  cropFactor=1
+i w2560 h1520 f0 v90.292 Ra0 Rb0 Rc0 Rd0 Re0 Eev0 Er1 Eb1 r90 p-25 y22.65 TrX0 TrY0 TrZ0 Tpy0 Tpp0 j0 a0.0299999993294477 b-0.127369999885559 c-0.0362999998033047 d0 e0 g0 t0 Va1 Vb0 Vc0 Vd0 Vx0 Vy0  Vm5 n"camera_0.jpg"
+#-hugin  cropFactor=1 disabled
+i w2560 h1520 f0 v90.162 Ra0 Rb0 Rc0 Rd0 Re0 Eev0 Er1 Eb1 r-90.7 p-26 y-22.65 TrX0 TrY0 TrZ0 Tpy0 Tpp0 j0 a0.0299999993294477 b-0.127369999885559 c-0.0362999998033047 d0 e0 g0 t0 Va1 Vb0 Vc0 Vd0 Vx0 Vy0  Vm5 n"camera_1.jpg"
+
+
+# specify variables that should be optimized
+v
+
+
+# control points
+
+#hugin_optimizeReferenceImage 0
+#hugin_blender enblend
+#hugin_remapper nona
+#hugin_enblendOptions 
+#hugin_enfuseOptions 
+#hugin_hdrmergeOptions 
+#hugin_verdandiOptions 
+#hugin_edgeFillMode 0
+#hugin_edgeFillKeepInput false
+#hugin_outputLDRBlended true
+#hugin_outputLDRLayers false
+#hugin_outputLDRExposureRemapped false
+#hugin_outputLDRExposureLayers false
+#hugin_outputLDRExposureBlended false
+#hugin_outputLDRStacks false
+#hugin_outputLDRExposureLayersFused false
+#hugin_outputHDRBlended false
+#hugin_outputHDRLayers false
+#hugin_outputHDRStacks false
+#hugin_outputLayersCompression LZW
+#hugin_outputImageType tif
+#hugin_outputImageTypeCompression LZW
+#hugin_outputJPEGQuality 95
+#hugin_outputImageTypeHDR exr
+#hugin_outputImageTypeHDRCompression LZW
+#hugin_outputStacksMinOverlap 0.7
+#hugin_outputLayersExposureDiff 0.5
+#hugin_outputRangeCompression 0
+#hugin_optimizerMasterSwitch 0
+#hugin_optimizerPhotoMasterSwitch 0

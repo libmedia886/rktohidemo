@@ -1,0 +1,48 @@
+{
+  "screen": {
+    "width": 1080,
+    "height": 1920,
+    "orientation": "portrait",
+    "interface": "MIPI/DSI"
+  },
+  "camera": {
+    "device": "/dev/video-camera0",
+    "format": "NV12",
+    "width": 640,
+    "height": 640,
+    "role": "live visible-light source"
+  },
+  "modules": [
+    {"name": "VI", "source": "camera", "effect": "live visible-light input"},
+    {"name": "VPSS", "source": "camera", "effect": "multi-output crop/scale fanout"},
+    {"name": "VO", "source": "composited frame", "effect": "portrait dashboard display"},
+    {"name": "RGA", "source": "camera", "effect": "crop / rotate / mosaic / fast blit"},
+    {"name": "RESIZE_RGA", "source": "camera", "effect": "hardware resize tiles"},
+    {"name": "CSC_RGA", "source": "camera", "effect": "RGA color conversion path"},
+    {"name": "CSC_CL", "source": "camera", "effect": "OpenCL color conversion path"},
+    {"name": "OSD", "source": "camera", "effect": "HUD boxes / scan line / status overlay"},
+    {"name": "CLAHE", "source": "camera", "effect": "local contrast enhancement"},
+    {"name": "RETINEX", "source": "camera", "effect": "low-light enhancement"},
+    {"name": "CAP_DEHAZE", "source": "camera", "effect": "CAP dehaze comparison"},
+    {"name": "DCP_FAST_DEHAZE", "source": "camera", "effect": "fast dark-channel dehaze comparison"},
+    {"name": "THERMAL", "source": "assets/loop/thermal/*.png", "effect": "pseudo thermal color map from loop images"},
+    {"name": "CONV_CL", "source": "camera", "effect": "edge / sharpen / blur tiles"},
+    {"name": "TRANSFORM", "source": "assets/loop/transform/*.png", "effect": "fisheye / swirl / LUT warp"},
+    {"name": "BLEND_PYR", "source": "camera + loop mask", "effect": "soft wipe fusion"},
+    {"name": "EDOF_CL", "source": "loop image pair", "effect": "near/far focus fusion"},
+    {"name": "EXPOSURE_FUSION_CL", "source": "synthetic dark/bright pair", "effect": "HDR-style exposure fusion"},
+    {"name": "DUALVIEW", "source": "camera + delayed/loop source", "effect": "side-by-side and interlace modes"},
+    {"name": "STEREO_3D", "source": "loop image pair", "effect": "side-by-side / line-by-line 3D"},
+    {"name": "VMIX", "source": "all tile streams", "effect": "Vulkan compositor path"},
+    {"name": "VMIX_RGA", "source": "all tile streams", "effect": "RGA compositor path"},
+    {"name": "PANO", "source": "virtual multi-input loop", "effect": "panorama stitch using PTO"},
+    {"name": "AVM", "source": "assets/loop/avm_inputs/*.jpg", "effect": "2D surround view"},
+    {"name": "SVM3D", "source": "assets/svm3d/svm_3d_assets.json", "effect": "3D surround-view sweep"},
+    {"name": "NPU", "source": "camera", "effect": "YOLO/MobileNet AI status and boxes"},
+    {"name": "VENC", "source": "composited frame", "effect": "H.264 stream encode"},
+    {"name": "VDEC", "source": "RTSP loopback", "effect": "network return preview"},
+    {"name": "RTSP_SEND", "source": "VENC", "effect": "network stream out"},
+    {"name": "RTSP_RECV", "source": "rtsp://127.0.0.1:8554/rktohi_all", "effect": "network loopback in"},
+    {"name": "PIC_SEND/PIC_REV", "source": "loop assets", "effect": "image-sequence source and recorder"}
+  ]
+}
