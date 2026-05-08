@@ -43,6 +43,14 @@ cmake --build build -j
 
 正常运行时，底部状态栏会显示摄像头出帧数、素材加载数、模块激活数、license/DRM/RTSP/NPU 状态。摄像头未出帧时主画面会明确显示 `CAMERA OFFLINE`。
 
+小窗体右上角状态含义：
+
+- `LIVE`：真实模块链路正在输出，例如当前 OSD tile 使用 `camera frame -> OSD module -> tile`
+- `PROBED`：模块初始化探测通过，但默认展示未接实时输出
+- `LOOP`：使用循环素材展示
+- `SYNTH`：合成占位展示，不代表真实算法进度
+- `OFFLINE`：资源缺失或模块未启用
+
 如果屏幕出现条纹或闪烁，先跑纯色显示链路测试：
 
 ```bash

@@ -43,6 +43,6 @@
     {"name": "VDEC", "source": "RTSP loopback", "effect": "network return preview"},
     {"name": "RTSP_SEND", "source": "VENC", "effect": "network stream out"},
     {"name": "RTSP_RECV", "source": "rtsp://127.0.0.1:8554/rktohi_all", "effect": "network loopback in"},
-    {"name": "PIC_SEND/PIC_REV", "source": "loop assets", "effect": "image-sequence source and recorder"}
+    {"name": "PIC_IO", "source": "loop assets", "effect": "image-sequence source and recorder"}
   ]
 }

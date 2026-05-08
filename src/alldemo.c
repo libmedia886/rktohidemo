@@ -31,6 +31,9 @@
 #define WORK_POOL_NV12 3
 #define WORK_POOL_RGB 4
 #define WORK_POOL_OUT 5
+#define OSD_INPUT_POOL 6
+#define OSD_OUTPUT_POOL 7
+#define LIVE_OSD_GRP 60
 
 #define CAM_W 640
 #define CAM_H 640
@@ -39,11 +42,13 @@
 #define CAMERA_DEVICE "/dev/video-camera0"
 #define LICENSE_PATH "/root/licence.dat"
 #define RTSP_PORT 8554
+#define CAM_FRAME_SIZE (CAM_STRIDE * CAM_H * 3 / 2)
 
 typedef struct {
     const char *name;
     int active;
     int frames;
+    int status;
 } module_tile_t;
 
 typedef struct {
@@ -80,15 +85,33 @@ typedef struct {
 static volatile int g_running = 1;
 static health_status_t g_health = {0};
 
+static void set_tile_status(const char *name, int status);
+
+enum {
+    TILE_OFFLINE = 0,
+    TILE_SYNTH = 1,
+    TILE_LOOP = 2,
+    TILE_PROBED = 3,
+    TILE_LIVE = 4,
+};
+
 static module_tile_t g_tiles[] = {
-    {"VI", 0, 0}, {"VPSS", 0, 0}, {"VO", 0, 0}, {"RGA", 0, 0},
-    {"RESIZE", 0, 0}, {"CSC_RGA", 0, 0}, {"CSC_CL", 0, 0}, {"OSD", 0, 0},
-    {"CLAHE", 0, 0}, {"RETINEX", 0, 0}, {"CAP", 0, 0}, {"DCP", 0, 0},
-    {"THERMAL", 0, 0}, {"CONV", 0, 0}, {"TRANS", 0, 0}, {"BLEND", 0, 0},
-    {"EDOF", 0, 0}, {"EXPO", 0, 0}, {"DUAL", 0, 0}, {"STEREO", 0, 0},
-    {"VMIX", 0, 0}, {"VMIX_RGA", 0, 0}, {"PANO", 0, 0}, {"AVM", 0, 0},
-    {"SVM3D", 0, 0}, {"NPU", 0, 0}, {"VENC", 0, 0}, {"VDEC", 0, 0},
-    {"RTSP_TX", 0, 0}, {"RTSP_RX", 0, 0}, {"PIC_IO", 0, 0}, {"LICENSE", 0, 0},
+    {"VI", 0, 0, TILE_OFFLINE}, {"VPSS", 0, 0, TILE_OFFLINE},
+    {"VO", 0, 0, TILE_OFFLINE}, {"RGA", 0, 0, TILE_OFFLINE},
+    {"RESIZE_RGA", 0, 0, TILE_OFFLINE}, {"CSC_RGA", 0, 0, TILE_OFFLINE},
+    {"CSC_CL", 0, 0, TILE_OFFLINE}, {"OSD", 0, 0, TILE_OFFLINE},
+    {"CLAHE", 0, 0, TILE_OFFLINE}, {"RETINEX", 0, 0, TILE_OFFLINE},
+    {"CAP_DEHAZE", 0, 0, TILE_OFFLINE}, {"DCP_FAST_DEHAZE", 0, 0, TILE_OFFLINE},
+    {"THERMAL", 0, 0, TILE_OFFLINE}, {"CONV_CL", 0, 0, TILE_OFFLINE},
+    {"TRANSFORM", 0, 0, TILE_OFFLINE}, {"BLEND_PYR", 0, 0, TILE_OFFLINE},
+    {"EDOF_CL", 0, 0, TILE_OFFLINE}, {"EXPOSURE_FUSION_CL", 0, 0, TILE_OFFLINE},
+    {"DUALVIEW", 0, 0, TILE_OFFLINE}, {"STEREO_3D", 0, 0, TILE_OFFLINE},
+    {"VMIX", 0, 0, TILE_OFFLINE}, {"VMIX_RGA", 0, 0, TILE_OFFLINE},
+    {"PANO", 0, 0, TILE_OFFLINE}, {"AVM", 0, 0, TILE_OFFLINE},
+    {"SVM3D", 0, 0, TILE_OFFLINE}, {"NPU", 0, 0, TILE_OFFLINE},
+    {"VENC", 0, 0, TILE_OFFLINE}, {"VDEC", 0, 0, TILE_OFFLINE},
+    {"RTSP_SEND", 0, 0, TILE_OFFLINE}, {"RTSP_RECV", 0, 0, TILE_OFFLINE},
+    {"PIC_IO", 0, 0, TILE_OFFLINE}, {"LICENSE", 0, 0, TILE_OFFLINE},
 };
 
 static loop_asset_t g_loop_assets[] = {
@@ -96,7 +119,7 @@ static loop_asset_t g_loop_assets[] = {
         "assets/loop/thermal/thermal_1.png",
         "assets/loop/thermal/thermal_2.png",
     }, 2, {{0}}, 0},
-    {"TRANS", "TRANSFORM LOOP", {
+    {"TRANSFORM", "TRANSFORM LOOP", {
         "assets/loop/transform/transform_1.png",
     }, 1, {{0}}, 0},
     {"VMIX", "VMIX LOOP", {
@@ -495,14 +518,46 @@ static void draw_camera_tile(uint8_t *dst, int dstride, int dx, int dy, int dw, 
     }
 }
 
+static const char *tile_status_text(int status) {
+    switch (status) {
+    case TILE_LIVE: return "LIVE";
+    case TILE_PROBED: return "PROBED";
+    case TILE_LOOP: return "LOOP";
+    case TILE_SYNTH: return "SYNTH";
+    default: return "OFFLINE";
+    }
+}
+
+static void tile_status_color(int status, uint8_t *r, uint8_t *g, uint8_t *b) {
+    switch (status) {
+    case TILE_LIVE:
+        *r = 80; *g = 255; *b = 180; return;
+    case TILE_PROBED:
+        *r = 120; *g = 190; *b = 255; return;
+    case TILE_LOOP:
+        *r = 255; *g = 220; *b = 100; return;
+    case TILE_SYNTH:
+        *r = 160; *g = 180; *b = 205; return;
+    default:
+        *r = 255; *g = 120; *b = 90; return;
+    }
+}
+
 static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int h,
-                             int idx, int frame, int active) {
+                             int idx, int frame, int active, const uint8_t *osd_live) {
     uint8_t r0 = (uint8_t)((idx * 47 + frame * 2) % 180 + 40);
     uint8_t g0 = (uint8_t)((idx * 83 + frame * 3) % 180 + 40);
     uint8_t b0 = (uint8_t)((idx * 29 + frame * 5) % 180 + 40);
+    uint8_t sr, sg, sb;
+    tile_status_color(g_tiles[idx].status, &sr, &sg, &sb);
     fill_rect_nv12(dst, stride, x, y, w, h, 6, 12, 20);
     loop_asset_t *loop = find_loop_asset(g_tiles[idx].name);
-    if (loop && loop->loaded_count > 0) {
+    if (strcmp(g_tiles[idx].name, "OSD") == 0 && osd_live) {
+        draw_camera_tile(dst, stride, x + 6, y + 30, w - 12, h - 38,
+                         osd_live, CAM_W, CAM_H, CAM_STRIDE);
+        fill_rect_nv12(dst, stride, x + 6, y + h - 24, w - 12, 18, 0, 0, 0);
+        draw_text(dst, stride, x + 12, y + h - 22, "CAMERA > OSD", 1, 220, 255, 230);
+    } else if (loop && loop->loaded_count > 0) {
         const image_asset_t *img = &loop->images[(frame / 30) % loop->loaded_count];
         draw_rgb_image_nv12(dst, stride, x + 6, y + 30, w - 12, h - 38, img);
         fill_rect_nv12(dst, stride, x + 6, y + h - 24, w - 12, 18, 0, 0, 0);
@@ -511,13 +566,24 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
         fill_rect_nv12(dst, stride, x + 14, y + 48, 44, 44, r0, g0, b0);
         fill_rect_nv12(dst, stride, x + 66, y + 52, w - 82, 12, 16, 28, 42);
         fill_rect_nv12(dst, stride, x + 66, y + 74, (w - 82) * 3 / 4, 12, 16, 28, 42);
-        draw_text(dst, stride, x + 14, y + 108, "SYNTHETIC FEED", 1, 190, 230, 255);
-        draw_text(dst, stride, x + 14, y + 126, "NO LIVE ALGO", 1, 140, 170, 200);
+        if (g_tiles[idx].status == TILE_PROBED) {
+            draw_text(dst, stride, x + 14, y + 108, "INIT OK", 1, 190, 230, 255);
+            draw_text(dst, stride, x + 14, y + 126, "NO LIVE OUTPUT", 1, 140, 170, 200);
+        } else if (g_tiles[idx].status == TILE_LIVE) {
+            draw_text(dst, stride, x + 14, y + 108, "LIVE MODULE", 1, 190, 255, 220);
+            draw_text(dst, stride, x + 14, y + 126, "REAL FRAMES", 1, 140, 210, 180);
+        } else {
+            draw_text(dst, stride, x + 14, y + 108, "SYNTHETIC FEED", 1, 190, 230, 255);
+            draw_text(dst, stride, x + 14, y + 126, "NO LIVE ALGO", 1, 140, 170, 200);
+        }
     }
     stroke_rect_nv12(dst, stride, x, y, w, h, active ? 3 : 1,
-                     active ? 0 : 70, active ? 240 : 70, active ? 190 : 70);
-    draw_text(dst, stride, x + 10, y + 10, g_tiles[idx].name, 2,
+                     active ? sr : 70, active ? sg : 70, active ? sb : 70);
+    int name_scale = strlen(g_tiles[idx].name) > 11 ? 1 : 2;
+    draw_text(dst, stride, x + 10, y + 10, g_tiles[idx].name, name_scale,
               active ? 170 : 90, active ? 255 : 90, active ? 220 : 90);
+    fill_rect_nv12(dst, stride, x + w - 74, y + 8, 64, 20, 0, 0, 0);
+    draw_text(dst, stride, x + w - 68, y + 12, tile_status_text(g_tiles[idx].status), 1, sr, sg, sb);
 }
 
 static int map_buffer(MEDIA_BUFFER buf, void **addr, size_t *size, int prot) {
@@ -569,10 +635,166 @@ static MEDIA_BUFFER make_work_frame(int pool, int w, int h, int stride, int fram
     return buf;
 }
 
+static int copy_to_buffer(MEDIA_BUFFER buf, const uint8_t *src, size_t need) {
+    void *addr = NULL;
+    size_t size = 0;
+    if (!src) return -1;
+    if (map_buffer(buf, &addr, &size, PROT_READ | PROT_WRITE) != 0) return -1;
+    if (MEDIA_POOL_BeginCpuAccess(buf, DMA_BUF_SYNC_WRITE) != 0) {
+        munmap(addr, size);
+        return -1;
+    }
+    if (size < need) {
+        (void)MEDIA_POOL_EndCpuAccess(buf, DMA_BUF_SYNC_WRITE);
+        munmap(addr, size);
+        return -1;
+    }
+    memcpy(addr, src, need);
+    (void)MEDIA_POOL_EndCpuAccess(buf, DMA_BUF_SYNC_WRITE);
+    munmap(addr, size);
+    return 0;
+}
+
+static int copy_from_buffer(MEDIA_BUFFER buf, uint8_t *dst, size_t need) {
+    void *addr = NULL;
+    size_t size = 0;
+    if (!dst) return -1;
+    if (MEDIA_POOL_BeginCpuAccess(buf, DMA_BUF_SYNC_READ) != 0) return -1;
+    if (map_buffer(buf, &addr, &size, PROT_READ) != 0) {
+        (void)MEDIA_POOL_EndCpuAccess(buf, DMA_BUF_SYNC_READ);
+        return -1;
+    }
+    if (size < need) {
+        munmap(addr, size);
+        (void)MEDIA_POOL_EndCpuAccess(buf, DMA_BUF_SYNC_READ);
+        return -1;
+    }
+    memcpy(dst, addr, need);
+    munmap(addr, size);
+    (void)MEDIA_POOL_EndCpuAccess(buf, DMA_BUF_SYNC_READ);
+    return 0;
+}
+
+static int setup_live_osd(void) {
+    if (MEDIA_POOL_Create(OSD_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
+    if (MEDIA_POOL_Create(OSD_OUTPUT_POOL, CAM_FRAME_SIZE, 3) != 0) {
+        MEDIA_POOL_Destroy(OSD_INPUT_POOL);
+        return -1;
+    }
+
+    MEDIA_OSD_ATTR attr = {0};
+    attr.input_width = CAM_W;
+    attr.input_height = CAM_H;
+    attr.format = MEDIA_FORMAT_NV12;
+    attr.input_depth = 3;
+    attr.output_pool_id = OSD_OUTPUT_POOL;
+    attr.input_stride = CAM_STRIDE;
+    attr.output_stride = CAM_STRIDE;
+    attr.max_regions = 3;
+    if (MEDIA_OSD_CreateGrp(LIVE_OSD_GRP, &attr) != 0) {
+        MEDIA_POOL_Destroy(OSD_INPUT_POOL);
+        MEDIA_POOL_Destroy(OSD_OUTPUT_POOL);
+        return -1;
+    }
+
+    MEDIA_OSD_REGION_ATTR box_attr = {0};
+    box_attr.enabled = 1;
+    box_attr.x = 36;
+    box_attr.y = 36;
+    box_attr.width = 240;
+    box_attr.height = 140;
+    box_attr.zorder = 0;
+    box_attr.global_alpha = 255;
+    MEDIA_OSD_RECT_DESC box = {0};
+    box.filled = 0;
+    box.line_width = 5;
+    box.color.r = 0;
+    box.color.g = 255;
+    box.color.b = 190;
+    box.color.a = 255;
+    if (MEDIA_OSD_UpdateRegion(LIVE_OSD_GRP, 0, &box_attr) != 0 ||
+        MEDIA_OSD_SetRegionRect(LIVE_OSD_GRP, 0, &box) != 0) {
+        MEDIA_OSD_DestroyGrp(LIVE_OSD_GRP);
+        MEDIA_POOL_Destroy(OSD_INPUT_POOL);
+        MEDIA_POOL_Destroy(OSD_OUTPUT_POOL);
+        return -1;
+    }
+
+    MEDIA_OSD_REGION_ATTR hud_attr = {0};
+    hud_attr.enabled = 1;
+    hud_attr.x = 36;
+    hud_attr.y = 520;
+    hud_attr.width = 420;
+    hud_attr.height = 54;
+    hud_attr.zorder = 1;
+    hud_attr.global_alpha = 180;
+    MEDIA_OSD_RECT_DESC hud = {0};
+    hud.filled = 1;
+    hud.line_width = 1;
+    hud.color.r = 8;
+    hud.color.g = 18;
+    hud.color.b = 30;
+    hud.color.a = 255;
+    if (MEDIA_OSD_UpdateRegion(LIVE_OSD_GRP, 1, &hud_attr) != 0 ||
+        MEDIA_OSD_SetRegionRect(LIVE_OSD_GRP, 1, &hud) != 0) {
+        MEDIA_OSD_DestroyGrp(LIVE_OSD_GRP);
+        MEDIA_POOL_Destroy(OSD_INPUT_POOL);
+        MEDIA_POOL_Destroy(OSD_OUTPUT_POOL);
+        return -1;
+    }
+
+    if (MEDIA_OSD_Start(LIVE_OSD_GRP) != 0) {
+        MEDIA_OSD_DestroyGrp(LIVE_OSD_GRP);
+        MEDIA_POOL_Destroy(OSD_INPUT_POOL);
+        MEDIA_POOL_Destroy(OSD_OUTPUT_POOL);
+        return -1;
+    }
+    set_tile_status("OSD", TILE_LIVE);
+    return 0;
+}
+
+static void cleanup_live_osd(int enabled) {
+    if (!enabled) return;
+    MEDIA_OSD_Stop(LIVE_OSD_GRP);
+    MEDIA_OSD_DestroyGrp(LIVE_OSD_GRP);
+    MEDIA_POOL_Destroy(OSD_INPUT_POOL);
+    MEDIA_POOL_Destroy(OSD_OUTPUT_POOL);
+}
+
+static int process_live_osd(const uint8_t *src, uint8_t *dst) {
+    MEDIA_BUFFER in = {-1, -1};
+    MEDIA_BUFFER out = {-1, -1};
+    int ret = -1;
+    if (MEDIA_POOL_GetBuffer(OSD_INPUT_POOL, &in) != 0) return -1;
+    if (copy_to_buffer(in, src, CAM_FRAME_SIZE) != 0) {
+        MEDIA_POOL_PutBuffer(in);
+        return -1;
+    }
+    if (MEDIA_OSD_SendFrame(LIVE_OSD_GRP, in, 20) != 0) {
+        MEDIA_POOL_PutBuffer(in);
+        return -1;
+    }
+    if (MEDIA_OSD_GetFrame(LIVE_OSD_GRP, &out, 20) == 0) {
+        ret = copy_from_buffer(out, dst, CAM_FRAME_SIZE);
+        MEDIA_OSD_ReleaseFrame(LIVE_OSD_GRP, out);
+    }
+    return ret;
+}
+
 static void mark(const char *name, int active) {
     for (size_t i = 0; i < sizeof(g_tiles) / sizeof(g_tiles[0]); ++i) {
         if (strcmp(g_tiles[i].name, name) == 0) {
             g_tiles[i].active = active;
+            return;
+        }
+    }
+}
+
+static void set_tile_status(const char *name, int status) {
+    for (size_t i = 0; i < sizeof(g_tiles) / sizeof(g_tiles[0]); ++i) {
+        if (strcmp(g_tiles[i].name, name) == 0) {
+            g_tiles[i].status = status;
+            g_tiles[i].active = status != TILE_OFFLINE;
             return;
         }
     }
@@ -592,7 +814,7 @@ static int load_loop_assets(void) {
                 fprintf(stderr, "warning: failed to load loop asset %s\n", loop->paths[j]);
             }
         }
-        if (loop->loaded_count > 0) mark(loop->tile_name, 1);
+        if (loop->loaded_count > 0) set_tile_status(loop->tile_name, TILE_LOOP);
     }
     return total;
 }
@@ -648,6 +870,7 @@ static int run_self_test(void) {
 static void mark_showcase_modules(void) {
     for (size_t i = 0; i < sizeof(g_tiles) / sizeof(g_tiles[0]); ++i) {
         g_tiles[i].active = 1;
+        g_tiles[i].status = TILE_SYNTH;
     }
 }
 
@@ -658,7 +881,7 @@ static void probe_modules(void) {
     MEDIA_POOL_Create(WORK_POOL_OUT, stride * h * 3 / 2, 16);
 
     uint64_t dummy = 0;
-    if (MEDIA_SYS_GetVersion()) mark("LICENSE", 1);
+    if (MEDIA_SYS_GetVersion()) set_tile_status("LICENSE", TILE_PROBED);
 
     MEDIA_VPSS_ATTR vpss = {0};
     vpss.width = w; vpss.height = h; vpss.input_stride = stride; vpss.input_format = MEDIA_FORMAT_NV12;
@@ -666,133 +889,133 @@ static void probe_modules(void) {
     vpss.outputs[0].output_id = 0; vpss.outputs[0].out_width = w; vpss.outputs[0].out_height = h;
     vpss.outputs[0].out_stride = stride; vpss.outputs[0].pool_id = WORK_POOL_OUT;
     vpss.outputs[0].output_format = MEDIA_FORMAT_NV12;
-    if (MEDIA_VPSS_SetAttr(20, &vpss) == 0) { mark("VPSS", 1); MEDIA_VPSS_DestroyGrp(20); }
+    if (MEDIA_VPSS_SetAttr(20, &vpss) == 0) { set_tile_status("VPSS", TILE_PROBED); MEDIA_VPSS_DestroyGrp(20); }
 
     MEDIA_RGA_GRP_ATTR rga = {0};
     rga.algo = MEDIA_RGA_ALG_RESIZE; rga.input_count = 1; rga.output_count = 1; rga.input_depth = 2; rga.output_depth = 2;
     rga.inputs[0].port_id = 0; rga.inputs[0].width = w; rga.inputs[0].height = h; rga.inputs[0].format = MEDIA_FORMAT_NV12; rga.inputs[0].queue_depth = 2;
     rga.outputs[0].port_id = 0; rga.outputs[0].width = w; rga.outputs[0].height = h; rga.outputs[0].format = MEDIA_FORMAT_NV12; rga.outputs[0].pool_id = WORK_POOL_OUT;
-    if (MEDIA_RGA_CreateGrp(20, &rga) == 0) { mark("RGA", 1); MEDIA_RGA_DestroyChn(20); }
+    if (MEDIA_RGA_CreateGrp(20, &rga) == 0) { set_tile_status("RGA", TILE_PROBED); MEDIA_RGA_DestroyChn(20); }
 
     MEDIA_RESIZE_RGA_ATTR rz = {0};
     rz.input_format = MEDIA_FORMAT_NV12; rz.input_stride = stride; rz.input_depth = 2;
     rz.out_width = w; rz.out_height = h; rz.out_stride = stride; rz.output_format = MEDIA_FORMAT_NV12; rz.output_pool_id = WORK_POOL_OUT;
-    if (MEDIA_RESIZE_RGA_CreateGrp(21, &rz) == 0) { mark("RESIZE", 1); MEDIA_RESIZE_RGA_DestroyGrp(21); }
+    if (MEDIA_RESIZE_RGA_CreateGrp(21, &rz) == 0) { set_tile_status("RESIZE_RGA", TILE_PROBED); MEDIA_RESIZE_RGA_DestroyGrp(21); }
 
     MEDIA_CSC_RGA_ATTR cr = {0};
     cr.input_width = w; cr.input_height = h; cr.input_format = MEDIA_FORMAT_NV12; cr.output_format = MEDIA_FORMAT_RGB888;
     cr.input_depth = 2; cr.output_pool_id = WORK_POOL_RGB; cr.input_stride = stride; cr.output_stride = w * 3;
-    if (MEDIA_CSC_RGA_CreateGrp(22, &cr) == 0) { mark("CSC_RGA", 1); MEDIA_CSC_RGA_DestroyGrp(22); }
+    if (MEDIA_CSC_RGA_CreateGrp(22, &cr) == 0) { set_tile_status("CSC_RGA", TILE_PROBED); MEDIA_CSC_RGA_DestroyGrp(22); }
 
     MEDIA_CSC_CL_ATTR cc = {0};
     cc.input_width = w; cc.input_height = h; cc.input_format = MEDIA_FORMAT_NV12; cc.output_format = MEDIA_FORMAT_RGB888;
     cc.input_depth = 2; cc.output_pool_id = WORK_POOL_RGB; cc.input_stride = stride; cc.output_stride = w * 3;
-    if (MEDIA_CSC_CL_CreateGrp(23, &cc) == 0) { mark("CSC_CL", 1); MEDIA_CSC_CL_DestroyGrp(23); }
+    if (MEDIA_CSC_CL_CreateGrp(23, &cc) == 0) { set_tile_status("CSC_CL", TILE_PROBED); MEDIA_CSC_CL_DestroyGrp(23); }
 
     MEDIA_THERMAL_ATTR th = {0};
     th.width = w; th.height = h; th.format = MEDIA_FORMAT_NV12; th.color_mode = MEDIA_THERMAL_COLOR_RAINBOW3;
     th.input_depth = 2; th.output_depth = 2;
-    if (MEDIA_THERMAL_CreateGrp(24, &th) == 0) { mark("THERMAL", 1); MEDIA_THERMAL_DestroyGrp(24); }
+    if (MEDIA_THERMAL_CreateGrp(24, &th) == 0) { set_tile_status("THERMAL", TILE_PROBED); MEDIA_THERMAL_DestroyGrp(24); }
 
     MEDIA_OSD_ATTR osd = {0};
     osd.input_width = w; osd.input_height = h; osd.format = MEDIA_FORMAT_NV12; osd.input_depth = 2;
     osd.output_pool_id = WORK_POOL_OUT; osd.input_stride = stride; osd.output_stride = stride; osd.max_regions = 8;
-    if (MEDIA_OSD_CreateGrp(25, &osd) == 0) { mark("OSD", 1); MEDIA_OSD_DestroyGrp(25); }
+    if (MEDIA_OSD_CreateGrp(25, &osd) == 0) { set_tile_status("OSD", TILE_PROBED); MEDIA_OSD_DestroyGrp(25); }
 
     MEDIA_CONV_CL_ATTR conv = {0};
     conv.width = w; conv.height = h; conv.format = MEDIA_FORMAT_RGB888; conv.kernel_size = 5;
     conv.input_depth = 2; conv.output_pool_id = WORK_POOL_RGB; conv.input_stride = w * 3; conv.output_stride = w * 3;
-    if (MEDIA_CONV_CL_CreateGrp(26, &conv) == 0) { mark("CONV", 1); MEDIA_CONV_CL_DestroyGrp(26); }
+    if (MEDIA_CONV_CL_CreateGrp(26, &conv) == 0) { set_tile_status("CONV_CL", TILE_PROBED); MEDIA_CONV_CL_DestroyGrp(26); }
 
     MEDIA_CLAHE_ATTR clahe = {0};
     clahe.width = w; clahe.height = h; clahe.format = MEDIA_FORMAT_RGB888; clahe.tile_grid_x = 8; clahe.tile_grid_y = 8;
     clahe.bins = 256; clahe.input_depth = 2; clahe.output_pool_id = WORK_POOL_RGB; clahe.input_stride = w * 3; clahe.output_stride = w * 3; clahe.clip_limit = 2.5f;
-    if (MEDIA_CLAHE_CreateGrp(27, &clahe) == 0) { mark("CLAHE", 1); MEDIA_CLAHE_DestroyGrp(27); }
+    if (MEDIA_CLAHE_CreateGrp(27, &clahe) == 0) { set_tile_status("CLAHE", TILE_PROBED); MEDIA_CLAHE_DestroyGrp(27); }
 
     MEDIA_RETINEX_ATTR ret = {0};
     ret.scale_count = 1; ret.width = w; ret.height = h; ret.format = MEDIA_FORMAT_NV12; ret.output_depth = 2; ret.input_depth = 2;
     ret.input_stride = stride; ret.output_stride = stride; ret.gain = 1.0f; ret.threshold = 0.01f; ret.log_min = 0.0f; ret.log_max = 1.0f;
-    if (MEDIA_RETINEX_CreateGrp(28, &ret) == 0) { mark("RETINEX", 1); MEDIA_RETINEX_DestroyGrp(28); }
+    if (MEDIA_RETINEX_CreateGrp(28, &ret) == 0) { set_tile_status("RETINEX", TILE_PROBED); MEDIA_RETINEX_DestroyGrp(28); }
 
     MEDIA_CAP_DEHAZE_ATTR cap = {0};
     cap.width = w; cap.height = h; cap.format = MEDIA_FORMAT_RGB888; cap.input_depth = 2; cap.output_pool_id = WORK_POOL_RGB;
     cap.input_stride = w * 3; cap.output_stride = w * 3; cap.guided_radius = 8; cap.guided_eps = 0.01f; cap.t0 = 0.1f;
-    if (MEDIA_CAP_DEHAZE_CreateGrp(29, &cap) == 0) { mark("CAP", 1); MEDIA_CAP_DEHAZE_DestroyGrp(29); }
+    if (MEDIA_CAP_DEHAZE_CreateGrp(29, &cap) == 0) { set_tile_status("CAP_DEHAZE", TILE_PROBED); MEDIA_CAP_DEHAZE_DestroyGrp(29); }
 
     MEDIA_DCP_FAST_DEHAZE_ATTR dcp = {0};
     dcp.width = w; dcp.height = h; dcp.format = MEDIA_FORMAT_RGB888; dcp.input_depth = 2; dcp.output_pool_id = WORK_POOL_RGB;
     dcp.input_stride = w * 3; dcp.output_stride = w * 3; dcp.patch = 15; dcp.omega = 0.95f; dcp.t0 = 0.1f; dcp.airlight_percent = 0.001f; dcp.guided_radius = 8; dcp.guided_eps = 0.01f; dcp.refine_scale = 0.25f;
-    if (MEDIA_DCP_FAST_DEHAZE_CreateGrp(30, &dcp) == 0) { mark("DCP", 1); MEDIA_DCP_FAST_DEHAZE_DestroyGrp(30); }
+    if (MEDIA_DCP_FAST_DEHAZE_CreateGrp(30, &dcp) == 0) { set_tile_status("DCP_FAST_DEHAZE", TILE_PROBED); MEDIA_DCP_FAST_DEHAZE_DestroyGrp(30); }
 
     MEDIA_BLEND_PYR_ATTR bp = {0};
     bp.width = w; bp.height = h; bp.input_stride = stride; bp.input_depth = 2; bp.input_format = MEDIA_FORMAT_NV12; bp.output_stride = stride;
-    if (MEDIA_BLEND_PYR_SetAttr(31, &bp) == 0) { mark("BLEND", 1); MEDIA_BLEND_PYR_DestroyGrp(31); }
+    if (MEDIA_BLEND_PYR_SetAttr(31, &bp) == 0) { set_tile_status("BLEND_PYR", TILE_PROBED); MEDIA_BLEND_PYR_DestroyGrp(31); }
 
     MEDIA_EDOF_CL_ATTR edof = {0};
     edof.width = w; edof.height = h; edof.format = MEDIA_FORMAT_NV12; edof.focus_radius = 5; edof.input_depth = 2; edof.output_pool_id = WORK_POOL_OUT; edof.input_stride = stride; edof.output_stride = stride; edof.score_eps = 0.01f;
-    if (MEDIA_EDOF_CL_CreateGrp(32, &edof) == 0) { mark("EDOF", 1); MEDIA_EDOF_CL_DestroyGrp(32); }
+    if (MEDIA_EDOF_CL_CreateGrp(32, &edof) == 0) { set_tile_status("EDOF_CL", TILE_PROBED); MEDIA_EDOF_CL_DestroyGrp(32); }
 
     MEDIA_EXPOSURE_FUSION_CL_ATTR ex = {0};
     ex.width = w; ex.height = h; ex.format = MEDIA_FORMAT_NV12; ex.input_depth = 2; ex.output_pool_id = WORK_POOL_OUT; ex.input_stride = stride; ex.output_stride = stride;
     ex.contrast_power = 1.0f; ex.saturation_power = 1.0f; ex.exposedness_power = 1.0f; ex.sigma = 0.2f; ex.epsilon = 0.0001f;
-    if (MEDIA_EXPOSURE_FUSION_CL_CreateGrp(33, &ex) == 0) { mark("EXPO", 1); MEDIA_EXPOSURE_FUSION_CL_DestroyGrp(33); }
+    if (MEDIA_EXPOSURE_FUSION_CL_CreateGrp(33, &ex) == 0) { set_tile_status("EXPOSURE_FUSION_CL", TILE_PROBED); MEDIA_EXPOSURE_FUSION_CL_DestroyGrp(33); }
 
     MEDIA_DUALVIEW_ATTR dv = {0};
     dv.input_width = w; dv.input_height = h; dv.input_stride = w * 3; dv.output_width = w * 2; dv.output_height = h; dv.output_stride = w * 6; dv.mode = MEDIA_DUALVIEW_MODE_SIDE_BY_SIDE;
     dv.format = MEDIA_FORMAT_RGB888; dv.input_depth = 2; dv.output_pool_id = WORK_POOL_RGB; dv.inputs[0].enabled = 1; dv.inputs[1].enabled = 1;
-    if (MEDIA_DUALVIEW_CreateGrp(34, &dv) == 0) { mark("DUAL", 1); MEDIA_DUALVIEW_DestroyGrp(34); }
+    if (MEDIA_DUALVIEW_CreateGrp(34, &dv) == 0) { set_tile_status("DUALVIEW", TILE_PROBED); MEDIA_DUALVIEW_DestroyGrp(34); }
 
     MEDIA_STEREO_3D_ATTR st = {0};
     st.width = w; st.height = h; st.format = MEDIA_FORMAT_NV12; st.input_depth = 2; st.output_pool_id = WORK_POOL_OUT; st.input_stride = stride; st.output_stride = stride; st.mode = MEDIA_STEREO_3D_MODE_SIDE_BY_SIDE;
-    if (MEDIA_STEREO_3D_CreateGrp(35, &st) == 0) { mark("STEREO", 1); MEDIA_STEREO_3D_DestroyGrp(35); }
+    if (MEDIA_STEREO_3D_CreateGrp(35, &st) == 0) { set_tile_status("STEREO_3D", TILE_PROBED); MEDIA_STEREO_3D_DestroyGrp(35); }
 
     MEDIA_VMIX_ATTR vm = {0};
     vm.input_count = 2; vm.output_width = w; vm.output_height = h; vm.format = MEDIA_FORMAT_NV12; vm.input_depth = 2; vm.output_pool_id = WORK_POOL_OUT; vm.output_stride = stride; vm.primary_index = 0;
     vm.channels[0].enabled = 1; vm.channels[0].width = w; vm.channels[0].height = h; vm.channels[0].alpha = 1.0f; vm.channels[0].stride = stride;
     vm.channels[1].enabled = 1; vm.channels[1].x = w / 2; vm.channels[1].width = w / 2; vm.channels[1].height = h / 2; vm.channels[1].alpha = 0.6f; vm.channels[1].stride = stride;
-    if (MEDIA_VMIX_CreateGrp(36, &vm) == 0) { mark("VMIX", 1); MEDIA_VMIX_DestroyGrp(36); }
+    if (MEDIA_VMIX_CreateGrp(36, &vm) == 0) { set_tile_status("VMIX", TILE_PROBED); MEDIA_VMIX_DestroyGrp(36); }
 
     MEDIA_VMIX_RGA_ATTR vr = {0};
     vr.input_count = 2; vr.output_width = w; vr.output_height = h; vr.format = MEDIA_FORMAT_NV12; vr.input_depth = 2; vr.output_pool_id = WORK_POOL_OUT; vr.output_stride = stride; vr.primary_index = 0;
     vr.channels[0].enabled = 1; vr.channels[0].width = w; vr.channels[0].height = h; vr.channels[0].stride = stride; vr.channels[0].format = MEDIA_FORMAT_NV12;
     vr.channels[1].enabled = 1; vr.channels[1].x = w / 2; vr.channels[1].width = w / 2; vr.channels[1].height = h / 2; vr.channels[1].stride = stride; vr.channels[1].format = MEDIA_FORMAT_NV12;
-    if (MEDIA_VMIX_RGA_CreateGrp(37, &vr) == 0) { mark("VMIX_RGA", 1); MEDIA_VMIX_RGA_DestroyGrp(37); }
+    if (MEDIA_VMIX_RGA_CreateGrp(37, &vr) == 0) { set_tile_status("VMIX_RGA", TILE_PROBED); MEDIA_VMIX_RGA_DestroyGrp(37); }
 
     MEDIA_VENC_ATTR venc = {0};
     venc.width = w; venc.height = h; venc.stride = stride; venc.fps = FPS; venc.buf_cnt = 4; venc.input_depth = 2; venc.bitrate = 1000000; venc.gop = FPS;
     venc.video_format = MEDIA_FORMAT_H264; venc.rc_mode = MEDIA_VENC_RC_CBR; venc.input_format = MEDIA_FORMAT_NV12;
-    if (MEDIA_VENC_SetAttr(38, &venc) == 0) { mark("VENC", 1); MEDIA_VENC_DestroyChn(38); }
+    if (MEDIA_VENC_SetAttr(38, &venc) == 0) { set_tile_status("VENC", TILE_PROBED); MEDIA_VENC_DestroyChn(38); }
 
     MEDIA_VDEC_ATTR vdec = {0};
     vdec.width = w; vdec.height = h; vdec.stride = stride; vdec.buf_cnt = 4; vdec.video_type = MEDIA_VIDEO_H264; vdec.pool_id = WORK_POOL_OUT; vdec.has_input_port = 1; vdec.input_depth = 2;
-    if (MEDIA_VDEC_CreateChn(39, &vdec) == 0) { mark("VDEC", 1); MEDIA_VDEC_DestroyChn(39); }
+    if (MEDIA_VDEC_CreateChn(39, &vdec) == 0) { set_tile_status("VDEC", TILE_PROBED); MEDIA_VDEC_DestroyChn(39); }
 
     MEDIA_RTSP_SEND_ATTR tx = {0};
     tx.bind_addr = "0.0.0.0"; tx.port = 8554; tx.url_suffix = "rktohi_all"; tx.width = w; tx.height = h; tx.fps = FPS; tx.max_clients = 2; tx.transport_mode = RTSP_TRANSPORT_TCP; tx.video_format = MEDIA_FORMAT_H264;
-    if (MEDIA_RTSP_SEND_CreateGrp(40, &tx) == 0) { mark("RTSP_TX", 1); MEDIA_RTSP_SEND_DestroyGrp(40); }
+    if (MEDIA_RTSP_SEND_CreateGrp(40, &tx) == 0) { set_tile_status("RTSP_SEND", TILE_PROBED); MEDIA_RTSP_SEND_DestroyGrp(40); }
 
     MEDIA_RTSP_RECV_ATTR rx = {0};
     rx.url = "rtsp://127.0.0.1:8554/rktohi_all"; rx.output_pool_id = WORK_POOL_OUT; rx.video_format = MEDIA_FORMAT_H264; rx.width = w; rx.height = h; rx.fps = FPS; rx.transport_mode = RTSP_TRANSPORT_TCP;
-    if (MEDIA_RTSP_RECV_CreateGrp(41, &rx) == 0) { mark("RTSP_RX", 1); MEDIA_RTSP_RECV_DestroyGrp(41); }
+    if (MEDIA_RTSP_RECV_CreateGrp(41, &rx) == 0) { set_tile_status("RTSP_RECV", TILE_PROBED); MEDIA_RTSP_RECV_DestroyGrp(41); }
 
     MEDIA_PANO_ATTR pano = {0};
     pano.input_count = 2; pano.in_width = w; pano.in_height = h; pano.in_stride = stride; pano.out_width = w; pano.out_height = h; pano.out_stride = stride; pano.output_pool_id = WORK_POOL_OUT; pano.input_depth = 2; pano.output_depth = 2; pano.pto_path = "assets/panorama/calib_file.pto";
-    if (MEDIA_PANO_CreateGrp(42, &pano) == 0) { mark("PANO", 1); MEDIA_PANO_DestroyGrp(42); }
+    if (MEDIA_PANO_CreateGrp(42, &pano) == 0) { set_tile_status("PANO", TILE_PROBED); MEDIA_PANO_DestroyGrp(42); }
 
     MEDIA_AVM_ATTR avm = {0};
     avm.input_count = 4; avm.in_width = w; avm.in_height = h; avm.in_stride = stride; avm.out_width = w; avm.out_height = h; avm.out_stride = stride; avm.output_pool_id = WORK_POOL_OUT; avm.input_depth = 2; avm.output_depth = 2; avm.lut_path = "assets/avm/avm_blend.lut";
-    if (MEDIA_AVM_CreateGrp(43, &avm) == 0) { mark("AVM", 1); MEDIA_AVM_DestroyGrp(43); }
+    if (MEDIA_AVM_CreateGrp(43, &avm) == 0) { set_tile_status("AVM", TILE_PROBED); MEDIA_AVM_DestroyGrp(43); }
 
     MEDIA_SVM3D_ATTR svm = {0};
     svm.input_count = 4; svm.input_format = MEDIA_FORMAT_NV12; svm.in_width = w; svm.in_height = h; svm.in_stride = stride; svm.output_format = MEDIA_FORMAT_RGB888; svm.out_width = w; svm.out_height = h; svm.out_stride = w * 3; svm.output_pool_id = WORK_POOL_RGB; svm.input_depth = 2; svm.output_depth = 2; svm.asset_path = "assets/svm3d/svm_3d_assets.json";
-    if (MEDIA_SVM3D_CreateGrp(44, &svm) == 0) { mark("SVM3D", 1); MEDIA_SVM3D_DestroyGrp(44); }
+    if (MEDIA_SVM3D_CreateGrp(44, &svm) == 0) { set_tile_status("SVM3D", TILE_PROBED); MEDIA_SVM3D_DestroyGrp(44); }
 
     MEDIA_NPU_ATTR npu = {0};
     npu.model_path = "assets/npu/yolov5s-640-640.rknn"; npu.backend = MEDIA_NPU_BACKEND_RKNN; npu.task = MEDIA_NPU_TASK_DETECT;
     npu.input_width = 640; npu.input_height = 640; npu.input_format = MEDIA_FORMAT_RGB888; npu.input_layout = MEDIA_NPU_LAYOUT_NHWC; npu.input_depth = 2; npu.passthrough = 1; npu.score_thresh = 0.25f; npu.nms_thresh = 0.45f;
-    if (MEDIA_NPU_CreateGrp(45, &npu) == 0) { mark("NPU", 1); MEDIA_NPU_DestroyGrp(45); }
+    if (MEDIA_NPU_CreateGrp(45, &npu) == 0) { set_tile_status("NPU", TILE_PROBED); MEDIA_NPU_DestroyGrp(45); }
 
-    mark("PIC_IO", 1);
+    set_tile_status("PIC_IO", TILE_PROBED);
     (void)dummy;
 }
 
@@ -811,7 +1034,8 @@ static void draw_health_line(uint8_t *canvas, int stride, int y, const char *lef
     draw_text(canvas, stride, 130, y, left, 2, 190, 230, 255);
 }
 
-static void draw_dashboard(uint8_t *canvas, int stride, int frame, const uint8_t *cam) {
+static void draw_dashboard(uint8_t *canvas, int stride, int frame,
+                           const uint8_t *cam, const uint8_t *osd_live) {
     fill_rect_nv12(canvas, stride, 0, 0, SCREEN_W, SCREEN_H, 4, 9, 16);
     fill_rect_nv12(canvas, stride, 0, 0, SCREEN_W, 90, 10, 18, 34);
     draw_text(canvas, stride, 28, 24, "RKTOHI VISUAL ENGINE", 4, 160, 255, 220);
@@ -833,10 +1057,13 @@ static void draw_dashboard(uint8_t *canvas, int stride, int frame, const uint8_t
     int start_x = 28;
     int start_y = 760;
     int gap = 14;
+    const int first_tile = 4;
     for (int i = 0; i < 16; ++i) {
         int cx = start_x + (i % cols) * (tile_w + gap);
         int cy = start_y + (i / cols) * (tile_h + gap);
-        draw_effect_tile(canvas, stride, cx, cy, tile_w, tile_h, i + 8, frame, g_tiles[i + 8].active);
+        int tile_idx = first_tile + i;
+        draw_effect_tile(canvas, stride, cx, cy, tile_w, tile_h, tile_idx, frame,
+                         g_tiles[tile_idx].active, osd_live);
     }
 
     fill_rect_nv12(canvas, stride, 28, 1432, 1024, 232, 7, 13, 24);
@@ -922,8 +1149,14 @@ int main(int argc, char **argv) {
         probe_modules();
     }
 
+    int live_osd_ok = 0;
+    if (!solid_test && setup_live_osd() == 0) {
+        live_osd_ok = 1;
+    }
+
     if (MEDIA_POOL_Create(DISPLAY_POOL, display_size, 4) != 0) {
         fprintf(stderr, "display pool create failed\n");
+        cleanup_live_osd(live_osd_ok);
         unload_loop_assets();
         MEDIA_SYS_Exit();
         return 1;
@@ -940,11 +1173,12 @@ int main(int argc, char **argv) {
         MEDIA_VO_Start(0, 0) != 0) {
         fprintf(stderr, "VO setup failed\n");
         MEDIA_POOL_Destroy(DISPLAY_POOL);
+        cleanup_live_osd(live_osd_ok);
         unload_loop_assets();
         MEDIA_SYS_Exit();
         return 1;
     }
-    mark("VO", 1);
+    set_tile_status("VO", TILE_LIVE);
 
     int camera_ok = 0;
     if (!solid_test && MEDIA_POOL_Create(CAMERA_POOL, CAM_STRIDE * CAM_H * 3 / 2, 6) == 0) {
@@ -959,7 +1193,7 @@ int main(int argc, char **argv) {
         vi.format = MEDIA_FORMAT_NV12;
         if (MEDIA_VI_SetAttr(0, &vi) == 0 && MEDIA_VI_Enable(0) == 0) {
             camera_ok = 1;
-            mark("VI", 1);
+            set_tile_status("VI", TILE_LIVE);
         }
     }
     g_health.camera_running = camera_ok;
@@ -970,8 +1204,11 @@ int main(int argc, char **argv) {
 
     int frame = 0;
     int cam_frames = 0;
-    uint8_t *last_cam = malloc(CAM_STRIDE * CAM_H * 3 / 2);
-    if (last_cam) memset(last_cam, 0, CAM_STRIDE * CAM_H * 3 / 2);
+    int osd_frames = 0;
+    uint8_t *last_cam = malloc(CAM_FRAME_SIZE);
+    uint8_t *last_osd = malloc(CAM_FRAME_SIZE);
+    if (last_cam) memset(last_cam, 0, CAM_FRAME_SIZE);
+    if (last_osd) memset(last_osd, 0, CAM_FRAME_SIZE);
 
     while (g_running) {
         if (camera_ok) {
@@ -984,9 +1221,13 @@ int main(int argc, char **argv) {
                         size_t need = CAM_STRIDE * CAM_H * 3 / 2;
                         if (last_cam && size >= need) {
                             memcpy(last_cam, addr, need);
-                            cam_frames++;
-                            g_health.camera_frames = cam_frames;
+                        cam_frames++;
+                        g_health.camera_frames = cam_frames;
+                        if (live_osd_ok && last_osd &&
+                            process_live_osd(last_cam, last_osd) == 0) {
+                            osd_frames++;
                         }
+                    }
                         munmap(addr, size);
                     }
                     (void)MEDIA_POOL_EndCpuAccess(cbuf, DMA_BUF_SYNC_READ);
@@ -1015,7 +1256,9 @@ int main(int argc, char **argv) {
         if (solid_test) {
             draw_solid_test((uint8_t *)addr, dstride);
         } else {
-            draw_dashboard((uint8_t *)addr, dstride, frame, cam_frames > 0 ? last_cam : NULL);
+            draw_dashboard((uint8_t *)addr, dstride, frame,
+                           cam_frames > 0 ? last_cam : NULL,
+                           osd_frames > 0 ? last_osd : NULL);
         }
         (void)MEDIA_POOL_EndCpuAccess(dbuf, DMA_BUF_SYNC_WRITE);
         munmap(addr, size);
@@ -1030,12 +1273,14 @@ int main(int argc, char **argv) {
     if (camera_ok) MEDIA_VI_Disable(0);
     MEDIA_VO_Stop(0, 0);
     MEDIA_VO_DestroyChn(0, 0);
+    cleanup_live_osd(live_osd_ok);
     MEDIA_POOL_Destroy(DISPLAY_POOL);
     MEDIA_POOL_Destroy(CAMERA_POOL);
     MEDIA_POOL_Destroy(WORK_POOL_NV12);
     MEDIA_POOL_Destroy(WORK_POOL_RGB);
     MEDIA_POOL_Destroy(WORK_POOL_OUT);
     unload_loop_assets();
+    free(last_osd);
     free(last_cam);
     MEDIA_SYS_Exit();
     return 0;
