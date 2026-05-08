@@ -31,6 +31,16 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --no-rotate-main
 ```
 
+如果要逐个验证某个小窗体，不让其它实时算法一起运行：
+
+```bash
+/userdata/alldemo/scripts/run_alldemo.sh --only VPSS
+/userdata/alldemo/scripts/run_alldemo.sh --only OSD
+/userdata/alldemo/scripts/run_alldemo.sh --only RESIZE_RGA
+```
+
+`--only <tile>` 会把主画面固定到指定小窗体，并且只初始化该小窗体需要的实时模块；未接入真实实时链路的 tile 会显示循环素材或合成占位，且不会强制打开摄像头。
+
 ## 快速自检
 
 演示前建议先跑完整现场健康检查，不占用屏幕/摄像头：

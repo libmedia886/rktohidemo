@@ -99,6 +99,7 @@ static volatile int g_running = 1;
 static health_status_t g_health = {0};
 
 static void set_tile_status(const char *name, int status);
+static int find_tile_index(const char *name);
 
 enum {
     TILE_OFFLINE = 0,
@@ -676,7 +677,8 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
 }
 
 static void draw_main_showcase(uint8_t *canvas, int stride, int frame,
-                               int rotate_main, const uint8_t *cam, const uint8_t *osd_live,
+                               int rotate_main, const char *only_tile,
+                               const uint8_t *cam, const uint8_t *osd_live,
                                const uint8_t *resize_live, const uint8_t *vpss_live,
                                const uint8_t *stereo_live) {
     const int x = 28;
@@ -685,7 +687,9 @@ static void draw_main_showcase(uint8_t *canvas, int stride, int frame,
     const int h = 612;
     int idx = -1;
 
-    if (rotate_main) {
+    if (only_tile) {
+        idx = find_tile_index(only_tile);
+    } else if (rotate_main) {
         idx = TILE_FIRST_INDEX + (frame / (FPS * MAIN_ROTATE_SECONDS)) % TILE_ROTATE_COUNT;
     }
 
@@ -1117,6 +1121,22 @@ static void set_tile_status(const char *name, int status) {
     }
 }
 
+static int find_tile_index(const char *name) {
+    if (!name || !*name) return -1;
+    for (size_t i = 0; i < sizeof(g_tiles) / sizeof(g_tiles[0]); ++i) {
+        if (strcasecmp(g_tiles[i].name, name) == 0) return (int)i;
+    }
+    return -1;
+}
+
+static int tile_needs_camera(const char *name) {
+    if (!name) return 1;
+    return strcasecmp(name, "VI") == 0 ||
+           strcasecmp(name, "OSD") == 0 ||
+           strcasecmp(name, "RESIZE_RGA") == 0 ||
+           strcasecmp(name, "VPSS") == 0;
+}
+
 static int load_loop_assets(void) {
     int total = 0;
     for (size_t i = 0; i < sizeof(g_loop_assets) / sizeof(g_loop_assets[0]); ++i) {
@@ -1352,7 +1372,7 @@ static void draw_health_line(uint8_t *canvas, int stride, int y, const char *lef
 }
 
 static void draw_dashboard(uint8_t *canvas, int stride, int frame, int rotate_main,
-                           const uint8_t *cam, const uint8_t *osd_live,
+                           const char *only_tile, const uint8_t *cam, const uint8_t *osd_live,
                            const uint8_t *resize_live, const uint8_t *vpss_live,
                            const uint8_t *stereo_live) {
     fill_rect_nv12(canvas, stride, 0, 0, SCREEN_W, SCREEN_H, 4, 9, 16);
@@ -1360,7 +1380,7 @@ static void draw_dashboard(uint8_t *canvas, int stride, int frame, int rotate_ma
     draw_text(canvas, stride, 28, 24, "RKTOHI VISUAL ENGINE", 4, 160, 255, 220);
     draw_text(canvas, stride, 760, 26, "1080X1920", 2, 90, 180, 255);
 
-    draw_main_showcase(canvas, stride, frame, rotate_main, cam, osd_live, resize_live,
+    draw_main_showcase(canvas, stride, frame, rotate_main, only_tile, cam, osd_live, resize_live,
                        vpss_live, stereo_live);
 
     int cols = 4;
@@ -1428,12 +1448,17 @@ int main(int argc, char **argv) {
     int self_test = 0;
     int solid_test = 0;
     int rotate_main = 1;
+    const char *only_tile = NULL;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--probe") == 0) heavy_probe = 1;
         if (strcmp(argv[i], "--asset-check") == 0) asset_check = 1;
         if (strcmp(argv[i], "--self-test") == 0) self_test = 1;
         if (strcmp(argv[i], "--solid-test") == 0) solid_test = 1;
         if (strcmp(argv[i], "--no-rotate-main") == 0) rotate_main = 0;
+        if (strcmp(argv[i], "--only") == 0 && i + 1 < argc) {
+            only_tile = argv[++i];
+            rotate_main = 0;
+        }
     }
 
     if (self_test) {
@@ -1445,6 +1470,11 @@ int main(int argc, char **argv) {
         print_loop_asset_summary();
         unload_loop_assets();
         return loaded > 0 ? 0 : 1;
+    }
+
+    if (only_tile && find_tile_index(only_tile) < 0) {
+        fprintf(stderr, "unknown tile for --only: %s\n", only_tile);
+        return 1;
     }
 
     const int dstride = ALIGN_UP(SCREEN_W, 64);
@@ -1464,15 +1494,18 @@ int main(int argc, char **argv) {
     }
 
     int live_osd_ok = 0;
-    if (!solid_test && setup_live_osd() == 0) {
+    if (!solid_test && (!only_tile || strcasecmp(only_tile, "OSD") == 0) &&
+        setup_live_osd() == 0) {
         live_osd_ok = 1;
     }
     int live_resize_ok = 0;
-    if (!solid_test && setup_live_resize() == 0) {
+    if (!solid_test && (!only_tile || strcasecmp(only_tile, "RESIZE_RGA") == 0) &&
+        setup_live_resize() == 0) {
         live_resize_ok = 1;
     }
     int live_vpss_ok = 0;
-    if (!solid_test && setup_live_vpss() == 0) {
+    if (!solid_test && (!only_tile || strcasecmp(only_tile, "VPSS") == 0) &&
+        setup_live_vpss() == 0) {
         live_vpss_ok = 1;
     }
     int live_stereo_ok = 0;
@@ -1510,7 +1543,8 @@ int main(int argc, char **argv) {
     set_tile_status("VO", TILE_LIVE);
 
     int camera_ok = 0;
-    if (!solid_test && MEDIA_POOL_Create(CAMERA_POOL, CAM_STRIDE * CAM_H * 3 / 2, 6) == 0) {
+    int need_camera = !solid_test && tile_needs_camera(only_tile);
+    if (need_camera && MEDIA_POOL_Create(CAMERA_POOL, CAM_STRIDE * CAM_H * 3 / 2, 6) == 0) {
         MEDIA_VI_ATTR vi = {0};
         vi.device = CAMERA_DEVICE;
         vi.width = CAM_W;
@@ -1527,9 +1561,11 @@ int main(int argc, char **argv) {
     }
     g_health.camera_running = camera_ok;
 
-    printf("alldemo running on DSI 1080x1920%s%s. Ctrl+C to stop.\n",
+    printf("alldemo running on DSI 1080x1920%s%s%s%s. Ctrl+C to stop.\n",
            solid_test ? " solid-test" : "",
-           (!solid_test && rotate_main) ? " rotate-main" : "");
+           (!solid_test && rotate_main) ? " rotate-main" : "",
+           only_tile ? " only=" : "",
+           only_tile ? only_tile : "");
     printf("RTSP showcase address reserved: rtsp://172.16.9.195:8554/rktohi_all\n");
 
     int frame = 0;
@@ -1608,6 +1644,7 @@ int main(int argc, char **argv) {
             draw_solid_test((uint8_t *)addr, dstride);
         } else {
             draw_dashboard((uint8_t *)addr, dstride, frame, rotate_main,
+                           only_tile,
                            cam_frames > 0 ? last_cam : NULL,
                            osd_frames > 0 ? last_osd : NULL,
                            resize_frames > 0 ? last_resize : NULL,
@@ -1632,7 +1669,7 @@ int main(int argc, char **argv) {
     cleanup_live_resize(live_resize_ok);
     cleanup_live_osd(live_osd_ok);
     MEDIA_POOL_Destroy(DISPLAY_POOL);
-    MEDIA_POOL_Destroy(CAMERA_POOL);
+    if (need_camera) MEDIA_POOL_Destroy(CAMERA_POOL);
     MEDIA_POOL_Destroy(WORK_POOL_NV12);
     MEDIA_POOL_Destroy(WORK_POOL_RGB);
     MEDIA_POOL_Destroy(WORK_POOL_OUT);
