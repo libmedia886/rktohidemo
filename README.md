@@ -38,9 +38,11 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --only OSD
 /userdata/alldemo/scripts/run_alldemo.sh --only RESIZE_RGA
 /userdata/alldemo/scripts/run_alldemo.sh --only CSC_RGA
+/userdata/alldemo/scripts/run_alldemo.sh --only TRANSFORM
 ```
 
 `--only <tile>` 会把主画面固定到指定小窗体，并且只初始化该小窗体需要的实时模块；未接入真实实时链路的 tile 会显示循环素材或合成占位，且不会强制打开摄像头。
+`TRANSFORM` 单独模式使用合成 NV12 输入和本地 LUT，不占用摄像头。
 
 ## 快速自检
 
