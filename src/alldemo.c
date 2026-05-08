@@ -44,6 +44,7 @@
 #define LIVE_RESIZE_GRP 61
 #define LIVE_STEREO_GRP 62
 #define LIVE_VPSS_GRP 63
+#define LIVE_CSC_RGA_GRP 64
 
 #define CAM_W 640
 #define CAM_H 640
@@ -560,7 +561,7 @@ static void tile_status_color(int status, uint8_t *r, uint8_t *g, uint8_t *b) {
 static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int h,
                              int idx, int frame, int active, const uint8_t *osd_live,
                              const uint8_t *resize_live, const uint8_t *vpss_live,
-                             const uint8_t *stereo_live) {
+                             const uint8_t *csc_rga_live, const uint8_t *stereo_live) {
     uint8_t r0 = (uint8_t)((idx * 47 + frame * 2) % 180 + 40);
     uint8_t g0 = (uint8_t)((idx * 83 + frame * 3) % 180 + 40);
     uint8_t b0 = (uint8_t)((idx * 29 + frame * 5) % 180 + 40);
@@ -583,6 +584,11 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
                          resize_live, CAM_W, CAM_H, CAM_STRIDE);
         fill_rect_nv12(dst, stride, x + 6, y + h - 24, w - 12, 18, 0, 0, 0);
         draw_text(dst, stride, x + 12, y + h - 22, "CAMERA > RESIZE", 1, 220, 255, 230);
+    } else if (strcmp(g_tiles[idx].name, "CSC_RGA") == 0 && csc_rga_live) {
+        draw_camera_tile(dst, stride, x + 6, y + 30, w - 12, h - 38,
+                         csc_rga_live, CAM_W, CAM_H, CAM_STRIDE);
+        fill_rect_nv12(dst, stride, x + 6, y + h - 24, w - 12, 18, 0, 0, 0);
+        draw_text(dst, stride, x + 12, y + h - 22, "CAMERA > CSC_RGA", 1, 220, 255, 230);
     } else if (strcmp(g_tiles[idx].name, "STEREO_3D") == 0 && stereo_live) {
         draw_camera_tile(dst, stride, x + 6, y + 30, w - 12, h - 38,
                          stereo_live, CAM_W, CAM_H, CAM_STRIDE);
@@ -620,7 +626,7 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
 static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int h,
                               int idx, int frame, const uint8_t *cam, const uint8_t *osd_live,
                               const uint8_t *resize_live, const uint8_t *vpss_live,
-                              const uint8_t *stereo_live) {
+                              const uint8_t *csc_rga_live, const uint8_t *stereo_live) {
     loop_asset_t *loop = find_loop_asset(g_tiles[idx].name);
     fill_rect_nv12(dst, stride, x, y, w, h, 7, 13, 24);
 
@@ -639,6 +645,12 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
     if (strcmp(g_tiles[idx].name, "RESIZE_RGA") == 0 && resize_live) {
         draw_camera_tile(dst, stride, x + 12, y + 12, w - 24, h - 24,
                          resize_live, CAM_W, CAM_H, CAM_STRIDE);
+        return;
+    }
+
+    if (strcmp(g_tiles[idx].name, "CSC_RGA") == 0 && csc_rga_live) {
+        draw_camera_tile(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                         csc_rga_live, CAM_W, CAM_H, CAM_STRIDE);
         return;
     }
 
@@ -680,7 +692,7 @@ static void draw_main_showcase(uint8_t *canvas, int stride, int frame,
                                int rotate_main, const char *only_tile,
                                const uint8_t *cam, const uint8_t *osd_live,
                                const uint8_t *resize_live, const uint8_t *vpss_live,
-                               const uint8_t *stereo_live) {
+                               const uint8_t *csc_rga_live, const uint8_t *stereo_live) {
     const int x = 28;
     const int y = 116;
     const int w = 1024;
@@ -699,7 +711,7 @@ static void draw_main_showcase(uint8_t *canvas, int stride, int frame,
         tile_status_color(g_tiles[idx].status, &sr, &sg, &sb);
         draw_tile_content(canvas, stride, x + 14, y + 14, w - 28, h - 70,
                           idx, frame, cam, osd_live, resize_live, vpss_live,
-                          stereo_live);
+                          csc_rga_live, stereo_live);
         fill_rect_nv12(canvas, stride, x + 14, y + h - 50, w - 28, 34, 0, 0, 0);
         draw_text(canvas, stride, x + 32, y + h - 42, "MAIN ROTATE", 2, 190, 230, 255);
         draw_text(canvas, stride, x + 268, y + h - 42, g_tiles[idx].name,
@@ -1046,6 +1058,59 @@ static int process_live_vpss(const uint8_t *src, uint8_t *dst) {
     return ret;
 }
 
+static int setup_live_csc_rga(void) {
+    if (MEDIA_POOL_Create(OSD_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
+    if (MEDIA_POOL_Create(OSD_OUTPUT_POOL, CAM_FRAME_SIZE, 3) != 0) {
+        MEDIA_POOL_Destroy(OSD_INPUT_POOL);
+        return -1;
+    }
+
+    MEDIA_CSC_RGA_ATTR attr = {0};
+    attr.input_width = CAM_W;
+    attr.input_height = CAM_H;
+    attr.input_format = MEDIA_FORMAT_NV12;
+    attr.output_format = MEDIA_FORMAT_NV12;
+    attr.input_depth = 3;
+    attr.output_pool_id = OSD_OUTPUT_POOL;
+    attr.input_stride = CAM_STRIDE;
+    attr.output_stride = CAM_STRIDE;
+    attr.csc_mode = 0;
+
+    if (MEDIA_CSC_RGA_CreateGrp(LIVE_CSC_RGA_GRP, &attr) != 0 ||
+        MEDIA_CSC_RGA_Start(LIVE_CSC_RGA_GRP) != 0 ||
+        MEDIA_CSC_RGA_Enable(LIVE_CSC_RGA_GRP) != 0) {
+        MEDIA_CSC_RGA_DestroyGrp(LIVE_CSC_RGA_GRP);
+        MEDIA_POOL_Destroy(OSD_INPUT_POOL);
+        MEDIA_POOL_Destroy(OSD_OUTPUT_POOL);
+        return -1;
+    }
+    set_tile_status("CSC_RGA", TILE_LIVE);
+    return 0;
+}
+
+static void cleanup_live_csc_rga(int enabled) {
+    if (!enabled) return;
+    MEDIA_CSC_RGA_Disable(LIVE_CSC_RGA_GRP);
+    MEDIA_CSC_RGA_Stop(LIVE_CSC_RGA_GRP);
+    MEDIA_CSC_RGA_DestroyGrp(LIVE_CSC_RGA_GRP);
+    MEDIA_POOL_Destroy(OSD_INPUT_POOL);
+    MEDIA_POOL_Destroy(OSD_OUTPUT_POOL);
+}
+
+static int process_live_csc_rga(const uint8_t *src, uint8_t *dst) {
+    MEDIA_BUFFER out = {-1, -1};
+    int ret = -1;
+    if (send_copied_frame("CSC_RGA", LIVE_CSC_RGA_GRP, "input",
+                          OSD_INPUT_POOL, src, CAM_FRAME_SIZE, 20) != 0) {
+        return -1;
+    }
+    if (MEDIA_CSC_RGA_GetFrame(LIVE_CSC_RGA_GRP, &out, 20) == 0) {
+        ret = copy_from_buffer(out, dst, CAM_FRAME_SIZE);
+        MEDIA_CSC_RGA_ReleaseFrame(LIVE_CSC_RGA_GRP, out);
+    }
+    return ret;
+}
+
 static int setup_live_stereo(void) {
     if (MEDIA_POOL_Create(STEREO_INPUT0_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
     if (MEDIA_POOL_Create(STEREO_INPUT1_POOL, CAM_FRAME_SIZE, 3) != 0) goto fail;
@@ -1134,7 +1199,8 @@ static int tile_needs_camera(const char *name) {
     return strcasecmp(name, "VI") == 0 ||
            strcasecmp(name, "OSD") == 0 ||
            strcasecmp(name, "RESIZE_RGA") == 0 ||
-           strcasecmp(name, "VPSS") == 0;
+           strcasecmp(name, "VPSS") == 0 ||
+           strcasecmp(name, "CSC_RGA") == 0;
 }
 
 static int load_loop_assets(void) {
@@ -1374,14 +1440,14 @@ static void draw_health_line(uint8_t *canvas, int stride, int y, const char *lef
 static void draw_dashboard(uint8_t *canvas, int stride, int frame, int rotate_main,
                            const char *only_tile, const uint8_t *cam, const uint8_t *osd_live,
                            const uint8_t *resize_live, const uint8_t *vpss_live,
-                           const uint8_t *stereo_live) {
+                           const uint8_t *csc_rga_live, const uint8_t *stereo_live) {
     fill_rect_nv12(canvas, stride, 0, 0, SCREEN_W, SCREEN_H, 4, 9, 16);
     fill_rect_nv12(canvas, stride, 0, 0, SCREEN_W, 90, 10, 18, 34);
     draw_text(canvas, stride, 28, 24, "RKTOHI VISUAL ENGINE", 4, 160, 255, 220);
     draw_text(canvas, stride, 760, 26, "1080X1920", 2, 90, 180, 255);
 
     draw_main_showcase(canvas, stride, frame, rotate_main, only_tile, cam, osd_live, resize_live,
-                       vpss_live, stereo_live);
+                       vpss_live, csc_rga_live, stereo_live);
 
     int cols = 4;
     int tile_w = 250;
@@ -1395,7 +1461,7 @@ static void draw_dashboard(uint8_t *canvas, int stride, int frame, int rotate_ma
         int tile_idx = TILE_FIRST_INDEX + i;
         draw_effect_tile(canvas, stride, cx, cy, tile_w, tile_h, tile_idx, frame,
                          g_tiles[tile_idx].active, osd_live, resize_live, vpss_live,
-                         stereo_live);
+                         csc_rga_live, stereo_live);
     }
 
     fill_rect_nv12(canvas, stride, 28, 1432, 1024, 232, 7, 13, 24);
@@ -1508,11 +1574,17 @@ int main(int argc, char **argv) {
         setup_live_vpss() == 0) {
         live_vpss_ok = 1;
     }
+    int live_csc_rga_ok = 0;
+    if (!solid_test && only_tile && strcasecmp(only_tile, "CSC_RGA") == 0 &&
+        setup_live_csc_rga() == 0) {
+        live_csc_rga_ok = 1;
+    }
     int live_stereo_ok = 0;
 
     if (MEDIA_POOL_Create(DISPLAY_POOL, display_size, 4) != 0) {
         fprintf(stderr, "display pool create failed\n");
         cleanup_live_stereo(live_stereo_ok);
+        cleanup_live_csc_rga(live_csc_rga_ok);
         cleanup_live_vpss(live_vpss_ok);
         cleanup_live_resize(live_resize_ok);
         cleanup_live_osd(live_osd_ok);
@@ -1533,6 +1605,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "VO setup failed\n");
         MEDIA_POOL_Destroy(DISPLAY_POOL);
         cleanup_live_stereo(live_stereo_ok);
+        cleanup_live_csc_rga(live_csc_rga_ok);
         cleanup_live_vpss(live_vpss_ok);
         cleanup_live_resize(live_resize_ok);
         cleanup_live_osd(live_osd_ok);
@@ -1573,16 +1646,19 @@ int main(int argc, char **argv) {
     int osd_frames = 0;
     int resize_frames = 0;
     int vpss_frames = 0;
+    int csc_rga_frames = 0;
     int stereo_frames = 0;
     uint8_t *last_cam = malloc(CAM_FRAME_SIZE);
     uint8_t *last_osd = malloc(CAM_FRAME_SIZE);
     uint8_t *last_resize = malloc(CAM_FRAME_SIZE);
     uint8_t *last_vpss = malloc(CAM_FRAME_SIZE);
+    uint8_t *last_csc_rga = malloc(CAM_FRAME_SIZE);
     uint8_t *last_stereo = malloc(CAM_FRAME_SIZE);
     if (last_cam) memset(last_cam, 0, CAM_FRAME_SIZE);
     if (last_osd) memset(last_osd, 0, CAM_FRAME_SIZE);
     if (last_resize) memset(last_resize, 0, CAM_FRAME_SIZE);
     if (last_vpss) memset(last_vpss, 0, CAM_FRAME_SIZE);
+    if (last_csc_rga) memset(last_csc_rga, 0, CAM_FRAME_SIZE);
     if (last_stereo) memset(last_stereo, 0, CAM_FRAME_SIZE);
 
     while (g_running) {
@@ -1609,6 +1685,10 @@ int main(int argc, char **argv) {
                             if (live_vpss_ok && last_vpss &&
                                 process_live_vpss(last_cam, last_vpss) == 0) {
                                 vpss_frames++;
+                            }
+                            if (live_csc_rga_ok && last_csc_rga &&
+                                process_live_csc_rga(last_cam, last_csc_rga) == 0) {
+                                csc_rga_frames++;
                             }
                             if (live_stereo_ok && last_stereo && (cam_frames % 3) == 0 &&
                                 process_live_stereo(last_cam, last_stereo) == 0) {
@@ -1649,6 +1729,7 @@ int main(int argc, char **argv) {
                            osd_frames > 0 ? last_osd : NULL,
                            resize_frames > 0 ? last_resize : NULL,
                            vpss_frames > 0 ? last_vpss : NULL,
+                           csc_rga_frames > 0 ? last_csc_rga : NULL,
                            stereo_frames > 0 ? last_stereo : NULL);
         }
         (void)MEDIA_POOL_EndCpuAccess(dbuf, DMA_BUF_SYNC_WRITE);
@@ -1665,6 +1746,7 @@ int main(int argc, char **argv) {
     MEDIA_VO_Stop(0, 0);
     MEDIA_VO_DestroyChn(0, 0);
     cleanup_live_stereo(live_stereo_ok);
+    cleanup_live_csc_rga(live_csc_rga_ok);
     cleanup_live_vpss(live_vpss_ok);
     cleanup_live_resize(live_resize_ok);
     cleanup_live_osd(live_osd_ok);
@@ -1675,6 +1757,7 @@ int main(int argc, char **argv) {
     MEDIA_POOL_Destroy(WORK_POOL_OUT);
     unload_loop_assets();
     free(last_stereo);
+    free(last_csc_rga);
     free(last_vpss);
     free(last_resize);
     free(last_osd);
