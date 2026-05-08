@@ -51,7 +51,7 @@ cmake --build build -j
 
 小窗体右上角状态含义：
 
-- `LIVE`：真实模块链路正在输出，例如当前 OSD tile 使用 `camera frame -> OSD module -> tile`，RESIZE_RGA tile 使用 `camera frame -> RESIZE_RGA module -> tile`
+- `LIVE`：真实模块链路正在输出，例如当前 OSD tile 使用 `camera frame -> OSD module -> tile`，RESIZE_RGA tile 使用 `camera frame -> RESIZE_RGA module -> tile`，VPSS tile 使用 `camera frame -> VPSS module -> tile`
 - `PROBED`：模块初始化探测通过，但默认展示未接实时输出
 - `LOOP`：使用循环素材展示
 - `SYNTH`：合成占位展示，不代表真实算法进度
