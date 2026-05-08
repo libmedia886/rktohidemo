@@ -681,10 +681,21 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
               g_tiles[idx].status == TILE_PROBED ? "INIT OK  NO LIVE OUTPUT" : "SYNTHETIC PLACEHOLDER",
               2, 170, 210, 240);
 
-    for (int i = 0; i < 6; ++i) {
-        int bx = x + 90 + i * 140;
-        int bh = 42 + ((frame / 4 + i * 17 + idx * 9) % 140);
-        fill_rect_nv12(dst, stride, bx, y + h - 90 - bh, 62, bh, sr / 2, sg / 2, sb / 2);
+    const char *state =
+        g_tiles[idx].status == TILE_PROBED ? "API PROBE PASSED" :
+        g_tiles[idx].status == TILE_LIVE ? "LIVE FRAMES" : "OFFLINE";
+    const char *source =
+        g_tiles[idx].status == TILE_PROBED ? "NO DISPLAY FRAME API" :
+        g_tiles[idx].status == TILE_LIVE ? "MODULE OUTPUT" : "WAITING FOR SAFE PATH";
+    const char *mode =
+        loop ? "LOOP ASSET" : "MODULE TILE";
+    int row_y = y + h - 206;
+    for (int i = 0; i < 3; ++i) {
+        const char *label = i == 0 ? "STATE" : (i == 1 ? "SOURCE" : "MODE");
+        const char *value = i == 0 ? state : (i == 1 ? source : mode);
+        fill_rect_nv12(dst, stride, x + 88, row_y + i * 50, w - 176, 34, 8, 18, 30);
+        draw_text(dst, stride, x + 110, row_y + 8 + i * 50, label, 1, 110, 170, 210);
+        draw_text(dst, stride, x + 250, row_y + 8 + i * 50, value, 1, 190, 230, 255);
     }
 }
 
