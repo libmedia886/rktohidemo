@@ -221,6 +221,7 @@ static const char *g_bind_vpss_clahe_src_port = NULL;
 static const char *g_bind_vmix_raw_in_port = NULL;
 static const char *g_bind_clahe_in_port = NULL;
 static const char *g_bind_clahe_src_port = NULL;
+static const char *g_bind_vpss_retinex_src_port = NULL;
 static const char *g_bind_retinex_in_port = NULL;
 static const char *g_bind_retinex_src_port = NULL;
 static const char *g_bind_vmix_in_port = NULL;
@@ -2992,10 +2993,19 @@ static int bind_vi_clahe_vmix_osd_vo(void) {
 static int bind_vi_retinex_vmix_osd_vo(void) {
     const char *out_ports[] = {"output0", "output"};
     const char *vi_out_ports[] = {"output", "output0"};
+    const char *vpss_raw_out_ports[] = {"output0"};
+    const char *vpss_retinex_out_ports[] = {"output1"};
+    const char *vpss_in_ports[] = {"input"};
     const char *retinex_in_ports[] = {"input0", "input"};
-    const char *vmix_in_ports[] = {"input0", "input"};
+    const char *vmix_raw_ports[] = {"input0"};
+    const char *vmix_retinex_ports[] = {"input1"};
+    const char *vo_in_ports[] = {"input0", "input"};
     const char *osd_in_ports[] = {"input", "input0"};
     g_bind_vi_src_port = NULL;
+    g_bind_vpss_in_port = NULL;
+    g_bind_vpss_raw_src_port = NULL;
+    g_bind_vpss_retinex_src_port = NULL;
+    g_bind_vmix_raw_in_port = NULL;
     g_bind_retinex_in_port = NULL;
     g_bind_retinex_src_port = NULL;
     g_bind_vmix_in_port = NULL;
@@ -3005,17 +3015,39 @@ static int bind_vi_retinex_vmix_osd_vo(void) {
     g_bind_vo_in_port = NULL;
 
     if (bind_first_match("VI", 0, vi_out_ports, (int)ARRAY_SIZE(vi_out_ports),
+                         "VPSS", LIVE_VPSS_GRP, vpss_in_ports, (int)ARRAY_SIZE(vpss_in_ports),
+                         &g_bind_vi_src_port, &g_bind_vpss_in_port) != 0) {
+        fprintf(stderr, "bind failed: VI -> VPSS split\n");
+        return -1;
+    }
+    if (bind_first_match("VPSS", LIVE_VPSS_GRP, vpss_raw_out_ports, (int)ARRAY_SIZE(vpss_raw_out_ports),
+                         "VMIX", DISPLAY_VMIX_GRP, vmix_raw_ports, (int)ARRAY_SIZE(vmix_raw_ports),
+                         &g_bind_vpss_raw_src_port, &g_bind_vmix_raw_in_port) != 0) {
+        fprintf(stderr, "bind failed: VPSS raw -> VMIX compare\n");
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "VPSS", LIVE_VPSS_GRP, g_bind_vpss_in_port);
+        return -1;
+    }
+    if (bind_first_match("VPSS", LIVE_VPSS_GRP, vpss_retinex_out_ports, (int)ARRAY_SIZE(vpss_retinex_out_ports),
                          "RETINEX", LIVE_RETINEX_GRP, retinex_in_ports, (int)ARRAY_SIZE(retinex_in_ports),
-                         &g_bind_vi_src_port, &g_bind_retinex_in_port) != 0) {
-        fprintf(stderr, "bind failed: VI -> RETINEX\n");
+                         &g_bind_vpss_retinex_src_port, &g_bind_retinex_in_port) != 0) {
+        fprintf(stderr, "bind failed: VPSS -> RETINEX\n");
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP, g_bind_vpss_raw_src_port,
+                         "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_raw_in_port);
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "VPSS", LIVE_VPSS_GRP, g_bind_vpss_in_port);
         return -1;
     }
     if (bind_first_match("RETINEX", LIVE_RETINEX_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
-                         "VMIX", DISPLAY_VMIX_GRP, vmix_in_ports, (int)ARRAY_SIZE(vmix_in_ports),
+                         "VMIX", DISPLAY_VMIX_GRP, vmix_retinex_ports, (int)ARRAY_SIZE(vmix_retinex_ports),
                          &g_bind_retinex_src_port, &g_bind_vmix_in_port) != 0) {
         fprintf(stderr, "bind failed: RETINEX -> VMIX\n");
-        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP, g_bind_vpss_retinex_src_port,
                          "RETINEX", LIVE_RETINEX_GRP, g_bind_retinex_in_port);
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP, g_bind_vpss_raw_src_port,
+                         "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_raw_in_port);
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "VPSS", LIVE_VPSS_GRP, g_bind_vpss_in_port);
         return -1;
     }
     if (bind_first_match("VMIX", DISPLAY_VMIX_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
@@ -3024,20 +3056,28 @@ static int bind_vi_retinex_vmix_osd_vo(void) {
         fprintf(stderr, "bind failed: VMIX -> OSD\n");
         MEDIA_SYS_UnBind("RETINEX", LIVE_RETINEX_GRP, g_bind_retinex_src_port,
                          "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_in_port);
-        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP, g_bind_vpss_retinex_src_port,
                          "RETINEX", LIVE_RETINEX_GRP, g_bind_retinex_in_port);
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP, g_bind_vpss_raw_src_port,
+                         "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_raw_in_port);
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "VPSS", LIVE_VPSS_GRP, g_bind_vpss_in_port);
         return -1;
     }
     if (bind_first_match("OSD", DISPLAY_OSD_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
-                         "VO", 0, vmix_in_ports, (int)ARRAY_SIZE(vmix_in_ports),
+                         "VO", 0, vo_in_ports, (int)ARRAY_SIZE(vo_in_ports),
                          &g_bind_osd_src_port, &g_bind_vo_in_port) != 0) {
         fprintf(stderr, "bind failed: OSD -> VO\n");
         MEDIA_SYS_UnBind("VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_src_port,
                          "OSD", DISPLAY_OSD_GRP, g_bind_osd_in_port);
         MEDIA_SYS_UnBind("RETINEX", LIVE_RETINEX_GRP, g_bind_retinex_src_port,
                          "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_in_port);
-        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP, g_bind_vpss_retinex_src_port,
                          "RETINEX", LIVE_RETINEX_GRP, g_bind_retinex_in_port);
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP, g_bind_vpss_raw_src_port,
+                         "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_raw_in_port);
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "VPSS", LIVE_VPSS_GRP, g_bind_vpss_in_port);
         return -1;
     }
     return 0;
@@ -3519,9 +3559,17 @@ static void unbind_vi_retinex_vmix_osd_vo(int enabled) {
         MEDIA_SYS_UnBind("RETINEX", LIVE_RETINEX_GRP, g_bind_retinex_src_port,
                          "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_in_port);
     }
-    if (g_bind_vi_src_port && g_bind_retinex_in_port) {
-        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+    if (g_bind_vpss_retinex_src_port && g_bind_retinex_in_port) {
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP, g_bind_vpss_retinex_src_port,
                          "RETINEX", LIVE_RETINEX_GRP, g_bind_retinex_in_port);
+    }
+    if (g_bind_vpss_raw_src_port && g_bind_vmix_raw_in_port) {
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP, g_bind_vpss_raw_src_port,
+                         "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_raw_in_port);
+    }
+    if (g_bind_vi_src_port && g_bind_vpss_in_port) {
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "VPSS", LIVE_VPSS_GRP, g_bind_vpss_in_port);
     }
 }
 
@@ -4826,6 +4874,41 @@ static void cleanup_live_retinex(int enabled) {
 }
 
 static int setup_live_retinex_bind(void) {
+    if (MEDIA_POOL_Create(VPSS_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
+    if (MEDIA_POOL_Create(VPSS_OUTPUT_POOL, CAM_FRAME_SIZE, 5) != 0) {
+        MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+        return -1;
+    }
+
+    MEDIA_VPSS_ATTR vpss = {0};
+    vpss.width = CAM_W;
+    vpss.height = CAM_H;
+    vpss.input_stride = CAM_STRIDE;
+    vpss.input_depth = 4;
+    vpss.input_format = MEDIA_FORMAT_NV12;
+    vpss.output_count = 2;
+    for (int i = 0; i < 2; ++i) {
+        vpss.outputs[i].output_id = i;
+        vpss.outputs[i].out_width = CAM_W;
+        vpss.outputs[i].out_height = CAM_H;
+        vpss.outputs[i].out_stride = CAM_STRIDE;
+        vpss.outputs[i].pool_id = VPSS_OUTPUT_POOL;
+        vpss.outputs[i].crop_x = 0;
+        vpss.outputs[i].crop_y = 0;
+        vpss.outputs[i].crop_w = CAM_W;
+        vpss.outputs[i].crop_h = CAM_H;
+        vpss.outputs[i].in_fps = -1;
+        vpss.outputs[i].out_fps = -1;
+        vpss.outputs[i].output_format = MEDIA_FORMAT_NV12;
+    }
+    if (MEDIA_VPSS_SetAttr(LIVE_VPSS_GRP, &vpss) != 0 ||
+        MEDIA_VPSS_Enable(LIVE_VPSS_GRP) != 0) {
+        MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
+        MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+        MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+        return -1;
+    }
+
     MEDIA_RETINEX_ATTR attr = {0};
     attr.scale_count = 1;
     attr.width = CAM_W;
@@ -4843,6 +4926,10 @@ static int setup_live_retinex_bind(void) {
     if (MEDIA_RETINEX_CreateGrp(LIVE_RETINEX_GRP, &attr) != 0 ||
         MEDIA_RETINEX_Start(LIVE_RETINEX_GRP) != 0) {
         MEDIA_RETINEX_DestroyGrp(LIVE_RETINEX_GRP);
+        MEDIA_VPSS_Disable(LIVE_VPSS_GRP);
+        MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
+        MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+        MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
         return -1;
     }
     set_tile_status("RETINEX", TILE_LIVE);
@@ -4853,6 +4940,10 @@ static void cleanup_live_retinex_bind(int enabled) {
     if (!enabled) return;
     MEDIA_RETINEX_Stop(LIVE_RETINEX_GRP);
     MEDIA_RETINEX_DestroyGrp(LIVE_RETINEX_GRP);
+    MEDIA_VPSS_Disable(LIVE_VPSS_GRP);
+    MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
+    MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+    MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
 }
 
 static int process_live_retinex(const uint8_t *src, uint8_t *dst) {
@@ -4867,6 +4958,68 @@ static int process_live_retinex(const uint8_t *src, uint8_t *dst) {
         MEDIA_RETINEX_ReleaseFrame(LIVE_RETINEX_GRP, out);
     }
     return ret;
+}
+
+static int update_retinex_compare_overlay(uint64_t vi_count, uint64_t retinex_count, int frame) {
+    static uint8_t masks[16][1024 * 96];
+    const int view_x = (SCREEN_W - CAM_W) / 2;
+    const int top_y = 164;
+    const int bottom_y = 840;
+    char count_line[128];
+    char param_line[128];
+    char bind_line1[180];
+    char bind_line2[180];
+
+    snprintf(count_line, sizeof(count_line), "FRAMES  VI=%llu  RETINEX=%llu",
+             (unsigned long long)vi_count, (unsigned long long)retinex_count);
+    snprintf(param_line, sizeof(param_line), "GAIN 20.0  THRESHOLD 0.5  LOG -3.0..8.5");
+    snprintf(bind_line1, sizeof(bind_line1), "RAW: VI0.%s -> VPSS%d.%s -> VMIX%d.%s",
+             g_bind_vi_src_port ? g_bind_vi_src_port : "output0",
+             LIVE_VPSS_GRP,
+             g_bind_vpss_raw_src_port ? g_bind_vpss_raw_src_port : "output0",
+             DISPLAY_VMIX_GRP,
+             g_bind_vmix_raw_in_port ? g_bind_vmix_raw_in_port : "input0");
+    snprintf(bind_line2, sizeof(bind_line2), "ENHANCE: VPSS%d.%s -> RETINEX%d.%s -> VMIX%d.%s -> OSD%d -> VO0",
+             LIVE_VPSS_GRP,
+             g_bind_vpss_retinex_src_port ? g_bind_vpss_retinex_src_port : "output1",
+             LIVE_RETINEX_GRP,
+             g_bind_retinex_in_port ? g_bind_retinex_in_port : "input0",
+             DISPLAY_VMIX_GRP,
+             g_bind_vmix_in_port ? g_bind_vmix_in_port : "input1",
+             DISPLAY_OSD_GRP);
+
+    if (update_osd_rect_region(18, view_x, top_y - 50, 256, 38, 5, 10, 18, 220) != 0) return -1;
+    if (update_osd_rect_region(19, view_x, bottom_y - 50, 364, 38, 5, 10, 18, 220) != 0) return -1;
+    if (update_osd_utf8_text_region(20, view_x + 16, top_y - 45, 24, 190, 230, 255,
+                                    "上：VI原始输入",
+                                    masks[0], sizeof(masks[0]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(21, view_x + 16, bottom_y - 45, 24, 160, 255, 220,
+                                    "下：RETINEX增强输出",
+                                    masks[1], sizeof(masks[1]), 1024, 96) != 0) return -1;
+
+    if (update_osd_rect_region(22, 34, 1510, 1012, 286, 5, 10, 18, 226) != 0) return -1;
+    if (update_osd_utf8_text_region(23, 66, 1536, 34, 160, 255, 220,
+                                    "RETINEX：光照校正前后对比",
+                                    masks[2], sizeof(masks[2]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(24, 68, 1588, 24, 190, 230, 255,
+                                    "数据流：VI先进入VPSS分成两路，一路直接显示，一路进入RETINEX增强。",
+                                    masks[3], sizeof(masks[3]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(25, 68, 1630, 23, 255, 230, 120,
+                                    "为什么这样做：压低不均匀光照影响，让阴影和背光区域细节更清楚。",
+                                    masks[4], sizeof(masks[4]), 1024, 96) != 0) return -1;
+
+    int pulse_w = 180 + ((frame * 7) % 260);
+    if (update_osd_rect_region(26, 68, 1676, pulse_w, 28, 120, 220, 255, 220) != 0) return -1;
+    if (update_osd_text_region(27, 548, 1666, 1, 170, 255, 220,
+                               param_line, masks[5], sizeof(masks[5])) != 0) return -1;
+    if (update_osd_text_region(28, 68, 1716, 1, 170, 255, 220,
+                               count_line, masks[6], sizeof(masks[6])) != 0) return -1;
+    if (update_osd_text_region(29, 68, 1746, 1, 170, 205, 235,
+                               bind_line1, masks[7], sizeof(masks[7])) != 0) return -1;
+    if (update_osd_text_region(30, 68, 1772, 1, 170, 205, 235,
+                               bind_line2, masks[8], sizeof(masks[8])) != 0) return -1;
+
+    return 0;
 }
 
 static int setup_live_edof(void) {
@@ -6167,7 +6320,7 @@ int main(int argc, char **argv) {
     int live_csc_cl_chain_ok = 0;
     int display_vmix_osd_ok = 0;
     int display_vmix_inputs = use_vpss_bind_display ? VPSS_DEMO_OUTPUTS :
-        (use_clahe_bind_display ? 2 : 1);
+        ((use_clahe_bind_display || use_retinex_bind_display) ? 2 : 1);
     if (use_vmix_osd_display && setup_display_vmix_osd(dstride, display_size, display_vmix_inputs) == 0) {
         display_vmix_osd_ok = 1;
     } else {
@@ -6401,7 +6554,8 @@ int main(int argc, char **argv) {
             return 1;
         }
         retinex_bind_display_ok = 1;
-        (void)update_display_osd_text("RETINEX  VI RETINEX VMIX OSD VO", "GAIN 20.0  THR 0.5  BIND");
+        (void)update_display_osd_text("RETINEX  RAW VS ENHANCED", "LIGHT CORRECTION COMPARE");
+        (void)update_retinex_compare_overlay(0, 0, 0);
     }
     if (use_rga_bind_display) {
         if (!camera_ok || !live_rga_ok || !display_vmix_osd_ok || bind_vi_rga_vmix_osd_vo() != 0) {
@@ -6930,7 +7084,8 @@ int main(int argc, char **argv) {
                              (unsigned long long)retinex_count,
                              g_perf.cpu_percent);
                 }
-                (void)update_display_osd_text("RETINEX  VI RETINEX VMIX OSD VO", perf);
+                (void)update_display_osd_text("RETINEX  RAW VS ENHANCED", perf);
+                (void)update_retinex_compare_overlay(vi_count, retinex_count, frame);
                 if ((frame % FPS) == 0) {
                     char gpu_text[24];
                     char rga_text[24];
