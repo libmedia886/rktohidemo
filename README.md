@@ -52,7 +52,7 @@ cmake --build build -j
 `CAP_DEHAZE` 和 `DCP_FAST_DEHAZE` 单独模式使用合成 RGB 输入，不占用摄像头。
 `CONV_CL` 单独模式使用合成 RGBA 输入，不占用摄像头。
 `CLAHE` 单独模式使用合成 NV12 输入，不占用摄像头。
-`EDOF_CL` 单独模式使用两张图片输入加一张预览输出的三栏对比，每 3 秒切换一组；当前不调用会阻塞的 EDOF 输入端口。
+`EDOF_CL` 单独模式使用 `assets/loop/edof/mfi_whu` 的 `a.jpg/b.jpg/fused.png` 样张做三栏对比，每 3 秒切换一组。
 `STEREO_3D` 单独模式使用摄像头输入。
 
 ## 快速自检

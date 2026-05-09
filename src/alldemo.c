@@ -50,6 +50,7 @@
 #define LIVE_DCP_DEHAZE_GRP 67
 #define LIVE_CONV_CL_GRP 68
 #define LIVE_CLAHE_GRP 69
+#define LIVE_EDOF_GRP 70
 
 #define CAM_W 640
 #define CAM_H 640
@@ -91,8 +92,10 @@ typedef struct {
 typedef struct {
     const char *left_path;
     const char *right_path;
+    const char *fused_path;
     image_asset_t left;
     image_asset_t right;
+    image_asset_t fused;
     int loaded;
 } edof_pair_t;
 
@@ -166,8 +169,15 @@ static loop_asset_t g_loop_assets[] = {
 };
 
 static edof_pair_t g_edof_pairs[] = {
-    {"assets/loop/avm_inputs/src_1.jpg", "assets/loop/avm_inputs/src_2.jpg", {0}, {0}, 0},
-    {"assets/loop/avm_inputs/src_3.jpg", "assets/loop/avm_inputs/src_4.jpg", {0}, {0}, 0},
+    {"assets/loop/edof/mfi_whu/0002/a.jpg",
+     "assets/loop/edof/mfi_whu/0002/b.jpg",
+     "assets/loop/edof/mfi_whu/0002/fused.png", {0}, {0}, {0}, 0},
+    {"assets/loop/edof/mfi_whu/0019/a.jpg",
+     "assets/loop/edof/mfi_whu/0019/b.jpg",
+     "assets/loop/edof/mfi_whu/0019/fused.png", {0}, {0}, {0}, 0},
+    {"assets/loop/edof/mfi_whu/0041/a.jpg",
+     "assets/loop/edof/mfi_whu/0041/b.jpg",
+     "assets/loop/edof/mfi_whu/0041/fused.png", {0}, {0}, {0}, 0},
 };
 
 static void on_signal(int sig) {
@@ -651,13 +661,6 @@ static void image_to_nv12_frame(const image_asset_t *img, uint8_t *dst) {
             drow[x & ~1] = u;
             drow[(x & ~1) + 1] = v;
         }
-    }
-}
-
-static void blend_nv12_average(const uint8_t *left, const uint8_t *right, uint8_t *out) {
-    if (!left || !right || !out) return;
-    for (size_t i = 0; i < CAM_FRAME_SIZE; ++i) {
-        out[i] = (uint8_t)(((int)left[i] + (int)right[i]) / 2);
     }
 }
 
@@ -1701,6 +1704,67 @@ static int process_live_clahe(const uint8_t *src, uint8_t *dst) {
     return ret;
 }
 
+static int setup_live_edof(void) {
+    if (MEDIA_POOL_Create(STEREO_INPUT0_POOL, CAM_FRAME_SIZE, 2) != 0) return -1;
+    if (MEDIA_POOL_Create(STEREO_INPUT1_POOL, CAM_FRAME_SIZE, 2) != 0) goto fail;
+    if (MEDIA_POOL_Create(STEREO_OUTPUT_POOL, CAM_FRAME_SIZE, 4) != 0) goto fail;
+
+    MEDIA_EDOF_CL_ATTR attr = {0};
+    attr.width = CAM_W;
+    attr.height = CAM_H;
+    attr.format = MEDIA_FORMAT_NV12;
+    attr.focus_radius = 2;
+    attr.input_depth = 2;
+    attr.output_pool_id = STEREO_OUTPUT_POOL;
+    attr.input_stride = CAM_STRIDE;
+    attr.output_stride = CAM_STRIDE;
+    attr.score_eps = 1e-3f;
+
+    if (MEDIA_EDOF_CL_CreateGrp(LIVE_EDOF_GRP, &attr) != 0 ||
+        MEDIA_EDOF_CL_Enable(LIVE_EDOF_GRP) != 0) {
+        MEDIA_EDOF_CL_DestroyGrp(LIVE_EDOF_GRP);
+        goto fail;
+    }
+
+    float identity_warp[6] = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+    (void)MEDIA_EDOF_CL_SetAffineWarp(LIVE_EDOF_GRP, identity_warp);
+    set_tile_status("EDOF_CL", TILE_LIVE);
+    return 0;
+
+fail:
+    MEDIA_POOL_Destroy(STEREO_INPUT0_POOL);
+    MEDIA_POOL_Destroy(STEREO_INPUT1_POOL);
+    MEDIA_POOL_Destroy(STEREO_OUTPUT_POOL);
+    return -1;
+}
+
+static void cleanup_live_edof(int enabled) {
+    if (!enabled) return;
+    MEDIA_EDOF_CL_Disable(LIVE_EDOF_GRP);
+    MEDIA_EDOF_CL_DestroyGrp(LIVE_EDOF_GRP);
+    MEDIA_POOL_Destroy(STEREO_INPUT0_POOL);
+    MEDIA_POOL_Destroy(STEREO_INPUT1_POOL);
+    MEDIA_POOL_Destroy(STEREO_OUTPUT_POOL);
+}
+
+static int process_live_edof(const uint8_t *src0, const uint8_t *src1, uint8_t *dst) {
+    MEDIA_BUFFER out = {-1, -1};
+    int ret = -1;
+    if (send_copied_frame("EDOF_CL", LIVE_EDOF_GRP, "input0",
+                          STEREO_INPUT0_POOL, src0, CAM_FRAME_SIZE, 1000) != 0) {
+        return -1;
+    }
+    if (send_copied_frame("EDOF_CL", LIVE_EDOF_GRP, "input1",
+                          STEREO_INPUT1_POOL, src1, CAM_FRAME_SIZE, 1000) != 0) {
+        return -1;
+    }
+    if (MEDIA_EDOF_CL_GetFrame(LIVE_EDOF_GRP, &out, 2000) == 0) {
+        ret = copy_from_buffer(out, dst, CAM_FRAME_SIZE);
+        MEDIA_EDOF_CL_ReleaseFrame(LIVE_EDOF_GRP, out);
+    }
+    return ret;
+}
+
 static int setup_live_stereo(void) {
     if (MEDIA_POOL_Create(STEREO_INPUT0_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
     if (MEDIA_POOL_Create(STEREO_INPUT1_POOL, CAM_FRAME_SIZE, 3) != 0) goto fail;
@@ -1830,16 +1894,19 @@ static int load_edof_pairs(void) {
         edof_pair_t *pair = &g_edof_pairs[i];
         pair->loaded = 0;
         if (load_image_rgb(pair->left_path, &pair->left) == 0 &&
-            load_image_rgb(pair->right_path, &pair->right) == 0) {
+            load_image_rgb(pair->right_path, &pair->right) == 0 &&
+            load_image_rgb(pair->fused_path, &pair->fused) == 0) {
             pair->loaded = 1;
             total++;
         } else {
-            fprintf(stderr, "warning: failed to load EDOF pair %s %s\n",
-                    pair->left_path, pair->right_path);
+            fprintf(stderr, "warning: failed to load EDOF set %s %s %s\n",
+                    pair->left_path, pair->right_path, pair->fused_path);
             free(pair->left.rgb);
             free(pair->right.rgb);
+            free(pair->fused.rgb);
             memset(&pair->left, 0, sizeof(pair->left));
             memset(&pair->right, 0, sizeof(pair->right));
+            memset(&pair->fused, 0, sizeof(pair->fused));
         }
     }
     return total;
@@ -1850,8 +1917,10 @@ static void unload_edof_pairs(void) {
         edof_pair_t *pair = &g_edof_pairs[i];
         free(pair->left.rgb);
         free(pair->right.rgb);
+        free(pair->fused.rgb);
         memset(&pair->left, 0, sizeof(pair->left));
         memset(&pair->right, 0, sizeof(pair->right));
+        memset(&pair->fused, 0, sizeof(pair->fused));
         pair->loaded = 0;
     }
 }
@@ -2245,7 +2314,11 @@ int main(int argc, char **argv) {
         setup_live_clahe() == 0) {
         live_clahe_ok = 1;
     }
-    if (!solid_test && only_tile && strcasecmp(only_tile, "EDOF_CL") == 0 && loaded_edof_pairs > 0) {
+    int live_edof_ok = 0;
+    if (!solid_test && only_tile && strcasecmp(only_tile, "EDOF_CL") == 0 &&
+        loaded_edof_pairs > 0 && setup_live_edof() == 0) {
+        live_edof_ok = 1;
+    } else if (!solid_test && only_tile && strcasecmp(only_tile, "EDOF_CL") == 0 && loaded_edof_pairs > 0) {
         set_tile_status("EDOF_CL", TILE_LOOP);
     }
     int live_stereo_ok = 0;
@@ -2257,6 +2330,7 @@ int main(int argc, char **argv) {
     if (MEDIA_POOL_Create(DISPLAY_POOL, display_size, 4) != 0) {
         fprintf(stderr, "display pool create failed\n");
         cleanup_live_stereo(live_stereo_ok);
+        cleanup_live_edof(live_edof_ok);
         cleanup_live_clahe(live_clahe_ok);
         cleanup_live_conv_cl(live_conv_ok);
         cleanup_live_dcp_dehaze(live_dcp_ok);
@@ -2284,6 +2358,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "VO setup failed\n");
         MEDIA_POOL_Destroy(DISPLAY_POOL);
         cleanup_live_stereo(live_stereo_ok);
+        cleanup_live_edof(live_edof_ok);
         cleanup_live_clahe(live_clahe_ok);
         cleanup_live_conv_cl(live_conv_ok);
         cleanup_live_dcp_dehaze(live_dcp_ok);
@@ -2451,7 +2526,10 @@ int main(int argc, char **argv) {
                 if (pair) {
                     image_to_nv12_frame(&pair->left, last_edof_in0);
                     image_to_nv12_frame(&pair->right, last_edof_in1);
-                    blend_nv12_average(last_edof_in0, last_edof_in1, last_edof);
+                    image_to_nv12_frame(&pair->fused, last_edof);
+                    if (live_edof_ok) {
+                        (void)process_live_edof(last_edof_in0, last_edof_in1, last_edof);
+                    }
                     edof_pair_index = next_pair;
                     edof_frames++;
                 }
@@ -2509,6 +2587,7 @@ int main(int argc, char **argv) {
     MEDIA_VO_Stop(0, 0);
     MEDIA_VO_DestroyChn(0, 0);
     cleanup_live_stereo(live_stereo_ok);
+    cleanup_live_edof(live_edof_ok);
     cleanup_live_clahe(live_clahe_ok);
     cleanup_live_conv_cl(live_conv_ok);
     cleanup_live_dcp_dehaze(live_dcp_ok);
