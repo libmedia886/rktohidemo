@@ -98,6 +98,7 @@
 #define PAGE_ROTATE_SECONDS 8
 #define RGA_OP_SECONDS 3
 #define EDOF_PAIR_SECONDS 3
+#define RESIZE_DEMO_UPDATE_FRAMES (FPS * 2)
 #define TILE_FIRST_INDEX 4
 #define TILE_ROTATE_COUNT 16
 
@@ -2215,6 +2216,34 @@ static const rga_demo_op_t g_rga_demo_ops[] = {
     {"ROTATE270", MEDIA_RGA_ALG_ROTATE, 0, 0, CAM_W, CAM_H, 270, 0, 0},
 };
 
+typedef struct {
+    int crop_x;
+    int crop_y;
+    int crop_w;
+    int crop_h;
+} resize_demo_params_t;
+
+static int resize_wave_i(int t, int max_value) {
+    int period;
+    int v;
+    if (max_value <= 0) return 0;
+    period = max_value * 2;
+    v = t % period;
+    return v <= max_value ? v : period - v;
+}
+
+static resize_demo_params_t resize_demo_params_for_frame(int frame) {
+    resize_demo_params_t p;
+    int range;
+    p.crop_w = 520 - (resize_wave_i(frame * 2, 200) & ~1);
+    if (p.crop_w < 320) p.crop_w = 320;
+    p.crop_h = p.crop_w;
+    range = CAM_W - p.crop_w;
+    p.crop_x = resize_wave_i(frame * 5, range) & ~1;
+    p.crop_y = resize_wave_i(frame * 3, range) & ~1;
+    return p;
+}
+
 static int update_rga_bind_flow_overlay(int op_index, int frame) {
     static uint8_t masks[22][1024 * 96];
     const int panel_x = 58;
@@ -2275,6 +2304,64 @@ static int update_rga_bind_flow_overlay(int op_index, int frame) {
     if (update_osd_text_region(24, 88, 1404, 1, 170, 205, 235,
                                bind_line, masks[12], sizeof(masks[12])) != 0) return -1;
 
+    return 0;
+}
+
+static int update_resize_bind_flow_overlay(resize_demo_params_t p, int frame) {
+    static uint8_t masks[16][1024 * 96];
+    char crop_line[160];
+    char zoom_line[96];
+    char bind_line[180];
+    int box_x = 102 + (p.crop_x * 260) / CAM_W;
+    int box_y = 1198 + (p.crop_y * 260) / CAM_H;
+    int box_w = (p.crop_w * 260) / CAM_W;
+    int box_h = (p.crop_h * 260) / CAM_H;
+    int pulse = 180 + ((frame * 6) & 63);
+    if (box_w < 40) box_w = 40;
+    if (box_h < 40) box_h = 40;
+
+    snprintf(crop_line, sizeof(crop_line), "CROP X=%d Y=%d W=%d H=%d -> OUT 640x640",
+             p.crop_x, p.crop_y, p.crop_w, p.crop_h);
+    snprintf(zoom_line, sizeof(zoom_line), "ZOOM %.2fX", (float)CAM_W / (float)p.crop_w);
+    snprintf(bind_line, sizeof(bind_line), "VI0.%s -> RESIZE_RGA%d.%s  |  RESIZE_RGA%d.%s -> VMIX%d.%s  |  OSD%d.%s -> VO0.%s",
+             g_bind_vi_src_port ? g_bind_vi_src_port : "output0",
+             LIVE_RESIZE_GRP,
+             g_bind_resize_in_port ? g_bind_resize_in_port : "input0",
+             LIVE_RESIZE_GRP,
+             g_bind_resize_src_port ? g_bind_resize_src_port : "output0",
+             DISPLAY_VMIX_GRP,
+             g_bind_vmix_in_port ? g_bind_vmix_in_port : "input0",
+             DISPLAY_OSD_GRP,
+             g_bind_osd_src_port ? g_bind_osd_src_port : "output0",
+             g_bind_vo_in_port ? g_bind_vo_in_port : "input0");
+
+    if (update_osd_rect_region(4, 58, 1030, 964, 454, 5, 10, 18, 225) != 0) return -1;
+    if (update_osd_utf8_text_region(5, 86, 1058, 31, 160, 255, 220,
+                                    "RESIZE_RGA动态裁剪放大",
+                                    masks[0], sizeof(masks[0]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(6, 88, 1106, 23, 190, 230, 255,
+                                    "数据流：VI实时画面进入RESIZE_RGA，移动裁剪框被放大到输出画面。",
+                                    masks[1], sizeof(masks[1]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(7, 88, 1146, 23, 255, 230, 120,
+                                    "为什么这样做：把裁剪和缩放交给RGA硬件，CPU不用逐像素缩放。",
+                                    masks[2], sizeof(masks[2]), 1024, 96) != 0) return -1;
+
+    if (update_osd_rect_region(8, 88, 1190, 300, 300, 9, 19, 34, 235) != 0) return -1;
+    if (update_osd_rect_region(9, box_x, box_y, box_w, box_h, 255, 230, 80, 210) != 0) return -1;
+    if (update_osd_rect_region(10, 458, 1190, 496, 224, 10, 22, 38, 235) != 0) return -1;
+
+    if (update_osd_utf8_text_region(11, 112, 1208, 22, 160, 255, 220,
+                                    "原始640x640取景", masks[3], sizeof(masks[3]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(12, 484, 1214, 27, 160, 255, 220,
+                                    "输出：裁剪区域被放大铺满", masks[4], sizeof(masks[4]), 1024, 96) != 0) return -1;
+    if (update_osd_text_region(13, 484, 1278, 2, 255, 230, 120,
+                               zoom_line, masks[5], sizeof(masks[5])) != 0) return -1;
+    if (update_osd_text_region(14, 484, 1330, 1, 190, 230, 255,
+                               crop_line, masks[6], sizeof(masks[6])) != 0) return -1;
+    if (update_osd_text_region(15, 88, 1430, 1, 170, 205, 235,
+                               bind_line, masks[7], sizeof(masks[7])) != 0) return -1;
+
+    (void)pulse;
     return 0;
 }
 
@@ -3391,6 +3478,22 @@ static int process_live_osd(const uint8_t *src, uint8_t *dst) {
     return ret;
 }
 
+static void fill_resize_attr(MEDIA_RESIZE_RGA_ATTR *attr, resize_demo_params_t p, int output_pool, int input_depth) {
+    memset(attr, 0, sizeof(*attr));
+    attr->src_x = p.crop_x;
+    attr->src_y = p.crop_y;
+    attr->src_width = p.crop_w;
+    attr->src_height = p.crop_h;
+    attr->input_stride = CAM_STRIDE;
+    attr->input_format = MEDIA_FORMAT_NV12;
+    attr->input_depth = input_depth;
+    attr->out_width = CAM_W;
+    attr->out_height = CAM_H;
+    attr->out_stride = CAM_STRIDE;
+    attr->output_format = MEDIA_FORMAT_NV12;
+    attr->output_pool_id = output_pool;
+}
+
 static int setup_live_resize(void) {
     if (MEDIA_POOL_Create(RESIZE_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
     if (MEDIA_POOL_Create(RESIZE_OUTPUT_POOL, CAM_FRAME_SIZE, 3) != 0) {
@@ -3399,18 +3502,7 @@ static int setup_live_resize(void) {
     }
 
     MEDIA_RESIZE_RGA_ATTR attr = {0};
-    attr.src_x = 120;
-    attr.src_y = 120;
-    attr.src_width = 400;
-    attr.src_height = 400;
-    attr.input_stride = CAM_STRIDE;
-    attr.input_format = MEDIA_FORMAT_NV12;
-    attr.input_depth = 3;
-    attr.out_width = CAM_W;
-    attr.out_height = CAM_H;
-    attr.out_stride = CAM_STRIDE;
-    attr.output_format = MEDIA_FORMAT_NV12;
-    attr.output_pool_id = RESIZE_OUTPUT_POOL;
+    fill_resize_attr(&attr, resize_demo_params_for_frame(0), RESIZE_OUTPUT_POOL, 3);
 
     if (MEDIA_RESIZE_RGA_CreateGrp(LIVE_RESIZE_GRP, &attr) != 0 ||
         MEDIA_RESIZE_RGA_Start(LIVE_RESIZE_GRP) != 0 ||
@@ -3424,20 +3516,9 @@ static int setup_live_resize(void) {
     return 0;
 }
 
-static int setup_live_resize_bind(void) {
+static int setup_live_resize_bind_with_params(resize_demo_params_t p) {
     MEDIA_RESIZE_RGA_ATTR attr = {0};
-    attr.src_x = 120;
-    attr.src_y = 120;
-    attr.src_width = 400;
-    attr.src_height = 400;
-    attr.input_stride = CAM_STRIDE;
-    attr.input_format = MEDIA_FORMAT_NV12;
-    attr.input_depth = 4;
-    attr.out_width = CAM_W;
-    attr.out_height = CAM_H;
-    attr.out_stride = CAM_STRIDE;
-    attr.output_format = MEDIA_FORMAT_NV12;
-    attr.output_pool_id = DISPLAY_VMIX_INPUT_POOL;
+    fill_resize_attr(&attr, p, DISPLAY_VMIX_INPUT_POOL, 4);
 
     if (MEDIA_RESIZE_RGA_CreateGrp(LIVE_RESIZE_GRP, &attr) != 0 ||
         MEDIA_RESIZE_RGA_Start(LIVE_RESIZE_GRP) != 0 ||
@@ -3451,11 +3532,56 @@ static int setup_live_resize_bind(void) {
     return 0;
 }
 
+static int setup_live_resize_bind(void) {
+    return setup_live_resize_bind_with_params(resize_demo_params_for_frame(0));
+}
+
 static void cleanup_live_resize_bind(int enabled) {
     if (!enabled) return;
     MEDIA_RESIZE_RGA_Disable(LIVE_RESIZE_GRP);
     MEDIA_RESIZE_RGA_Stop(LIVE_RESIZE_GRP);
     MEDIA_RESIZE_RGA_DestroyGrp(LIVE_RESIZE_GRP);
+}
+
+static int reconfigure_resize_bind(resize_demo_params_t p) {
+    const char *out_ports[] = {"output0", "output"};
+    const char *vi_out_ports[] = {"output", "output0"};
+    const char *in_ports[] = {"input0", "input"};
+    const char *saved_vmix_in = g_bind_vmix_in_port;
+
+    if (g_bind_resize_src_port && g_bind_vmix_in_port) {
+        MEDIA_SYS_UnBind("RESIZE_RGA", LIVE_RESIZE_GRP, g_bind_resize_src_port,
+                         "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_in_port);
+    }
+    if (g_bind_vi_src_port && g_bind_resize_in_port) {
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "RESIZE_RGA", LIVE_RESIZE_GRP, g_bind_resize_in_port);
+    }
+    cleanup_live_resize_bind(1);
+
+    g_bind_resize_in_port = NULL;
+    g_bind_resize_src_port = NULL;
+    if (setup_live_resize_bind_with_params(p) != 0) return -1;
+    if (bind_first_match("VI", 0, vi_out_ports, (int)ARRAY_SIZE(vi_out_ports),
+                         "RESIZE_RGA", LIVE_RESIZE_GRP, in_ports, (int)ARRAY_SIZE(in_ports),
+                         &g_bind_vi_src_port, &g_bind_resize_in_port) != 0) {
+        return -1;
+    }
+    if (saved_vmix_in &&
+        MEDIA_SYS_Bind("RESIZE_RGA", LIVE_RESIZE_GRP, out_ports[0],
+                       "VMIX", DISPLAY_VMIX_GRP, saved_vmix_in) == 0) {
+        g_bind_resize_src_port = out_ports[0];
+        g_bind_vmix_in_port = saved_vmix_in;
+        return 0;
+    }
+    if (bind_first_match("RESIZE_RGA", LIVE_RESIZE_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
+                         "VMIX", DISPLAY_VMIX_GRP, in_ports, (int)ARRAY_SIZE(in_ports),
+                         &g_bind_resize_src_port, &g_bind_vmix_in_port) != 0) {
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "RESIZE_RGA", LIVE_RESIZE_GRP, g_bind_resize_in_port);
+        return -1;
+    }
+    return 0;
 }
 
 static void cleanup_live_resize(int enabled) {
@@ -5869,7 +5995,8 @@ int main(int argc, char **argv) {
             return 1;
         }
         resize_bind_display_ok = 1;
-        (void)update_display_osd_text("RESIZE_RGA  NV12 BIND", "CENTER CROP 400 TO 640");
+        (void)update_display_osd_text("RESIZE_RGA  NV12 BIND", "DYNAMIC CROP ZOOM");
+        (void)update_resize_bind_flow_overlay(resize_demo_params_for_frame(0), 0);
     }
     if (use_csc_rga_bind_display) {
         if (!camera_ok || !live_csc_rga_chain_ok || !display_vmix_osd_ok ||
@@ -6411,33 +6538,46 @@ int main(int argc, char **argv) {
             continue;
         }
         if (resize_bind_display_ok) {
+            int param_frame = (frame / RESIZE_DEMO_UPDATE_FRAMES) * RESIZE_DEMO_UPDATE_FRAMES;
+            resize_demo_params_t rp = resize_demo_params_for_frame(param_frame);
+            if ((frame % RESIZE_DEMO_UPDATE_FRAMES) == 0) {
+                if (reconfigure_resize_bind(rp) != 0) {
+                    fprintf(stderr, "warning: RESIZE_RGA dynamic crop update rejected\n");
+                }
+            }
             if ((frame % 15) == 0) {
                 uint64_t vi_count = 0;
                 uint64_t resize_count = 0;
                 char perf[160];
+                float zoom = (float)CAM_W / (float)rp.crop_w;
                 update_perf_status();
                 if (MEDIA_SYS_GetModuleFrameCount("VI", 0, &vi_count) == 0) {
                     g_health.camera_frames = (int)vi_count;
                 }
                 (void)MEDIA_SYS_GetModuleFrameCount("RESIZE_RGA", LIVE_RESIZE_GRP, &resize_count);
                 if (g_perf.gpu_available && g_perf.rga_available) {
-                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d CROP 400 TO 640 CPU %.0f%% GPU %.0f%% RGA %.0f%%",
+                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d CROP %dx%d ZOOM %.2f CPU %.0f%% GPU %.0f%% RGA %.0f%%",
                              module_page_number("RESIZE_RGA"), (int)ARRAY_SIZE(g_module_pages),
+                             rp.crop_w, rp.crop_h, zoom,
                              g_perf.cpu_percent, g_perf.gpu_percent, g_perf.rga_percent);
                 } else if (g_perf.gpu_available) {
-                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d CROP 400 TO 640 CPU %.0f%% GPU %.0f%% RGA N/A",
+                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d CROP %dx%d ZOOM %.2f CPU %.0f%% GPU %.0f%% RGA N/A",
                              module_page_number("RESIZE_RGA"), (int)ARRAY_SIZE(g_module_pages),
+                             rp.crop_w, rp.crop_h, zoom,
                              g_perf.cpu_percent, g_perf.gpu_percent);
                 } else if (g_perf.rga_available) {
-                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d CROP 400 TO 640 CPU %.0f%% GPU N/A RGA %.0f%%",
+                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d CROP %dx%d ZOOM %.2f CPU %.0f%% GPU N/A RGA %.0f%%",
                              module_page_number("RESIZE_RGA"), (int)ARRAY_SIZE(g_module_pages),
+                             rp.crop_w, rp.crop_h, zoom,
                              g_perf.cpu_percent, g_perf.rga_percent);
                 } else {
-                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d CROP 400 TO 640 CPU %.0f%% GPU N/A RGA N/A",
+                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d CROP %dx%d ZOOM %.2f CPU %.0f%% GPU N/A RGA N/A",
                              module_page_number("RESIZE_RGA"), (int)ARRAY_SIZE(g_module_pages),
+                             rp.crop_w, rp.crop_h, zoom,
                              g_perf.cpu_percent);
                 }
                 (void)update_display_osd_text("RESIZE_RGA  VI RESIZE VMIX OSD VO", perf);
+                (void)update_resize_bind_flow_overlay(rp, frame);
                 if ((frame % FPS) == 0) {
                     char gpu_text[24];
                     char rga_text[24];
@@ -6445,9 +6585,10 @@ int main(int argc, char **argv) {
                              g_perf.gpu_percent);
                     snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
                              g_perf.rga_percent);
-                    printf("RESIZE_RGA vi_frames=%llu resize_frames=%llu cpu=%.0f%% gpu=%s rga=%s\n",
+                    printf("RESIZE_RGA vi_frames=%llu resize_frames=%llu crop=%d,%d,%d,%d cpu=%.0f%% gpu=%s rga=%s\n",
                            (unsigned long long)vi_count,
                            (unsigned long long)resize_count,
+                           rp.crop_x, rp.crop_y, rp.crop_w, rp.crop_h,
                            g_perf.cpu_percent,
                            gpu_text,
                            rga_text);
