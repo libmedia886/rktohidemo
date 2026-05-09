@@ -10,6 +10,7 @@ add_executable(alldemo src/alldemo.c)
 target_include_directories(alldemo PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     /usr/include/libdrm
+    /usr/include/freetype2
 )
 
 target_link_libraries(alldemo

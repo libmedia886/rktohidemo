@@ -18,6 +18,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <ft2build.h>
+#include FT_FREETYPE_H
 #include <jpeglib.h>
 #include <png.h>
 
@@ -84,6 +86,7 @@
 #define FPS 30
 #define CAMERA_DEVICE "/dev/video-camera0"
 #define LICENSE_PATH "/root/licence.dat"
+#define UI_FONT_PATH "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"
 #define RTSP_PORT 8554
 #define CAM_FRAME_SIZE (CAM_STRIDE * CAM_H * 3 / 2)
 #define RGB_FRAME_SIZE (CAM_W * CAM_H * 3)
@@ -186,7 +189,8 @@ typedef struct {
     const uint8_t *dual_lbl;
 } display_refs_t;
 
-static volatile int g_running = 1;
+static volatile sig_atomic_t g_running = 1;
+static volatile sig_atomic_t g_signal_count = 0;
 static health_status_t g_health = {0};
 static perf_status_t g_perf = {0.0f, 0.0f, 0, 0.0f, 0};
 static const char *g_bind_vi_src_port = NULL;
@@ -308,6 +312,7 @@ static pano_sample_t g_pano_sample = {
 
 static void on_signal(int sig) {
     (void)sig;
+    if (++g_signal_count > 1) _exit(128 + sig);
     g_running = 0;
 }
 
@@ -815,6 +820,91 @@ static int render_text_mask(const char *text, int scale, uint8_t *mask,
     }
     *out_w = w;
     *out_h = h;
+    return 0;
+}
+
+static uint32_t utf8_next_codepoint(const char **p) {
+    const unsigned char *s = (const unsigned char *)(*p);
+    uint32_t cp = 0;
+    if (s[0] < 0x80) {
+        cp = s[0];
+        *p += 1;
+    } else if ((s[0] & 0xe0) == 0xc0 && (s[1] & 0xc0) == 0x80) {
+        cp = ((uint32_t)(s[0] & 0x1f) << 6) | (uint32_t)(s[1] & 0x3f);
+        *p += 2;
+    } else if ((s[0] & 0xf0) == 0xe0 &&
+               (s[1] & 0xc0) == 0x80 &&
+               (s[2] & 0xc0) == 0x80) {
+        cp = ((uint32_t)(s[0] & 0x0f) << 12) |
+             ((uint32_t)(s[1] & 0x3f) << 6) |
+             (uint32_t)(s[2] & 0x3f);
+        *p += 3;
+    } else if ((s[0] & 0xf8) == 0xf0 &&
+               (s[1] & 0xc0) == 0x80 &&
+               (s[2] & 0xc0) == 0x80 &&
+               (s[3] & 0xc0) == 0x80) {
+        cp = ((uint32_t)(s[0] & 0x07) << 18) |
+             ((uint32_t)(s[1] & 0x3f) << 12) |
+             ((uint32_t)(s[2] & 0x3f) << 6) |
+             (uint32_t)(s[3] & 0x3f);
+        *p += 4;
+    } else {
+        cp = '?';
+        *p += 1;
+    }
+    return cp;
+}
+
+static int render_utf8_text_mask(const char *text, int pixel_size, uint8_t *mask,
+                                 int max_w, int max_h, int *out_w, int *out_h) {
+    static FT_Library ft_lib = NULL;
+    static FT_Face ft_face = NULL;
+    int baseline;
+    int width = 0;
+    int height = 0;
+
+    if (!text || !mask || pixel_size <= 0 || max_w <= 0 || max_h <= 0) return -1;
+    if (!ft_lib && FT_Init_FreeType(&ft_lib) != 0) return -1;
+    if (!ft_face && FT_New_Face(ft_lib, UI_FONT_PATH, 0, &ft_face) != 0) return -1;
+    if (FT_Set_Pixel_Sizes(ft_face, 0, (FT_UInt)pixel_size) != 0) return -1;
+
+    baseline = (int)(ft_face->size->metrics.ascender >> 6);
+    height = (int)(ft_face->size->metrics.height >> 6);
+    if (height <= 0) height = pixel_size + 4;
+    if (height > max_h) return -1;
+
+    const char *p = text;
+    while (*p) {
+        uint32_t cp = utf8_next_codepoint(&p);
+        if (FT_Load_Char(ft_face, cp, FT_LOAD_RENDER) != 0) continue;
+        width += (int)(ft_face->glyph->advance.x >> 6);
+    }
+    if (width <= 0 || width > max_w) return -1;
+
+    memset(mask, 0, (size_t)max_w * max_h);
+    int pen_x = 0;
+    p = text;
+    while (*p) {
+        uint32_t cp = utf8_next_codepoint(&p);
+        if (FT_Load_Char(ft_face, cp, FT_LOAD_RENDER) != 0) continue;
+        FT_GlyphSlot glyph = ft_face->glyph;
+        int gx = pen_x + glyph->bitmap_left;
+        int gy = baseline - glyph->bitmap_top;
+        for (int row = 0; row < (int)glyph->bitmap.rows; ++row) {
+            int yy = gy + row;
+            if (yy < 0 || yy >= max_h) continue;
+            const uint8_t *src = glyph->bitmap.buffer + row * glyph->bitmap.pitch;
+            uint8_t *dst = mask + yy * max_w;
+            for (int col = 0; col < (int)glyph->bitmap.width; ++col) {
+                int xx = gx + col;
+                if (xx >= 0 && xx < max_w && src[col] > dst[xx]) dst[xx] = src[col];
+            }
+        }
+        pen_x += (int)(glyph->advance.x >> 6);
+    }
+
+    *out_w = width;
+    *out_h = height;
     return 0;
 }
 
@@ -1730,6 +1820,203 @@ static int update_display_osd_text(const char *title, const char *perf) {
     return 0;
 }
 
+static int update_osd_text_region(int region_id, int x, int y, int scale,
+                                  uint8_t r, uint8_t g, uint8_t b,
+                                  const char *text, uint8_t *mask,
+                                  size_t mask_size) {
+    int w = 0;
+    int h = 0;
+    if (render_text_mask(text, scale, mask, 1024, 64, &w, &h) != 0) return -1;
+
+    MEDIA_OSD_REGION_ATTR attr = {0};
+    attr.enabled = 1;
+    attr.x = x;
+    attr.y = y;
+    attr.width = w;
+    attr.height = h;
+    attr.zorder = 3;
+    attr.global_alpha = 255;
+
+    MEDIA_OSD_MASK_DESC desc = {0};
+    desc.width = w;
+    desc.height = h;
+    desc.stride = 1024;
+    desc.data = mask;
+    desc.data_size = mask_size;
+    desc.color.r = r;
+    desc.color.g = g;
+    desc.color.b = b;
+    desc.color.a = 255;
+
+    if (MEDIA_OSD_UpdateRegion(DISPLAY_OSD_GRP, region_id, &attr) != 0 ||
+        MEDIA_OSD_SetRegionMask(DISPLAY_OSD_GRP, region_id, &desc) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int update_osd_utf8_text_region(int region_id, int x, int y, int pixel_size,
+                                       uint8_t r, uint8_t g, uint8_t b,
+                                       const char *text, uint8_t *mask,
+                                       size_t mask_size, int max_w, int max_h) {
+    int w = 0;
+    int h = 0;
+    if (render_utf8_text_mask(text, pixel_size, mask, max_w, max_h, &w, &h) != 0) {
+        return -1;
+    }
+
+    MEDIA_OSD_REGION_ATTR attr = {0};
+    attr.enabled = 1;
+    attr.x = x;
+    attr.y = y;
+    attr.width = w;
+    attr.height = h;
+    attr.zorder = 3;
+    attr.global_alpha = 255;
+
+    MEDIA_OSD_MASK_DESC desc = {0};
+    desc.width = w;
+    desc.height = h;
+    desc.stride = max_w;
+    desc.data = mask;
+    desc.data_size = mask_size;
+    desc.color.r = r;
+    desc.color.g = g;
+    desc.color.b = b;
+    desc.color.a = 255;
+
+    if (MEDIA_OSD_UpdateRegion(DISPLAY_OSD_GRP, region_id, &attr) != 0 ||
+        MEDIA_OSD_SetRegionMask(DISPLAY_OSD_GRP, region_id, &desc) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int update_osd_rect_region(int region_id, int x, int y, int w, int h,
+                                  uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    MEDIA_OSD_REGION_ATTR attr = {0};
+    attr.enabled = 1;
+    attr.x = x;
+    attr.y = y;
+    attr.width = w;
+    attr.height = h;
+    attr.zorder = 2;
+    attr.global_alpha = a;
+
+    MEDIA_OSD_RECT_DESC rect = {0};
+    rect.filled = 1;
+    rect.color.r = r;
+    rect.color.g = g;
+    rect.color.b = b;
+    rect.color.a = a;
+
+    if (MEDIA_OSD_UpdateRegion(DISPLAY_OSD_GRP, region_id, &attr) != 0 ||
+        MEDIA_OSD_SetRegionRect(DISPLAY_OSD_GRP, region_id, &rect) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int update_vi_bind_flow_overlay(void) {
+    static uint8_t masks[16][1024 * 96];
+    const int box_y = 1114;
+    const int box_w = 196;
+    const int box_h = 96;
+    const int box_gap = 24;
+    const int box_x0 = 112;
+    char actual_line[160];
+    char line1[96];
+    char line2[96];
+    char line3[96];
+
+    snprintf(line1, sizeof(line1), "1 VI0.%s -> VMIX80.%s",
+             g_bind_vi_src_port ? g_bind_vi_src_port : "output",
+             g_bind_vmix_in_port ? g_bind_vmix_in_port : "input0");
+    snprintf(line2, sizeof(line2), "2 VMIX80.%s -> OSD81.%s",
+             g_bind_vmix_src_port ? g_bind_vmix_src_port : "output0",
+             g_bind_osd_in_port ? g_bind_osd_in_port : "input");
+    snprintf(line3, sizeof(line3), "3 OSD81.%s -> VO0.%s",
+             g_bind_osd_src_port ? g_bind_osd_src_port : "output0",
+             g_bind_vo_in_port ? g_bind_vo_in_port : "input0");
+    snprintf(actual_line, sizeof(actual_line), "%s  |  %s  |  %s", line1, line2, line3);
+
+    MEDIA_OSD_RECT_DESC panel = {0};
+    panel.filled = 1;
+    panel.color.r = 5;
+    panel.color.g = 10;
+    panel.color.b = 18;
+    panel.color.a = 230;
+
+    MEDIA_OSD_REGION_ATTR panel_attr = {0};
+    panel_attr.enabled = 1;
+    panel_attr.x = 70;
+    panel_attr.y = 980;
+    panel_attr.width = 940;
+    panel_attr.height = 500;
+    panel_attr.zorder = 2;
+    panel_attr.global_alpha = 230;
+
+    if (MEDIA_OSD_UpdateRegion(DISPLAY_OSD_GRP, 4, &panel_attr) != 0 ||
+        MEDIA_OSD_SetRegionRect(DISPLAY_OSD_GRP, 4, &panel) != 0) {
+        return -1;
+    }
+
+    if (update_osd_utf8_text_region(5, 96, 1008, 30, 160, 255, 220,
+                                    "数据流：摄像头画面如何上屏",
+                                    masks[0], sizeof(masks[0]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(6, 98, 1054, 23, 190, 230, 255,
+                                    "每一帧都沿着下面的模块顺序自动传递。",
+                                    masks[1], sizeof(masks[1]), 1024, 96) != 0) return -1;
+
+    if (update_osd_rect_region(7, box_x0, box_y, box_w, box_h, 18, 42, 64, 235) != 0) return -1;
+    if (update_osd_rect_region(8, box_x0 + (box_w + box_gap), box_y, box_w, box_h, 18, 42, 64, 235) != 0) return -1;
+    if (update_osd_rect_region(9, box_x0 + (box_w + box_gap) * 2, box_y, box_w, box_h, 18, 42, 64, 235) != 0) return -1;
+    if (update_osd_rect_region(10, box_x0 + (box_w + box_gap) * 3, box_y, box_w, box_h, 18, 42, 64, 235) != 0) return -1;
+
+    if (update_osd_utf8_text_region(11, box_x0 + 34, box_y + 20, 24, 160, 255, 220,
+                                    "采集 VI",
+                                    masks[2], sizeof(masks[2]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(12, box_x0 + box_w + box_gap + 22, box_y + 20, 24, 160, 255, 220,
+                                    "排版 VMIX",
+                                    masks[3], sizeof(masks[3]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(13, box_x0 + (box_w + box_gap) * 2 + 34, box_y + 20, 24, 160, 255, 220,
+                                    "叠字 OSD",
+                                    masks[4], sizeof(masks[4]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(14, box_x0 + (box_w + box_gap) * 3 + 34, box_y + 20, 24, 160, 255, 220,
+                                    "出屏 VO",
+                                    masks[5], sizeof(masks[5]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(15, box_x0 + 18, box_y + 58, 18, 190, 230, 255,
+                                    "摄像头输入",
+                                    masks[6], sizeof(masks[6]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(16, box_x0 + box_w + box_gap + 18, box_y + 58, 18, 190, 230, 255,
+                                    "放到屏幕画布",
+                                    masks[7], sizeof(masks[7]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(17, box_x0 + (box_w + box_gap) * 2 + 18, box_y + 58, 18, 190, 230, 255,
+                                    "叠加说明文字",
+                                    masks[8], sizeof(masks[8]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(18, box_x0 + (box_w + box_gap) * 3 + 18, box_y + 58, 18, 190, 230, 255,
+                                    "送到显示屏",
+                                    masks[9], sizeof(masks[9]), 1024, 96) != 0) return -1;
+
+    if (update_osd_utf8_text_region(19, 314, box_y + 30, 28, 255, 230, 120,
+                                    "→", masks[10], sizeof(masks[10]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(20, 534, box_y + 30, 28, 255, 230, 120,
+                                    "→", masks[11], sizeof(masks[11]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(21, 754, box_y + 30, 28, 255, 230, 120,
+                                    "→", masks[12], sizeof(masks[12]), 1024, 96) != 0) return -1;
+
+    if (update_osd_utf8_text_region(22, 96, 1248, 24, 255, 230, 120,
+                                    "为什么这样做：模块直接绑定，画面不经CPU拷贝。",
+                                    masks[13], sizeof(masks[13]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(23, 96, 1292, 24, 140, 210, 180,
+                                    "好处：延迟更低，占用更少，现场看到真实链路。",
+                                    masks[14], sizeof(masks[14]), 1024, 96) != 0) return -1;
+    if (update_osd_text_region(24, 96, 1360, 1, 170, 205, 235,
+                               actual_line, masks[15], sizeof(masks[15])) != 0) return -1;
+
+    return 0;
+}
+
 static int setup_display_vmix_osd(int dstride, size_t display_size, int input_count) {
     if (MEDIA_POOL_Create(DISPLAY_VMIX_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
     if (MEDIA_POOL_Create(DISPLAY_VMIX_OUTPUT_POOL, display_size, 4) != 0) goto fail_input;
@@ -1783,7 +2070,7 @@ static int setup_display_vmix_osd(int dstride, size_t display_size, int input_co
     osd.output_pool_id = DISPLAY_OSD_OUTPUT_POOL;
     osd.input_stride = dstride;
     osd.output_stride = dstride;
-    osd.max_regions = 8;
+    osd.max_regions = 32;
     if (MEDIA_OSD_CreateGrp(DISPLAY_OSD_GRP, &osd) != 0) goto fail_vmix;
 
     MEDIA_OSD_RECT_DESC rect = {0};
@@ -4686,6 +4973,7 @@ static void draw_solid_test(uint8_t *canvas, int stride) {
 int main(int argc, char **argv) {
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
+    signal(SIGALRM, on_signal);
 
     int heavy_probe = 0;
     int asset_check = 0;
@@ -4992,6 +5280,18 @@ int main(int argc, char **argv) {
         snprintf(initial_perf, sizeof(initial_perf), "PAGE 01/%02d  CPU 0%%  GPU N/A  LIVE",
                  (int)ARRAY_SIZE(g_module_pages));
         (void)update_display_osd_text("VI  VMIX OSD BIND", initial_perf);
+        (void)update_vi_bind_flow_overlay();
+        printf("VI bind flow: VI0.%s -> VMIX%d.%s; VMIX%d.%s -> OSD%d.%s; OSD%d.%s -> VO0.%s\n",
+               g_bind_vi_src_port ? g_bind_vi_src_port : "output",
+               DISPLAY_VMIX_GRP,
+               g_bind_vmix_in_port ? g_bind_vmix_in_port : "input0",
+               DISPLAY_VMIX_GRP,
+               g_bind_vmix_src_port ? g_bind_vmix_src_port : "output0",
+               DISPLAY_OSD_GRP,
+               g_bind_osd_in_port ? g_bind_osd_in_port : "input",
+               DISPLAY_OSD_GRP,
+               g_bind_osd_src_port ? g_bind_osd_src_port : "output0",
+               g_bind_vo_in_port ? g_bind_vo_in_port : "input0");
     }
     if (use_vpss_bind_display) {
         if (!camera_ok || !live_vpss_ok || !display_vmix_osd_ok || bind_vpss_vmix_osd_vo() != 0) {
@@ -5970,6 +6270,10 @@ int main(int argc, char **argv) {
         frame++;
         usleep(1000000 / FPS);
     }
+
+    signal(SIGINT, on_signal);
+    signal(SIGTERM, on_signal);
+    alarm(5);
 
     unbind_vpss_vmix_osd_vo(vpss_bind_display_ok);
     unbind_vi_csc_cl_chain_vmix_osd_vo(csc_cl_bind_display_ok);

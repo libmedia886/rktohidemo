@@ -83,7 +83,14 @@ cmake --build build -j
 ```
 
 正常运行时，屏幕标题区会显示当前页码、CPU 占用和 GPU 占用；底部状态栏会显示摄像头出帧数、素材加载数、模块激活数、license/DRM/NPU 状态。摄像头未出帧时主画面会明确显示 `CAMERA OFFLINE`。如果当前系统没有暴露可读 GPU load 节点，GPU 会显示 `N/A`。
-当前 `--only VI` 已接入 `VI -> VMIX(NV12) -> OSD -> VO` bind 显示链路，不再 CPU 拷贝 VI 图像帧；`--only VPSS` 暂时仍使用手动取帧路径验证 VMIX/OSD 显示，待下一步迁移到 bind。
+当前 `--only VI` 已接入 `VI -> VMIX(NV12) -> OSD -> VO` bind 显示链路，不再 CPU 拷贝 VI 图像帧；屏幕下方会显示数据流 bind 面板，直接列出谁绑定到谁，例如 `VI0.output -> VMIX80.input0`、`VMIX80.output0 -> OSD81.input`、`OSD81.output0 -> VO0.input0`。端口名由程序在 `output0/output` 和 `input0/input` 中自动探测，绑定成功后按实际命中的端口显示。
+实现方式在 `src/alldemo.c`：
+
+- `bind_first_match()` 负责尝试端口组合并调用 `MEDIA_SYS_Bind()`。
+- `bind_vi_vmix_osd_vo()` 负责建立 `VI -> VMIX -> OSD -> VO` 三段 bind，并保存实际命中的端口名。
+- `update_vi_bind_flow_overlay()` 负责把这三段数据流画到 `DISPLAY_OSD_GRP` 的 OSD region 上。
+
+`--only VPSS` 已接入 `VI -> VPSS -> VMIX -> OSD -> VO` bind 显示链路，VPSS 四路输出分别绑定到 VMIX 四个输入，同屏展示原始、裁剪、翻转、旋转输出。
 
 小窗体右上角状态含义：
 
