@@ -22,7 +22,7 @@
     {"name": "CSC_CL", "source": "camera", "effect": "OpenCL color conversion path"},
     {"name": "OSD", "source": "camera", "effect": "HUD boxes / scan line / status overlay"},
     {"name": "CLAHE", "source": "camera", "effect": "local contrast enhancement"},
-    {"name": "RETINEX", "source": "camera", "effect": "low-light enhancement"},
+    {"name": "RETINEX", "source": "camera video", "effect": "original video and Retinex output comparison"},
     {"name": "CAP_DEHAZE", "source": "camera", "effect": "CAP dehaze comparison"},
     {"name": "DCP_FAST_DEHAZE", "source": "camera", "effect": "fast dark-channel dehaze comparison"},
     {"name": "THERMAL", "source": "assets/loop/thermal/*.png", "effect": "pseudo thermal color map from loop images"},

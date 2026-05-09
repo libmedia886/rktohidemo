@@ -43,6 +43,7 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --only DCP_FAST_DEHAZE
 /userdata/alldemo/scripts/run_alldemo.sh --only CONV_CL
 /userdata/alldemo/scripts/run_alldemo.sh --only CLAHE
+/userdata/alldemo/scripts/run_alldemo.sh --only RETINEX
 /userdata/alldemo/scripts/run_alldemo.sh --only EDOF_CL
 /userdata/alldemo/scripts/run_alldemo.sh --only DUALVIEW
 /userdata/alldemo/scripts/run_alldemo.sh --only STEREO_3D
@@ -53,6 +54,7 @@ cmake --build build -j
 `CAP_DEHAZE` 和 `DCP_FAST_DEHAZE` 单独模式使用合成 RGB 输入，不占用摄像头。
 `CONV_CL` 单独模式使用合成 RGBA 输入，不占用摄像头。
 `CLAHE` 单独模式使用合成 NV12 输入，不占用摄像头。
+`RETINEX` 单独模式使用摄像头 video 输入，主画面左右对比原始 video 和 Retinex 输出。
 `EDOF_CL` 单独模式使用 `assets/loop/edof/mfi_whu` 的 `a.jpg/b.jpg/fused.png` 样张做三栏对比，每 3 秒切换一组。
 `DUALVIEW` 单独模式参考 `/userdata/rktohi/demo/dualview` 示例生成两路 RGB888 输入：input0 纯红、input1 纯蓝，主画面同时显示 input0、input1、side-by-side 输出和 line-by-line 输出，不占用摄像头。
 `STEREO_3D` 单独模式使用摄像头输入。

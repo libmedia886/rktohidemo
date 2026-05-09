@@ -57,6 +57,7 @@
 #define LIVE_EDOF_GRP 70
 #define LIVE_DUALVIEW_SBS_GRP 71
 #define LIVE_DUALVIEW_LBL_GRP 72
+#define LIVE_RETINEX_GRP 73
 
 #define CAM_W 640
 #define CAM_H 640
@@ -706,6 +707,31 @@ static void draw_edof_comparison(uint8_t *dst, int stride, int x, int y, int w, 
     }
 }
 
+static void draw_nv12_comparison(uint8_t *dst, int stride, int x, int y, int w, int h,
+                                 const uint8_t *input, const uint8_t *output,
+                                 const char *input_label, const char *output_label) {
+    int gap = 10;
+    int label_h = 22;
+    int col_w = (w - gap) / 2;
+    const uint8_t *frames[2] = {input, output};
+    const char *labels[2] = {input_label, output_label};
+
+    for (int i = 0; i < 2; ++i) {
+        int cx = x + i * (col_w + gap);
+        fill_rect_nv12(dst, stride, cx, y, col_w, h, 5, 10, 18);
+        stroke_rect_nv12(dst, stride, cx, y, col_w, h, 1,
+                         i == 0 ? 70 : 80, i == 0 ? 140 : 255, i == 0 ? 210 : 180);
+        if (frames[i]) {
+            draw_camera_tile(dst, stride, cx + 4, y + 4, col_w - 8, h - label_h - 8,
+                             frames[i], CAM_W, CAM_H, CAM_STRIDE);
+        } else {
+            draw_text(dst, stride, cx + 12, y + h / 2 - 10, "WAIT", 1, 255, 190, 100);
+        }
+        fill_rect_nv12(dst, stride, cx, y + h - label_h, col_w, label_h, 0, 0, 0);
+        draw_text(dst, stride, cx + 8, y + h - label_h + 5, labels[i], 1, 180, 230, 255);
+    }
+}
+
 static void draw_dualview_comparison(uint8_t *dst, int stride, int x, int y, int w, int h,
                                      const uint8_t *in0, const uint8_t *in1,
                                      const uint8_t *sbs, const uint8_t *lbl) {
@@ -766,6 +792,7 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
                              const uint8_t *csc_rga_live, const uint8_t *transform_live,
                              const uint8_t *cap_live, const uint8_t *dcp_live,
                              const uint8_t *conv_live, const uint8_t *clahe_live,
+                             const uint8_t *retinex_in, const uint8_t *retinex_live,
                              const uint8_t *edof_in0, const uint8_t *edof_in1,
                              const uint8_t *edof_out, const uint8_t *stereo_live,
                              const uint8_t *dual_in0, const uint8_t *dual_in1,
@@ -822,6 +849,9 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
                          clahe_live, CAM_W, CAM_H, CAM_STRIDE);
         fill_rect_nv12(dst, stride, x + 6, y + h - 24, w - 12, 18, 0, 0, 0);
         draw_text(dst, stride, x + 12, y + h - 22, "SYNTH NV12 > CLAHE", 1, 220, 255, 230);
+    } else if (strcmp(g_tiles[idx].name, "RETINEX") == 0 && (retinex_in || retinex_live)) {
+        draw_nv12_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38,
+                             retinex_in, retinex_live, "VIDEO IN", "RETINEX OUT");
     } else if (strcmp(g_tiles[idx].name, "EDOF_CL") == 0 && (edof_in0 || edof_in1 || edof_out)) {
         draw_edof_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38,
                              edof_in0, edof_in1, edof_out);
@@ -869,6 +899,7 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
                               const uint8_t *csc_rga_live, const uint8_t *transform_live,
                               const uint8_t *cap_live, const uint8_t *dcp_live,
                               const uint8_t *conv_live, const uint8_t *clahe_live,
+                              const uint8_t *retinex_live,
                               const uint8_t *edof_in0, const uint8_t *edof_in1,
                               const uint8_t *edof_out, const uint8_t *stereo_live,
                               const uint8_t *dual_in0, const uint8_t *dual_in1,
@@ -927,6 +958,12 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
     if (strcmp(g_tiles[idx].name, "CLAHE") == 0 && clahe_live) {
         draw_camera_tile(dst, stride, x + 12, y + 12, w - 24, h - 24,
                          clahe_live, CAM_W, CAM_H, CAM_STRIDE);
+        return;
+    }
+
+    if (strcmp(g_tiles[idx].name, "RETINEX") == 0 && (cam || retinex_live)) {
+        draw_nv12_comparison(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                             cam, retinex_live, "VIDEO IN", "RETINEX OUT");
         return;
     }
 
@@ -995,6 +1032,7 @@ static void draw_main_showcase(uint8_t *canvas, int stride, int frame,
                                const uint8_t *csc_rga_live, const uint8_t *transform_live,
                                const uint8_t *cap_live, const uint8_t *dcp_live,
                                const uint8_t *conv_live, const uint8_t *clahe_live,
+                               const uint8_t *retinex_live,
                                const uint8_t *edof_in0, const uint8_t *edof_in1,
                                const uint8_t *edof_out, const uint8_t *stereo_live,
                                const uint8_t *dual_in0, const uint8_t *dual_in1,
@@ -1018,7 +1056,7 @@ static void draw_main_showcase(uint8_t *canvas, int stride, int frame,
         draw_tile_content(canvas, stride, x + 14, y + 14, w - 28, h - 70,
                           idx, frame, cam, osd_live, resize_live, vpss_live,
                           csc_rga_live, transform_live, cap_live, dcp_live, conv_live, clahe_live,
-                          edof_in0, edof_in1, edof_out, stereo_live,
+                          retinex_live, edof_in0, edof_in1, edof_out, stereo_live,
                           dual_in0, dual_in1, dual_sbs, dual_lbl);
         fill_rect_nv12(canvas, stride, x + 14, y + h - 50, w - 28, 34, 0, 0, 0);
         draw_text(canvas, stride, x + 32, y + h - 42, "MAIN ROTATE", 2, 190, 230, 255);
@@ -1770,6 +1808,54 @@ static int process_live_clahe(const uint8_t *src, uint8_t *dst) {
     return ret;
 }
 
+static int setup_live_retinex(void) {
+    if (MEDIA_POOL_Create(OSD_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
+
+    MEDIA_RETINEX_ATTR attr = {0};
+    attr.scale_count = 1;
+    attr.width = CAM_W;
+    attr.height = CAM_H;
+    attr.format = MEDIA_FORMAT_NV12;
+    attr.input_depth = 3;
+    attr.output_depth = 3;
+    attr.input_stride = CAM_STRIDE;
+    attr.output_stride = CAM_STRIDE;
+    attr.gain = 20.0f;
+    attr.threshold = 0.5f;
+    attr.log_min = -3.0f;
+    attr.log_max = 8.5f;
+
+    if (MEDIA_RETINEX_CreateGrp(LIVE_RETINEX_GRP, &attr) != 0 ||
+        MEDIA_RETINEX_Start(LIVE_RETINEX_GRP) != 0) {
+        MEDIA_RETINEX_DestroyGrp(LIVE_RETINEX_GRP);
+        MEDIA_POOL_Destroy(OSD_INPUT_POOL);
+        return -1;
+    }
+    set_tile_status("RETINEX", TILE_LIVE);
+    return 0;
+}
+
+static void cleanup_live_retinex(int enabled) {
+    if (!enabled) return;
+    MEDIA_RETINEX_Stop(LIVE_RETINEX_GRP);
+    MEDIA_RETINEX_DestroyGrp(LIVE_RETINEX_GRP);
+    MEDIA_POOL_Destroy(OSD_INPUT_POOL);
+}
+
+static int process_live_retinex(const uint8_t *src, uint8_t *dst) {
+    MEDIA_BUFFER out = {-1, -1};
+    int ret = -1;
+    if (send_copied_frame("RETINEX", LIVE_RETINEX_GRP, "input0",
+                          OSD_INPUT_POOL, src, CAM_FRAME_SIZE, 20) != 0) {
+        return -1;
+    }
+    if (MEDIA_RETINEX_GetFrame(LIVE_RETINEX_GRP, &out, 20) == 0) {
+        ret = copy_from_buffer(out, dst, CAM_FRAME_SIZE);
+        MEDIA_RETINEX_ReleaseFrame(LIVE_RETINEX_GRP, out);
+    }
+    return ret;
+}
+
 static int setup_live_edof(void) {
     if (MEDIA_POOL_Create(STEREO_INPUT0_POOL, CAM_FRAME_SIZE, 2) != 0) return -1;
     if (MEDIA_POOL_Create(STEREO_INPUT1_POOL, CAM_FRAME_SIZE, 2) != 0) goto fail;
@@ -2012,6 +2098,7 @@ static int tile_needs_camera(const char *name) {
            strcasecmp(name, "RESIZE_RGA") == 0 ||
            strcasecmp(name, "VPSS") == 0 ||
            strcasecmp(name, "CSC_RGA") == 0 ||
+           strcasecmp(name, "RETINEX") == 0 ||
            strcasecmp(name, "STEREO_3D") == 0;
 }
 
@@ -2302,6 +2389,7 @@ static void draw_dashboard(uint8_t *canvas, int stride, int frame, int rotate_ma
                            const uint8_t *csc_rga_live, const uint8_t *transform_live,
                            const uint8_t *cap_live, const uint8_t *dcp_live,
                            const uint8_t *conv_live, const uint8_t *clahe_live,
+                           const uint8_t *retinex_live,
                            const uint8_t *edof_in0, const uint8_t *edof_in1,
                            const uint8_t *edof_out, const uint8_t *stereo_live,
                            const uint8_t *dual_in0, const uint8_t *dual_in1,
@@ -2313,7 +2401,7 @@ static void draw_dashboard(uint8_t *canvas, int stride, int frame, int rotate_ma
 
     draw_main_showcase(canvas, stride, frame, rotate_main, only_tile, cam, osd_live, resize_live,
                        vpss_live, csc_rga_live, transform_live, cap_live, dcp_live,
-                       conv_live, clahe_live, edof_in0, edof_in1, edof_out, stereo_live,
+                       conv_live, clahe_live, retinex_live, edof_in0, edof_in1, edof_out, stereo_live,
                        dual_in0, dual_in1, dual_sbs, dual_lbl);
 
     int cols = 4;
@@ -2329,7 +2417,7 @@ static void draw_dashboard(uint8_t *canvas, int stride, int frame, int rotate_ma
         draw_effect_tile(canvas, stride, cx, cy, tile_w, tile_h, tile_idx, frame,
                          g_tiles[tile_idx].active, osd_live, resize_live, vpss_live,
                          csc_rga_live, transform_live, cap_live, dcp_live,
-                         conv_live, clahe_live, edof_in0, edof_in1, edof_out, stereo_live,
+                         conv_live, clahe_live, cam, retinex_live, edof_in0, edof_in1, edof_out, stereo_live,
                          dual_in0, dual_in1, dual_sbs, dual_lbl);
     }
 
@@ -2475,6 +2563,11 @@ int main(int argc, char **argv) {
         setup_live_clahe() == 0) {
         live_clahe_ok = 1;
     }
+    int live_retinex_ok = 0;
+    if (!solid_test && only_tile && strcasecmp(only_tile, "RETINEX") == 0 &&
+        setup_live_retinex() == 0) {
+        live_retinex_ok = 1;
+    }
     int live_edof_ok = 0;
     if (!solid_test && only_tile && strcasecmp(only_tile, "EDOF_CL") == 0 &&
         loaded_edof_pairs > 0 && setup_live_edof() == 0) {
@@ -2498,6 +2591,7 @@ int main(int argc, char **argv) {
         cleanup_live_stereo(live_stereo_ok);
         cleanup_live_dualview(live_dualview_ok);
         cleanup_live_edof(live_edof_ok);
+        cleanup_live_retinex(live_retinex_ok);
         cleanup_live_clahe(live_clahe_ok);
         cleanup_live_conv_cl(live_conv_ok);
         cleanup_live_dcp_dehaze(live_dcp_ok);
@@ -2527,6 +2621,7 @@ int main(int argc, char **argv) {
         cleanup_live_stereo(live_stereo_ok);
         cleanup_live_dualview(live_dualview_ok);
         cleanup_live_edof(live_edof_ok);
+        cleanup_live_retinex(live_retinex_ok);
         cleanup_live_clahe(live_clahe_ok);
         cleanup_live_conv_cl(live_conv_ok);
         cleanup_live_dcp_dehaze(live_dcp_ok);
@@ -2580,6 +2675,7 @@ int main(int argc, char **argv) {
     int dcp_frames = 0;
     int conv_frames = 0;
     int clahe_frames = 0;
+    int retinex_frames = 0;
     int edof_frames = 0;
     int edof_pair_index = -1;
     int dualview_frames = 0;
@@ -2594,6 +2690,7 @@ int main(int argc, char **argv) {
     uint8_t *last_dcp = malloc(RGB_FRAME_SIZE);
     uint8_t *last_conv = malloc(RGBA_FRAME_SIZE);
     uint8_t *last_clahe = malloc(CAM_FRAME_SIZE);
+    uint8_t *last_retinex = malloc(CAM_FRAME_SIZE);
     uint8_t *last_edof_in0 = malloc(CAM_FRAME_SIZE);
     uint8_t *last_edof_in1 = malloc(CAM_FRAME_SIZE);
     uint8_t *last_edof = malloc(CAM_FRAME_SIZE);
@@ -2614,6 +2711,7 @@ int main(int argc, char **argv) {
     if (last_dcp) memset(last_dcp, 0, RGB_FRAME_SIZE);
     if (last_conv) memset(last_conv, 0, RGBA_FRAME_SIZE);
     if (last_clahe) memset(last_clahe, 0, CAM_FRAME_SIZE);
+    if (last_retinex) memset(last_retinex, 0, CAM_FRAME_SIZE);
     if (last_edof_in0) memset(last_edof_in0, 0, CAM_FRAME_SIZE);
     if (last_edof_in1) memset(last_edof_in1, 0, CAM_FRAME_SIZE);
     if (last_edof) memset(last_edof, 0, CAM_FRAME_SIZE);
@@ -2656,6 +2754,10 @@ int main(int argc, char **argv) {
                             if (live_stereo_ok && last_stereo && (cam_frames % 3) == 0 &&
                                 process_live_stereo(last_cam, last_stereo) == 0) {
                                 stereo_frames++;
+                            }
+                            if (live_retinex_ok && last_retinex &&
+                                process_live_retinex(last_cam, last_retinex) == 0) {
+                                retinex_frames++;
                             }
                         }
                         munmap(addr, size);
@@ -2758,6 +2860,7 @@ int main(int argc, char **argv) {
                            dcp_frames > 0 ? last_dcp : NULL,
                            conv_frames > 0 ? last_conv : NULL,
                            clahe_frames > 0 ? last_clahe : NULL,
+                           retinex_frames > 0 ? last_retinex : NULL,
                            last_edof_in0,
                            last_edof_in1,
                            edof_frames > 0 ? last_edof : NULL,
@@ -2783,6 +2886,7 @@ int main(int argc, char **argv) {
     cleanup_live_stereo(live_stereo_ok);
     cleanup_live_dualview(live_dualview_ok);
     cleanup_live_edof(live_edof_ok);
+    cleanup_live_retinex(live_retinex_ok);
     cleanup_live_clahe(live_clahe_ok);
     cleanup_live_conv_cl(live_conv_ok);
     cleanup_live_dcp_dehaze(live_dcp_ok);
@@ -2809,6 +2913,7 @@ int main(int argc, char **argv) {
     free(last_edof);
     free(last_edof_in1);
     free(last_edof_in0);
+    free(last_retinex);
     free(last_clahe);
     free(last_conv);
     free(last_dcp);

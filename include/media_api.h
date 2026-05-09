@@ -601,6 +601,8 @@ int MEDIA_RETINEX_SetGrpAttr(int grp, const MEDIA_RETINEX_ATTR *attr);
 int MEDIA_RETINEX_DestroyGrp(int grp);
 int MEDIA_RETINEX_Start(int grp);
 int MEDIA_RETINEX_Stop(int grp);
+int MEDIA_RETINEX_GetFrame(int grp, MEDIA_BUFFER *buf, int timeout_ms);
+int MEDIA_RETINEX_ReleaseFrame(int grp, MEDIA_BUFFER buf);
 
 
 // ThermalColor (热成像颜色映射）
