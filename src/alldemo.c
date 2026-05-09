@@ -62,6 +62,7 @@
 #define RGB_FRAME_SIZE (CAM_W * CAM_H * 3)
 #define RGBA_FRAME_SIZE (CAM_W * CAM_H * 4)
 #define MAIN_ROTATE_SECONDS 5
+#define EDOF_PAIR_SECONDS 3
 #define TILE_FIRST_INDEX 4
 #define TILE_ROTATE_COUNT 16
 
@@ -86,6 +87,14 @@ typedef struct {
     image_asset_t images[4];
     int loaded_count;
 } loop_asset_t;
+
+typedef struct {
+    const char *left_path;
+    const char *right_path;
+    image_asset_t left;
+    image_asset_t right;
+    int loaded;
+} edof_pair_t;
 
 typedef struct {
     int license_ok;
@@ -154,6 +163,11 @@ static loop_asset_t g_loop_assets[] = {
         "assets/loop/avm_inputs/src_3.jpg",
         "assets/loop/avm_inputs/src_4.jpg",
     }, 4, {{0}}, 0},
+};
+
+static edof_pair_t g_edof_pairs[] = {
+    {"assets/loop/avm_inputs/src_1.jpg", "assets/loop/avm_inputs/src_2.jpg", {0}, {0}, 0},
+    {"assets/loop/avm_inputs/src_3.jpg", "assets/loop/avm_inputs/src_4.jpg", {0}, {0}, 0},
 };
 
 static void on_signal(int sig) {
@@ -594,6 +608,82 @@ static void draw_camera_tile(uint8_t *dst, int dstride, int dx, int dy, int dw, 
     }
 }
 
+static void image_to_nv12_frame(const image_asset_t *img, uint8_t *dst) {
+    if (!img || !img->rgb || !dst || img->width <= 0 || img->height <= 0) return;
+
+    memset(dst, 16, CAM_STRIDE * CAM_H);
+    memset(dst + CAM_STRIDE * CAM_H, 128, CAM_STRIDE * CAM_H / 2);
+
+    int out_w = CAM_W;
+    int out_h = (int)((int64_t)img->height * CAM_W / img->width);
+    if (out_h > CAM_H) {
+        out_h = CAM_H;
+        out_w = (int)((int64_t)img->width * CAM_H / img->height);
+    }
+    int ox = (CAM_W - out_w) / 2;
+    int oy = (CAM_H - out_h) / 2;
+    uint8_t *yp = dst;
+    uint8_t *uv = dst + CAM_STRIDE * CAM_H;
+
+    for (int y = 0; y < out_h; ++y) {
+        int sy = y * img->height / out_h;
+        uint8_t *drow = yp + (oy + y) * CAM_STRIDE + ox;
+        for (int x = 0; x < out_w; ++x) {
+            int sx = x * img->width / out_w;
+            const uint8_t *rgb = img->rgb + ((size_t)sy * img->width + sx) * 3;
+            uint8_t yy, u, v;
+            rgb_to_yuv(rgb[0], rgb[1], rgb[2], &yy, &u, &v);
+            (void)u;
+            (void)v;
+            drow[x] = yy;
+        }
+    }
+
+    for (int y = 0; y < out_h; y += 2) {
+        int sy = y * img->height / out_h;
+        uint8_t *drow = uv + ((oy + y) / 2) * CAM_STRIDE + (ox & ~1);
+        for (int x = 0; x < out_w; x += 2) {
+            int sx = x * img->width / out_w;
+            const uint8_t *rgb = img->rgb + ((size_t)sy * img->width + sx) * 3;
+            uint8_t yy, u, v;
+            rgb_to_yuv(rgb[0], rgb[1], rgb[2], &yy, &u, &v);
+            (void)yy;
+            drow[x & ~1] = u;
+            drow[(x & ~1) + 1] = v;
+        }
+    }
+}
+
+static void blend_nv12_average(const uint8_t *left, const uint8_t *right, uint8_t *out) {
+    if (!left || !right || !out) return;
+    for (size_t i = 0; i < CAM_FRAME_SIZE; ++i) {
+        out[i] = (uint8_t)(((int)left[i] + (int)right[i]) / 2);
+    }
+}
+
+static void draw_edof_comparison(uint8_t *dst, int stride, int x, int y, int w, int h,
+                                 const uint8_t *left, const uint8_t *right, const uint8_t *out) {
+    int gap = 10;
+    int label_h = 22;
+    int col_w = (w - gap * 2) / 3;
+    const char *labels[3] = {"INPUT A", "INPUT B", "OUTPUT"};
+    const uint8_t *frames[3] = {left, right, out};
+
+    for (int i = 0; i < 3; ++i) {
+        int cx = x + i * (col_w + gap);
+        fill_rect_nv12(dst, stride, cx, y, col_w, h, 5, 10, 18);
+        stroke_rect_nv12(dst, stride, cx, y, col_w, h, 1, i == 2 ? 80 : 70, i == 2 ? 255 : 140, i == 2 ? 180 : 210);
+        fill_rect_nv12(dst, stride, cx, y + h - label_h, col_w, label_h, 0, 0, 0);
+        draw_text(dst, stride, cx + 8, y + h - label_h + 5, labels[i], 1, 180, 230, 255);
+        if (frames[i]) {
+            draw_camera_tile(dst, stride, cx + 4, y + 4, col_w - 8, h - label_h - 8,
+                             frames[i], CAM_W, CAM_H, CAM_STRIDE);
+        } else {
+            draw_text(dst, stride, cx + 12, y + h / 2 - 10, "WAIT", 1, 255, 190, 100);
+        }
+    }
+}
+
 static const char *tile_status_text(int status) {
     switch (status) {
     case TILE_LIVE: return "LIVE";
@@ -625,7 +715,8 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
                              const uint8_t *csc_rga_live, const uint8_t *transform_live,
                              const uint8_t *cap_live, const uint8_t *dcp_live,
                              const uint8_t *conv_live, const uint8_t *clahe_live,
-                             const uint8_t *stereo_live) {
+                             const uint8_t *edof_in0, const uint8_t *edof_in1,
+                             const uint8_t *edof_out, const uint8_t *stereo_live) {
     uint8_t r0 = (uint8_t)((idx * 47 + frame * 2) % 180 + 40);
     uint8_t g0 = (uint8_t)((idx * 83 + frame * 3) % 180 + 40);
     uint8_t b0 = (uint8_t)((idx * 29 + frame * 5) % 180 + 40);
@@ -678,6 +769,9 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
                          clahe_live, CAM_W, CAM_H, CAM_STRIDE);
         fill_rect_nv12(dst, stride, x + 6, y + h - 24, w - 12, 18, 0, 0, 0);
         draw_text(dst, stride, x + 12, y + h - 22, "SYNTH NV12 > CLAHE", 1, 220, 255, 230);
+    } else if (strcmp(g_tiles[idx].name, "EDOF_CL") == 0 && (edof_in0 || edof_in1 || edof_out)) {
+        draw_edof_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38,
+                             edof_in0, edof_in1, edof_out);
     } else if (strcmp(g_tiles[idx].name, "STEREO_3D") == 0 && stereo_live) {
         draw_camera_tile(dst, stride, x + 6, y + 30, w - 12, h - 38,
                          stereo_live, CAM_W, CAM_H, CAM_STRIDE);
@@ -718,7 +812,8 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
                               const uint8_t *csc_rga_live, const uint8_t *transform_live,
                               const uint8_t *cap_live, const uint8_t *dcp_live,
                               const uint8_t *conv_live, const uint8_t *clahe_live,
-                              const uint8_t *stereo_live) {
+                              const uint8_t *edof_in0, const uint8_t *edof_in1,
+                              const uint8_t *edof_out, const uint8_t *stereo_live) {
     loop_asset_t *loop = find_loop_asset(g_tiles[idx].name);
     fill_rect_nv12(dst, stride, x, y, w, h, 7, 13, 24);
 
@@ -776,6 +871,12 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
         return;
     }
 
+    if (strcmp(g_tiles[idx].name, "EDOF_CL") == 0 && (edof_in0 || edof_in1 || edof_out)) {
+        draw_edof_comparison(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                             edof_in0, edof_in1, edof_out);
+        return;
+    }
+
     if (strcmp(g_tiles[idx].name, "STEREO_3D") == 0 && stereo_live) {
         draw_camera_tile(dst, stride, x + 12, y + 12, w - 24, h - 24,
                          stereo_live, CAM_W, CAM_H, CAM_STRIDE);
@@ -828,7 +929,8 @@ static void draw_main_showcase(uint8_t *canvas, int stride, int frame,
                                const uint8_t *csc_rga_live, const uint8_t *transform_live,
                                const uint8_t *cap_live, const uint8_t *dcp_live,
                                const uint8_t *conv_live, const uint8_t *clahe_live,
-                               const uint8_t *stereo_live) {
+                               const uint8_t *edof_in0, const uint8_t *edof_in1,
+                               const uint8_t *edof_out, const uint8_t *stereo_live) {
     const int x = 28;
     const int y = 116;
     const int w = 1024;
@@ -847,7 +949,8 @@ static void draw_main_showcase(uint8_t *canvas, int stride, int frame,
         tile_status_color(g_tiles[idx].status, &sr, &sg, &sb);
         draw_tile_content(canvas, stride, x + 14, y + 14, w - 28, h - 70,
                           idx, frame, cam, osd_live, resize_live, vpss_live,
-                          csc_rga_live, transform_live, cap_live, dcp_live, conv_live, clahe_live, stereo_live);
+                          csc_rga_live, transform_live, cap_live, dcp_live, conv_live, clahe_live,
+                          edof_in0, edof_in1, edof_out, stereo_live);
         fill_rect_nv12(canvas, stride, x + 14, y + h - 50, w - 28, 34, 0, 0, 0);
         draw_text(canvas, stride, x + 32, y + h - 42, "MAIN ROTATE", 2, 190, 230, 255);
         draw_text(canvas, stride, x + 268, y + h - 42, g_tiles[idx].name,
@@ -1721,6 +1824,48 @@ static void unload_loop_assets(void) {
     }
 }
 
+static int load_edof_pairs(void) {
+    int total = 0;
+    for (size_t i = 0; i < sizeof(g_edof_pairs) / sizeof(g_edof_pairs[0]); ++i) {
+        edof_pair_t *pair = &g_edof_pairs[i];
+        pair->loaded = 0;
+        if (load_image_rgb(pair->left_path, &pair->left) == 0 &&
+            load_image_rgb(pair->right_path, &pair->right) == 0) {
+            pair->loaded = 1;
+            total++;
+        } else {
+            fprintf(stderr, "warning: failed to load EDOF pair %s %s\n",
+                    pair->left_path, pair->right_path);
+            free(pair->left.rgb);
+            free(pair->right.rgb);
+            memset(&pair->left, 0, sizeof(pair->left));
+            memset(&pair->right, 0, sizeof(pair->right));
+        }
+    }
+    return total;
+}
+
+static void unload_edof_pairs(void) {
+    for (size_t i = 0; i < sizeof(g_edof_pairs) / sizeof(g_edof_pairs[0]); ++i) {
+        edof_pair_t *pair = &g_edof_pairs[i];
+        free(pair->left.rgb);
+        free(pair->right.rgb);
+        memset(&pair->left, 0, sizeof(pair->left));
+        memset(&pair->right, 0, sizeof(pair->right));
+        pair->loaded = 0;
+    }
+}
+
+static edof_pair_t *get_loaded_edof_pair(int idx) {
+    int seen = 0;
+    for (size_t i = 0; i < sizeof(g_edof_pairs) / sizeof(g_edof_pairs[0]); ++i) {
+        if (!g_edof_pairs[i].loaded) continue;
+        if (seen == idx) return &g_edof_pairs[i];
+        seen++;
+    }
+    return NULL;
+}
+
 static void print_loop_asset_summary(void) {
     for (size_t i = 0; i < sizeof(g_loop_assets) / sizeof(g_loop_assets[0]); ++i) {
         const loop_asset_t *loop = &g_loop_assets[i];
@@ -1931,14 +2076,16 @@ static void draw_dashboard(uint8_t *canvas, int stride, int frame, int rotate_ma
                            const uint8_t *csc_rga_live, const uint8_t *transform_live,
                            const uint8_t *cap_live, const uint8_t *dcp_live,
                            const uint8_t *conv_live, const uint8_t *clahe_live,
-                           const uint8_t *stereo_live) {
+                           const uint8_t *edof_in0, const uint8_t *edof_in1,
+                           const uint8_t *edof_out, const uint8_t *stereo_live) {
     fill_rect_nv12(canvas, stride, 0, 0, SCREEN_W, SCREEN_H, 4, 9, 16);
     fill_rect_nv12(canvas, stride, 0, 0, SCREEN_W, 90, 10, 18, 34);
     draw_text(canvas, stride, 28, 24, "RKTOHI VISUAL ENGINE", 4, 160, 255, 220);
     draw_text(canvas, stride, 760, 26, "1080X1920", 2, 90, 180, 255);
 
     draw_main_showcase(canvas, stride, frame, rotate_main, only_tile, cam, osd_live, resize_live,
-                       vpss_live, csc_rga_live, transform_live, cap_live, dcp_live, conv_live, clahe_live, stereo_live);
+                       vpss_live, csc_rga_live, transform_live, cap_live, dcp_live,
+                       conv_live, clahe_live, edof_in0, edof_in1, edof_out, stereo_live);
 
     int cols = 4;
     int tile_w = 250;
@@ -1952,7 +2099,8 @@ static void draw_dashboard(uint8_t *canvas, int stride, int frame, int rotate_ma
         int tile_idx = TILE_FIRST_INDEX + i;
         draw_effect_tile(canvas, stride, cx, cy, tile_w, tile_h, tile_idx, frame,
                          g_tiles[tile_idx].active, osd_live, resize_live, vpss_live,
-                         csc_rga_live, transform_live, cap_live, dcp_live, conv_live, clahe_live, stereo_live);
+                         csc_rga_live, transform_live, cap_live, dcp_live,
+                         conv_live, clahe_live, edof_in0, edof_in1, edof_out, stereo_live);
     }
 
     fill_rect_nv12(canvas, stride, 28, 1432, 1024, 232, 7, 13, 24);
@@ -2045,6 +2193,8 @@ int main(int argc, char **argv) {
 
     if (!solid_test) mark_showcase_modules();
     int loaded_assets = solid_test ? 0 : load_loop_assets();
+    int loaded_edof_pairs = (!solid_test && only_tile && strcasecmp(only_tile, "EDOF_CL") == 0) ?
+        load_edof_pairs() : 0;
     collect_health(loaded_assets);
     if (heavy_probe && !solid_test) {
         probe_modules();
@@ -2095,6 +2245,9 @@ int main(int argc, char **argv) {
         setup_live_clahe() == 0) {
         live_clahe_ok = 1;
     }
+    if (!solid_test && only_tile && strcasecmp(only_tile, "EDOF_CL") == 0 && loaded_edof_pairs > 0) {
+        set_tile_status("EDOF_CL", TILE_LOOP);
+    }
     int live_stereo_ok = 0;
     if (!solid_test && only_tile && strcasecmp(only_tile, "STEREO_3D") == 0 &&
         setup_live_stereo() == 0) {
@@ -2113,6 +2266,7 @@ int main(int argc, char **argv) {
         cleanup_live_vpss(live_vpss_ok);
         cleanup_live_resize(live_resize_ok);
         cleanup_live_osd(live_osd_ok);
+        unload_edof_pairs();
         unload_loop_assets();
         MEDIA_SYS_Exit();
         return 1;
@@ -2139,6 +2293,7 @@ int main(int argc, char **argv) {
         cleanup_live_vpss(live_vpss_ok);
         cleanup_live_resize(live_resize_ok);
         cleanup_live_osd(live_osd_ok);
+        unload_edof_pairs();
         unload_loop_assets();
         MEDIA_SYS_Exit();
         return 1;
@@ -2182,6 +2337,8 @@ int main(int argc, char **argv) {
     int dcp_frames = 0;
     int conv_frames = 0;
     int clahe_frames = 0;
+    int edof_frames = 0;
+    int edof_pair_index = -1;
     int stereo_frames = 0;
     uint8_t *last_cam = malloc(CAM_FRAME_SIZE);
     uint8_t *last_osd = malloc(CAM_FRAME_SIZE);
@@ -2193,6 +2350,9 @@ int main(int argc, char **argv) {
     uint8_t *last_dcp = malloc(RGB_FRAME_SIZE);
     uint8_t *last_conv = malloc(RGBA_FRAME_SIZE);
     uint8_t *last_clahe = malloc(CAM_FRAME_SIZE);
+    uint8_t *last_edof_in0 = malloc(CAM_FRAME_SIZE);
+    uint8_t *last_edof_in1 = malloc(CAM_FRAME_SIZE);
+    uint8_t *last_edof = malloc(CAM_FRAME_SIZE);
     uint8_t *last_rgb_src = malloc(RGB_FRAME_SIZE);
     uint8_t *last_rgba_src = malloc(RGBA_FRAME_SIZE);
     uint8_t *last_stereo = malloc(CAM_FRAME_SIZE);
@@ -2206,10 +2366,12 @@ int main(int argc, char **argv) {
     if (last_dcp) memset(last_dcp, 0, RGB_FRAME_SIZE);
     if (last_conv) memset(last_conv, 0, RGBA_FRAME_SIZE);
     if (last_clahe) memset(last_clahe, 0, CAM_FRAME_SIZE);
+    if (last_edof_in0) memset(last_edof_in0, 0, CAM_FRAME_SIZE);
+    if (last_edof_in1) memset(last_edof_in1, 0, CAM_FRAME_SIZE);
+    if (last_edof) memset(last_edof, 0, CAM_FRAME_SIZE);
     if (last_rgb_src) memset(last_rgb_src, 0, RGB_FRAME_SIZE);
     if (last_rgba_src) memset(last_rgba_src, 0, RGBA_FRAME_SIZE);
     if (last_stereo) memset(last_stereo, 0, CAM_FRAME_SIZE);
-
     while (g_running) {
         if (camera_ok) {
             MEDIA_BUFFER cbuf = {-1, -1};
@@ -2282,6 +2444,19 @@ int main(int argc, char **argv) {
                 clahe_frames++;
             }
         }
+        if (loaded_edof_pairs > 0 && last_edof_in0 && last_edof_in1 && last_edof) {
+            int next_pair = (frame / (FPS * EDOF_PAIR_SECONDS)) % loaded_edof_pairs;
+            if (next_pair != edof_pair_index) {
+                edof_pair_t *pair = get_loaded_edof_pair(next_pair);
+                if (pair) {
+                    image_to_nv12_frame(&pair->left, last_edof_in0);
+                    image_to_nv12_frame(&pair->right, last_edof_in1);
+                    blend_nv12_average(last_edof_in0, last_edof_in1, last_edof);
+                    edof_pair_index = next_pair;
+                    edof_frames++;
+                }
+            }
+        }
 
         MEDIA_BUFFER dbuf = {-1, -1};
         if (MEDIA_POOL_GetBuffer(DISPLAY_POOL, &dbuf) != 0) {
@@ -2315,6 +2490,9 @@ int main(int argc, char **argv) {
                            dcp_frames > 0 ? last_dcp : NULL,
                            conv_frames > 0 ? last_conv : NULL,
                            clahe_frames > 0 ? last_clahe : NULL,
+                           last_edof_in0,
+                           last_edof_in1,
+                           edof_frames > 0 ? last_edof : NULL,
                            stereo_frames > 0 ? last_stereo : NULL);
         }
         (void)MEDIA_POOL_EndCpuAccess(dbuf, DMA_BUF_SYNC_WRITE);
@@ -2345,10 +2523,14 @@ int main(int argc, char **argv) {
     MEDIA_POOL_Destroy(WORK_POOL_NV12);
     MEDIA_POOL_Destroy(WORK_POOL_RGB);
     MEDIA_POOL_Destroy(WORK_POOL_OUT);
+    unload_edof_pairs();
     unload_loop_assets();
     free(last_stereo);
     free(last_rgba_src);
     free(last_rgb_src);
+    free(last_edof);
+    free(last_edof_in1);
+    free(last_edof_in0);
     free(last_clahe);
     free(last_conv);
     free(last_dcp);
