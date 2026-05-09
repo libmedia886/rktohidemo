@@ -51,6 +51,7 @@
 #define DUALVIEW_SBS_OUTPUT_POOL 12
 #define DUALVIEW_LBL_OUTPUT_POOL 13
 #define LIVE_OSD_GRP 60
+#define LIVE_RGA_GRP 59
 #define LIVE_RESIZE_GRP 61
 #define LIVE_STEREO_GRP 62
 #define LIVE_VPSS_GRP 63
@@ -87,6 +88,7 @@
 #define PANO_OUTPUT_SIZE (PANO_OUT_STRIDE * PANO_OUT_H * 3 / 2)
 #define MAIN_ROTATE_SECONDS 5
 #define PAGE_ROTATE_SECONDS 8
+#define RGA_OP_SECONDS 3
 #define EDOF_PAIR_SECONDS 3
 #define TILE_FIRST_INDEX 4
 #define TILE_ROTATE_COUNT 16
@@ -154,6 +156,8 @@ typedef struct {
     float cpu_percent;
     float gpu_percent;
     int gpu_available;
+    float rga_percent;
+    int rga_available;
 } perf_status_t;
 
 typedef struct {
@@ -181,8 +185,10 @@ typedef struct {
 
 static volatile int g_running = 1;
 static health_status_t g_health = {0};
-static perf_status_t g_perf = {0.0f, 0.0f, 0};
+static perf_status_t g_perf = {0.0f, 0.0f, 0, 0.0f, 0};
 static const char *g_bind_vi_src_port = NULL;
+static const char *g_bind_rga_in_port = NULL;
+static const char *g_bind_rga_src_port = NULL;
 static const char *g_bind_vmix_in_port = NULL;
 static const char *g_bind_vmix_src_port = NULL;
 static const char *g_bind_osd_in_port = NULL;
@@ -224,7 +230,7 @@ static module_tile_t g_tiles[] = {
 };
 
 static const char *g_module_pages[] = {
-    "VI", "VPSS", "VO", "RGA", "RESIZE_RGA", "CSC_RGA", "CSC_CL", "OSD",
+    "VI", "VPSS", "RGA", "RESIZE_RGA", "CSC_RGA", "CSC_CL", "OSD",
     "CLAHE", "RETINEX", "CAP_DEHAZE", "DCP_FAST_DEHAZE", "THERMAL", "CONV_CL",
     "TRANSFORM", "BLEND_PYR", "EDOF_CL", "EXPOSURE_FUSION_CL", "DUALVIEW",
     "STEREO_3D", "VMIX", "VMIX_RGA", "PANO", "AVM", "SVM3D", "NPU",
@@ -1801,6 +1807,89 @@ fail_input:
     return -1;
 }
 
+typedef struct {
+    const char *label;
+    int algo;
+    int crop_x;
+    int crop_y;
+    int crop_w;
+    int crop_h;
+    int rotate;
+    int flip_h;
+    int flip_v;
+} rga_demo_op_t;
+
+static const rga_demo_op_t g_rga_demo_ops[] = {
+    {"COPY", MEDIA_RGA_ALG_COPY, 0, 0, CAM_W, CAM_H, 0, 0, 0},
+    {"CROP_ZOOM", MEDIA_RGA_ALG_RESIZE, 120, 120, 400, 400, 0, 0, 0},
+    {"FLIP_H", MEDIA_RGA_ALG_FLIP, 0, 0, CAM_W, CAM_H, 0, 1, 0},
+    {"FLIP_V", MEDIA_RGA_ALG_FLIP, 0, 0, CAM_W, CAM_H, 0, 0, 1},
+    {"ROTATE90", MEDIA_RGA_ALG_ROTATE, 0, 0, CAM_W, CAM_H, 90, 0, 0},
+    {"ROTATE180", MEDIA_RGA_ALG_ROTATE, 0, 0, CAM_W, CAM_H, 180, 0, 0},
+    {"ROTATE270", MEDIA_RGA_ALG_ROTATE, 0, 0, CAM_W, CAM_H, 270, 0, 0},
+};
+
+static int module_page_number(const char *name) {
+    if (!name) return 1;
+    for (size_t i = 0; i < ARRAY_SIZE(g_module_pages); ++i) {
+        if (strcasecmp(g_module_pages[i], name) == 0) return (int)i + 1;
+    }
+    return 1;
+}
+
+static void fill_live_rga_attr(MEDIA_RGA_GRP_ATTR *attr, const rga_demo_op_t *op) {
+    memset(attr, 0, sizeof(*attr));
+    attr->algo = op->algo;
+    attr->input_count = 1;
+    attr->output_count = 1;
+    attr->input_depth = 4;
+    attr->output_depth = 4;
+    attr->inputs[0].port_id = 0;
+    attr->inputs[0].width = CAM_W;
+    attr->inputs[0].height = CAM_H;
+    attr->inputs[0].stride = CAM_STRIDE;
+    attr->inputs[0].format = MEDIA_FORMAT_NV12;
+    attr->inputs[0].crop_x = op->crop_x;
+    attr->inputs[0].crop_y = op->crop_y;
+    attr->inputs[0].crop_w = op->crop_w;
+    attr->inputs[0].crop_h = op->crop_h;
+    attr->outputs[0].port_id = 0;
+    attr->outputs[0].width = CAM_W;
+    attr->outputs[0].height = CAM_H;
+    attr->outputs[0].stride = CAM_STRIDE;
+    attr->outputs[0].format = MEDIA_FORMAT_NV12;
+    attr->outputs[0].pool_id = DISPLAY_VMIX_INPUT_POOL;
+    attr->outputs[0].rotate = op->rotate;
+    attr->outputs[0].flip_h = op->flip_h;
+    attr->outputs[0].flip_v = op->flip_v;
+}
+
+static int setup_live_rga(void) {
+    MEDIA_RGA_GRP_ATTR attr = {0};
+    fill_live_rga_attr(&attr, &g_rga_demo_ops[0]);
+    if (MEDIA_RGA_CreateGrp(LIVE_RGA_GRP, &attr) != 0 ||
+        MEDIA_RGA_Start(LIVE_RGA_GRP) != 0) {
+        MEDIA_RGA_Stop(LIVE_RGA_GRP);
+        MEDIA_RGA_DestroyChn(LIVE_RGA_GRP);
+        return -1;
+    }
+    set_tile_status("RGA", TILE_LIVE);
+    return 0;
+}
+
+static void cleanup_live_rga(int enabled) {
+    if (!enabled) return;
+    MEDIA_RGA_Stop(LIVE_RGA_GRP);
+    MEDIA_RGA_DestroyChn(LIVE_RGA_GRP);
+}
+
+static int set_live_rga_op(int op_index) {
+    MEDIA_RGA_GRP_ATTR attr = {0};
+    if (op_index < 0 || op_index >= (int)ARRAY_SIZE(g_rga_demo_ops)) return -1;
+    fill_live_rga_attr(&attr, &g_rga_demo_ops[op_index]);
+    return MEDIA_RGA_SetGrpAttr(LIVE_RGA_GRP, &attr);
+}
+
 static void cleanup_display_vmix_osd(int enabled) {
     if (!enabled) return;
     MEDIA_OSD_Stop(DISPLAY_OSD_GRP);
@@ -1905,6 +1994,58 @@ static int bind_vi_vmix_osd_vo(void) {
     return 0;
 }
 
+static int bind_vi_rga_vmix_osd_vo(void) {
+    const char *out_ports[] = {"output0", "output"};
+    const char *vi_out_ports[] = {"output", "output0"};
+    const char *in_ports[] = {"input0", "input"};
+    g_bind_vi_src_port = NULL;
+    g_bind_rga_in_port = NULL;
+    g_bind_rga_src_port = NULL;
+    g_bind_vmix_in_port = NULL;
+    g_bind_vmix_src_port = NULL;
+    g_bind_osd_in_port = NULL;
+    g_bind_osd_src_port = NULL;
+    g_bind_vo_in_port = NULL;
+
+    if (bind_first_match("VI", 0, vi_out_ports, (int)ARRAY_SIZE(vi_out_ports),
+                         "RGA", LIVE_RGA_GRP, in_ports, (int)ARRAY_SIZE(in_ports),
+                         &g_bind_vi_src_port, &g_bind_rga_in_port) != 0) {
+        fprintf(stderr, "bind failed: VI -> RGA\n");
+        return -1;
+    }
+    if (bind_first_match("RGA", LIVE_RGA_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
+                         "VMIX", DISPLAY_VMIX_GRP, in_ports, (int)ARRAY_SIZE(in_ports),
+                         &g_bind_rga_src_port, &g_bind_vmix_in_port) != 0) {
+        fprintf(stderr, "bind failed: RGA -> VMIX\n");
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "RGA", LIVE_RGA_GRP, g_bind_rga_in_port);
+        return -1;
+    }
+    if (bind_first_match("VMIX", DISPLAY_VMIX_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
+                         "OSD", DISPLAY_OSD_GRP, in_ports, (int)ARRAY_SIZE(in_ports),
+                         &g_bind_vmix_src_port, &g_bind_osd_in_port) != 0) {
+        fprintf(stderr, "bind failed: VMIX -> OSD\n");
+        MEDIA_SYS_UnBind("RGA", LIVE_RGA_GRP, g_bind_rga_src_port,
+                         "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_in_port);
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "RGA", LIVE_RGA_GRP, g_bind_rga_in_port);
+        return -1;
+    }
+    if (bind_first_match("OSD", DISPLAY_OSD_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
+                         "VO", 0, in_ports, (int)ARRAY_SIZE(in_ports),
+                         &g_bind_osd_src_port, &g_bind_vo_in_port) != 0) {
+        fprintf(stderr, "bind failed: OSD -> VO\n");
+        MEDIA_SYS_UnBind("VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_src_port,
+                         "OSD", DISPLAY_OSD_GRP, g_bind_osd_in_port);
+        MEDIA_SYS_UnBind("RGA", LIVE_RGA_GRP, g_bind_rga_src_port,
+                         "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_in_port);
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "RGA", LIVE_RGA_GRP, g_bind_rga_in_port);
+        return -1;
+    }
+    return 0;
+}
+
 static int bind_vpss_vmix_osd_vo(void) {
     const char *out_ports[] = {"output0", "output"};
     const char *in_ports[] = {"input0", "input"};
@@ -1971,6 +2112,26 @@ static int bind_vpss_vmix_osd_vo(void) {
         return -1;
     }
     return 0;
+}
+
+static void unbind_vi_rga_vmix_osd_vo(int enabled) {
+    if (!enabled) return;
+    if (g_bind_osd_src_port && g_bind_vo_in_port) {
+        MEDIA_SYS_UnBind("OSD", DISPLAY_OSD_GRP, g_bind_osd_src_port,
+                         "VO", 0, g_bind_vo_in_port);
+    }
+    if (g_bind_vmix_src_port && g_bind_osd_in_port) {
+        MEDIA_SYS_UnBind("VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_src_port,
+                         "OSD", DISPLAY_OSD_GRP, g_bind_osd_in_port);
+    }
+    if (g_bind_rga_src_port && g_bind_vmix_in_port) {
+        MEDIA_SYS_UnBind("RGA", LIVE_RGA_GRP, g_bind_rga_src_port,
+                         "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_in_port);
+    }
+    if (g_bind_vi_src_port && g_bind_rga_in_port) {
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "RGA", LIVE_RGA_GRP, g_bind_rga_in_port);
+    }
 }
 
 static void unbind_vi_vmix_osd_vo(int enabled) {
@@ -3050,6 +3211,7 @@ static int tile_needs_camera(const char *name) {
     if (!name) return 1;
     return strcasecmp(name, "VI") == 0 ||
            strcasecmp(name, "OSD") == 0 ||
+           strcasecmp(name, "RGA") == 0 ||
            strcasecmp(name, "RESIZE_RGA") == 0 ||
            strcasecmp(name, "VPSS") == 0 ||
            strcasecmp(name, "CSC_RGA") == 0 ||
@@ -3485,6 +3647,34 @@ static int find_gpu_load_path(char *path, size_t len) {
     return -1;
 }
 
+static int read_rga_percent_file(const char *path, float *percent) {
+    FILE *fp = fopen(path, "r");
+    if (!fp) return -1;
+    char line[256];
+    float max_load = 0.0f;
+    int count = 0;
+    while (fgets(line, sizeof(line), fp)) {
+        char *p = strstr(line, "load");
+        if (!p) continue;
+        p = strchr(p, '=');
+        if (!p) continue;
+        p++;
+        while (*p == ' ' || *p == '\t') p++;
+        char *end = NULL;
+        errno = 0;
+        float v = strtof(p, &end);
+        if (errno == 0 && end != p && v >= 0.0f) {
+            if (v > 100.0f) v = 100.0f;
+            if (v > max_load) max_load = v;
+            count++;
+        }
+    }
+    fclose(fp);
+    if (count <= 0) return -1;
+    *percent = max_load;
+    return 0;
+}
+
 static void update_perf_status(void) {
     static unsigned long long prev_idle = 0;
     static unsigned long long prev_total = 0;
@@ -3522,6 +3712,14 @@ static void update_perf_status(void) {
         }
     } else {
         g_perf.gpu_available = 0;
+    }
+
+    float rga = 0.0f;
+    if (read_rga_percent_file("/sys/kernel/debug/rkrga/load", &rga) == 0) {
+        g_perf.rga_percent = rga;
+        g_perf.rga_available = 1;
+    } else {
+        g_perf.rga_available = 0;
     }
 }
 
@@ -3810,6 +4008,7 @@ int main(int argc, char **argv) {
         setup_live_stereo() == 0) {
         live_stereo_ok = 1;
     }
+    int live_rga_ok = 0;
 
     if (MEDIA_POOL_Create(DISPLAY_POOL, display_size, 4) != 0) {
         fprintf(stderr, "display pool create failed\n");
@@ -3824,6 +4023,7 @@ int main(int argc, char **argv) {
         cleanup_live_cap_dehaze(live_cap_ok);
         cleanup_live_transform(live_transform_ok);
         cleanup_live_csc_rga(live_csc_rga_ok);
+        cleanup_live_rga(live_rga_ok);
         cleanup_live_vpss(live_vpss_ok);
         cleanup_live_resize(live_resize_ok);
         cleanup_live_osd(live_osd_ok);
@@ -3856,6 +4056,7 @@ int main(int argc, char **argv) {
         cleanup_live_cap_dehaze(live_cap_ok);
         cleanup_live_transform(live_transform_ok);
         cleanup_live_csc_rga(live_csc_rga_ok);
+        cleanup_live_rga(live_rga_ok);
         cleanup_live_vpss(live_vpss_ok);
         cleanup_live_resize(live_resize_ok);
         cleanup_live_osd(live_osd_ok);
@@ -3868,17 +4069,24 @@ int main(int argc, char **argv) {
     set_tile_status("VO", TILE_LIVE);
 
     int use_vmix_osd_display = !solid_test && only_tile &&
-        (strcasecmp(only_tile, "VI") == 0 || strcasecmp(only_tile, "VPSS") == 0);
+        (strcasecmp(only_tile, "VI") == 0 ||
+         strcasecmp(only_tile, "VPSS") == 0 ||
+         strcasecmp(only_tile, "RGA") == 0);
     int use_vi_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "VI") == 0;
     int use_vpss_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "VPSS") == 0;
+    int use_rga_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "RGA") == 0;
     int vi_bind_display_ok = 0;
     int vpss_bind_display_ok = 0;
+    int rga_bind_display_ok = 0;
     int display_vmix_osd_ok = 0;
     int display_vmix_inputs = use_vpss_bind_display ? VPSS_DEMO_OUTPUTS : 1;
     if (use_vmix_osd_display && setup_display_vmix_osd(dstride, display_size, display_vmix_inputs) == 0) {
         display_vmix_osd_ok = 1;
     } else {
         use_vmix_osd_display = 0;
+    }
+    if (use_rga_bind_display && display_vmix_osd_ok && setup_live_rga() == 0) {
+        live_rga_ok = 1;
     }
 
     int camera_ok = 0;
@@ -3919,6 +4127,7 @@ int main(int argc, char **argv) {
             cleanup_live_cap_dehaze(live_cap_ok);
             cleanup_live_transform(live_transform_ok);
             cleanup_live_csc_rga(live_csc_rga_ok);
+            cleanup_live_rga(live_rga_ok);
             cleanup_live_vpss(live_vpss_ok);
             cleanup_live_resize(live_resize_ok);
             cleanup_live_osd(live_osd_ok);
@@ -3954,6 +4163,7 @@ int main(int argc, char **argv) {
             cleanup_live_cap_dehaze(live_cap_ok);
             cleanup_live_transform(live_transform_ok);
             cleanup_live_csc_rga(live_csc_rga_ok);
+            cleanup_live_rga(live_rga_ok);
             cleanup_live_vpss(live_vpss_ok);
             cleanup_live_resize(live_resize_ok);
             cleanup_live_osd(live_osd_ok);
@@ -3966,6 +4176,39 @@ int main(int argc, char **argv) {
         }
         vpss_bind_display_ok = 1;
         (void)update_display_osd_text("VPSS  VMIX OSD BIND", "FULL  CROP  FLIP  ROTATE AUTO");
+    }
+    if (use_rga_bind_display) {
+        if (!camera_ok || !live_rga_ok || !display_vmix_osd_ok || bind_vi_rga_vmix_osd_vo() != 0) {
+            fprintf(stderr, "RGA bind display setup failed; CPU copy fallback is disabled for --only RGA\n");
+            if (camera_ok) MEDIA_VI_Disable(0);
+            cleanup_live_rga(live_rga_ok);
+            cleanup_display_vmix_osd(display_vmix_osd_ok);
+            MEDIA_VO_Stop(0, 0);
+            MEDIA_VO_DestroyChn(0, 0);
+            MEDIA_POOL_Destroy(DISPLAY_POOL);
+            cleanup_live_stereo(live_stereo_ok);
+            cleanup_live_pano(live_pano_ok);
+            cleanup_live_dualview(live_dualview_ok);
+            cleanup_live_edof(live_edof_ok);
+            cleanup_live_retinex(live_retinex_ok);
+            cleanup_live_clahe(live_clahe_ok);
+            cleanup_live_conv_cl(live_conv_ok);
+            cleanup_live_dcp_dehaze(live_dcp_ok);
+            cleanup_live_cap_dehaze(live_cap_ok);
+            cleanup_live_transform(live_transform_ok);
+            cleanup_live_csc_rga(live_csc_rga_ok);
+            cleanup_live_vpss(live_vpss_ok);
+            cleanup_live_resize(live_resize_ok);
+            cleanup_live_osd(live_osd_ok);
+            if (need_camera) MEDIA_POOL_Destroy(CAMERA_POOL);
+            unload_pano_sample();
+            unload_edof_pairs();
+            unload_loop_assets();
+            MEDIA_SYS_Exit();
+            return 1;
+        }
+        rga_bind_display_ok = 1;
+        (void)update_display_osd_text("RGA  NV12 BIND", "VI RGA VMIX OSD VO  OP COPY");
     }
 
     printf("alldemo running on DSI 1080x1920%s%s%s%s. Ctrl+C to stop.\n",
@@ -3991,6 +4234,8 @@ int main(int argc, char **argv) {
     int dualview_frames = 0;
     int pano_frames = 0;
     int stereo_frames = 0;
+    int rga_op_index = 0;
+    int last_rga_op_index = -1;
     uint8_t *last_cam = malloc(CAM_FRAME_SIZE);
     uint8_t *last_osd = malloc(CAM_FRAME_SIZE);
     uint8_t *last_resize = malloc(CAM_FRAME_SIZE);
@@ -4036,7 +4281,7 @@ int main(int argc, char **argv) {
     if (last_rgba_src) memset(last_rgba_src, 0, RGBA_FRAME_SIZE);
     if (last_stereo) memset(last_stereo, 0, CAM_FRAME_SIZE);
     while (g_running) {
-        if (camera_ok && !vi_bind_display_ok && !vpss_bind_display_ok) {
+        if (camera_ok && !vi_bind_display_ok && !vpss_bind_display_ok && !rga_bind_display_ok) {
             MEDIA_BUFFER cbuf = {-1, -1};
             if (MEDIA_VI_GetFrame(0, &cbuf, 1) == 0) {
                 void *addr = NULL;
@@ -4194,6 +4439,72 @@ int main(int argc, char **argv) {
             usleep(1000000 / FPS);
             continue;
         }
+        if (rga_bind_display_ok) {
+            rga_op_index = (frame / (FPS * RGA_OP_SECONDS)) % (int)ARRAY_SIZE(g_rga_demo_ops);
+            if (rga_op_index != last_rga_op_index) {
+                if (set_live_rga_op(rga_op_index) != 0) {
+                    fprintf(stderr, "warning: RGA op %s rejected\n", g_rga_demo_ops[rga_op_index].label);
+                } else {
+                    last_rga_op_index = rga_op_index;
+                }
+            }
+            if ((frame % 15) == 0) {
+                uint64_t vi_count = 0;
+                uint64_t rga_count = 0;
+                char perf[160];
+                update_perf_status();
+                if (MEDIA_SYS_GetModuleFrameCount("VI", 0, &vi_count) == 0) {
+                    g_health.camera_frames = (int)vi_count;
+                }
+                (void)MEDIA_SYS_GetModuleFrameCount("RGA", LIVE_RGA_GRP, &rga_count);
+                if (g_perf.gpu_available && g_perf.rga_available) {
+                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d OP %s CPU %.0f%% GPU %.0f%% RGA %.0f%%",
+                             module_page_number("RGA"), (int)ARRAY_SIZE(g_module_pages),
+                             g_rga_demo_ops[rga_op_index].label,
+                             g_perf.cpu_percent, g_perf.gpu_percent, g_perf.rga_percent);
+                } else if (g_perf.gpu_available) {
+                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d OP %s CPU %.0f%% GPU %.0f%% RGA N/A",
+                             module_page_number("RGA"), (int)ARRAY_SIZE(g_module_pages),
+                             g_rga_demo_ops[rga_op_index].label,
+                             g_perf.cpu_percent, g_perf.gpu_percent);
+                } else if (g_perf.rga_available) {
+                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d OP %s CPU %.0f%% GPU N/A RGA %.0f%%",
+                             module_page_number("RGA"), (int)ARRAY_SIZE(g_module_pages),
+                             g_rga_demo_ops[rga_op_index].label,
+                             g_perf.cpu_percent, g_perf.rga_percent);
+                } else {
+                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d OP %s CPU %.0f%% GPU N/A RGA N/A",
+                             module_page_number("RGA"), (int)ARRAY_SIZE(g_module_pages),
+                             g_rga_demo_ops[rga_op_index].label,
+                             g_perf.cpu_percent);
+                }
+                (void)update_display_osd_text("RGA  VI RGA VMIX OSD VO", perf);
+                if ((frame % FPS) == 0) {
+                    char gpu_text[24];
+                    char rga_text[24];
+                    if (g_perf.gpu_available) {
+                        snprintf(gpu_text, sizeof(gpu_text), "%.0f%%", g_perf.gpu_percent);
+                    } else {
+                        snprintf(gpu_text, sizeof(gpu_text), "N/A");
+                    }
+                    if (g_perf.rga_available) {
+                        snprintf(rga_text, sizeof(rga_text), "%.0f%%", g_perf.rga_percent);
+                    } else {
+                        snprintf(rga_text, sizeof(rga_text), "N/A");
+                    }
+                    printf("RGA op=%s vi_frames=%llu rga_frames=%llu cpu=%.0f%% gpu=%s rga=%s\n",
+                           g_rga_demo_ops[rga_op_index].label,
+                           (unsigned long long)vi_count,
+                           (unsigned long long)rga_count,
+                           g_perf.cpu_percent,
+                           gpu_text,
+                           rga_text);
+                }
+            }
+            frame++;
+            usleep(1000000 / FPS);
+            continue;
+        }
 
         if (use_vmix_osd_display) {
             const uint8_t *display_src = NULL;
@@ -4268,8 +4579,10 @@ int main(int argc, char **argv) {
     }
 
     unbind_vpss_vmix_osd_vo(vpss_bind_display_ok);
+    unbind_vi_rga_vmix_osd_vo(rga_bind_display_ok);
     unbind_vi_vmix_osd_vo(vi_bind_display_ok);
     if (camera_ok) MEDIA_VI_Disable(0);
+    cleanup_live_rga(live_rga_ok);
     cleanup_display_vmix_osd(display_vmix_osd_ok);
     MEDIA_VO_Stop(0, 0);
     MEDIA_VO_DestroyChn(0, 0);

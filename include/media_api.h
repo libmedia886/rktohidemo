@@ -564,6 +564,8 @@ int MEDIA_RGA_CreateGrp(int grp, const MEDIA_RGA_GRP_ATTR *attr);
 int MEDIA_RGA_SetGrpAttr(int grp, const MEDIA_RGA_GRP_ATTR *attr);
 int MEDIA_RGA_SetInAttr(int grp, int in_idx, const MEDIA_RGA_PORT_ATTR *attr);
 int MEDIA_RGA_SetOutAttr(int grp, int out_idx, const MEDIA_RGA_PORT_ATTR *attr);
+int MEDIA_RGA_GetFrame(int grp, MEDIA_BUFFER *buf, int timeout_ms);
+int MEDIA_RGA_ReleaseFrame(int grp, MEDIA_BUFFER buf);
 
 // NPU generic inference module
 int MEDIA_NPU_CreateGrp(int grp, const MEDIA_NPU_ATTR *attr);
