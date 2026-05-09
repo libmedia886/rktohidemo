@@ -1687,7 +1687,8 @@ static int tile_needs_camera(const char *name) {
            strcasecmp(name, "OSD") == 0 ||
            strcasecmp(name, "RESIZE_RGA") == 0 ||
            strcasecmp(name, "VPSS") == 0 ||
-           strcasecmp(name, "CSC_RGA") == 0;
+           strcasecmp(name, "CSC_RGA") == 0 ||
+           strcasecmp(name, "STEREO_3D") == 0;
 }
 
 static int load_loop_assets(void) {
@@ -2095,6 +2096,10 @@ int main(int argc, char **argv) {
         live_clahe_ok = 1;
     }
     int live_stereo_ok = 0;
+    if (!solid_test && only_tile && strcasecmp(only_tile, "STEREO_3D") == 0 &&
+        setup_live_stereo() == 0) {
+        live_stereo_ok = 1;
+    }
 
     if (MEDIA_POOL_Create(DISPLAY_POOL, display_size, 4) != 0) {
         fprintf(stderr, "display pool create failed\n");
