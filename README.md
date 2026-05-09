@@ -47,6 +47,7 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --only EDOF_CL
 /userdata/alldemo/scripts/run_alldemo.sh --only DUALVIEW
 /userdata/alldemo/scripts/run_alldemo.sh --only STEREO_3D
+/userdata/alldemo/scripts/run_alldemo.sh --only PANO
 ```
 
 `--only <tile>` 会把主画面固定到指定小窗体，并且只初始化该小窗体需要的实时模块；未接入真实实时链路的 tile 会显示循环素材或合成占位，且不会强制打开摄像头。
@@ -58,6 +59,7 @@ cmake --build build -j
 `EDOF_CL` 单独模式使用 `assets/loop/edof/mfi_whu` 的 `a.jpg/b.jpg/fused.png` 样张做三栏对比，每 3 秒切换一组。
 `DUALVIEW` 单独模式参考 `/userdata/rktohi/demo/dualview` 示例生成两路 RGB888 输入：input0 纯红、input1 纯蓝，主画面同时显示 input0、input1、side-by-side 输出和 line-by-line 输出，不占用摄像头。
 `STEREO_3D` 单独模式使用摄像头输入。
+`PANO` 单独模式使用 `assets/loop/pano/sample2` 的六张图片和 PTO 标定文件，主画面显示六路输入图和 panorama 输出，不占用摄像头。
 
 ## 快速自检
 

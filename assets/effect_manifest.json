@@ -35,7 +35,7 @@
     {"name": "STEREO_3D", "source": "loop image pair", "effect": "side-by-side / line-by-line 3D"},
     {"name": "VMIX", "source": "all tile streams", "effect": "Vulkan compositor path"},
     {"name": "VMIX_RGA", "source": "all tile streams", "effect": "RGA compositor path"},
-    {"name": "PANO", "source": "virtual multi-input loop", "effect": "panorama stitch using PTO"},
+    {"name": "PANO", "source": "assets/loop/pano/sample2/camera_0.jpg..camera_5.jpg", "effect": "six-image panorama stitch using PTO"},
     {"name": "AVM", "source": "assets/loop/avm_inputs/*.jpg", "effect": "2D surround view"},
     {"name": "SVM3D", "source": "assets/svm3d/svm_3d_assets.json", "effect": "3D surround-view sweep"},
     {"name": "NPU", "source": "camera", "effect": "YOLO/MobileNet AI status and boxes"},

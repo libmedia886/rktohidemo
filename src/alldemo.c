@@ -58,10 +58,17 @@
 #define LIVE_DUALVIEW_SBS_GRP 71
 #define LIVE_DUALVIEW_LBL_GRP 72
 #define LIVE_RETINEX_GRP 73
+#define LIVE_PANO_GRP 74
 
 #define CAM_W 640
 #define CAM_H 640
 #define CAM_STRIDE 640
+#define PANO_INPUT_COUNT 6
+#define PANO_DOMAIN_W 8378
+#define PANO_DOMAIN_H 4189
+#define PANO_OUT_W 1024
+#define PANO_OUT_H 512
+#define PANO_OUT_STRIDE 1024
 #define FPS 30
 #define CAMERA_DEVICE "/dev/video-camera0"
 #define LICENSE_PATH "/root/licence.dat"
@@ -69,6 +76,7 @@
 #define CAM_FRAME_SIZE (CAM_STRIDE * CAM_H * 3 / 2)
 #define RGB_FRAME_SIZE (CAM_W * CAM_H * 3)
 #define RGBA_FRAME_SIZE (CAM_W * CAM_H * 4)
+#define PANO_OUTPUT_SIZE (PANO_OUT_STRIDE * PANO_OUT_H * 3 / 2)
 #define MAIN_ROTATE_SECONDS 5
 #define EDOF_PAIR_SECONDS 3
 #define TILE_FIRST_INDEX 4
@@ -105,6 +113,17 @@ typedef struct {
     image_asset_t fused;
     int loaded;
 } edof_pair_t;
+
+typedef struct {
+    const char *pto_path;
+    const char *image_paths[PANO_INPUT_COUNT];
+    image_asset_t inputs[PANO_INPUT_COUNT];
+    uint8_t *nv12[PANO_INPUT_COUNT];
+    int input_count;
+    int in_w;
+    int in_h;
+    int loaded;
+} pano_sample_t;
 
 typedef struct {
     int license_ok;
@@ -187,6 +206,24 @@ static edof_pair_t g_edof_pairs[] = {
      "assets/loop/edof/mfi_whu/0041/fused.png", {0}, {0}, {0}, 0},
 };
 
+static pano_sample_t g_pano_sample = {
+    "assets/loop/pano/sample2/calib_file.pto",
+    {
+        "assets/loop/pano/sample2/camera_0.jpg",
+        "assets/loop/pano/sample2/camera_1.jpg",
+        "assets/loop/pano/sample2/camera_2.jpg",
+        "assets/loop/pano/sample2/camera_3.jpg",
+        "assets/loop/pano/sample2/camera_4.jpg",
+        "assets/loop/pano/sample2/camera_5.jpg",
+    },
+    {{0}},
+    {NULL},
+    PANO_INPUT_COUNT,
+    0,
+    0,
+    0,
+};
+
 static void on_signal(int sig) {
     (void)sig;
     g_running = 0;
@@ -228,7 +265,7 @@ static void collect_health(int loaded_assets) {
     g_health.rtsp_port_free = tcp_port_free(RTSP_PORT);
     g_health.npu_model_ok = path_readable("assets/npu/yolov5s-640-640.rknn");
     g_health.avm_lut_ok = path_readable("assets/avm/avm_blend.lut");
-    g_health.pano_calib_ok = path_readable("assets/panorama/calib_file.pto");
+    g_health.pano_calib_ok = path_readable(g_pano_sample.pto_path);
     g_health.svm_assets_ok = path_readable("assets/svm3d/svm_3d_assets.json");
     g_health.loop_loaded = loaded_assets;
     g_health.loop_expected = expected_loop_asset_count();
@@ -671,6 +708,46 @@ static void image_to_nv12_frame(const image_asset_t *img, uint8_t *dst) {
     }
 }
 
+static void image_to_nv12_packed(const image_asset_t *img, uint8_t *dst) {
+    if (!img || !img->rgb || !dst || img->width <= 0 || img->height <= 0) return;
+    int w = img->width;
+    int h = img->height;
+    uint8_t *yp = dst;
+    uint8_t *uv = dst + (size_t)w * h;
+
+    for (int y = 0; y < h; ++y) {
+        uint8_t *drow = yp + (size_t)y * w;
+        for (int x = 0; x < w; ++x) {
+            const uint8_t *rgb = img->rgb + ((size_t)y * w + x) * 3;
+            uint8_t yy, u, v;
+            rgb_to_yuv(rgb[0], rgb[1], rgb[2], &yy, &u, &v);
+            (void)u;
+            (void)v;
+            drow[x] = yy;
+        }
+    }
+
+    for (int y = 0; y < h; y += 2) {
+        uint8_t *drow = uv + (size_t)(y / 2) * w;
+        for (int x = 0; x < w; x += 2) {
+            int r = 0, g = 0, b = 0;
+            for (int dy = 0; dy < 2; ++dy) {
+                for (int dx = 0; dx < 2; ++dx) {
+                    const uint8_t *rgb = img->rgb + ((size_t)(y + dy) * w + (x + dx)) * 3;
+                    r += rgb[0];
+                    g += rgb[1];
+                    b += rgb[2];
+                }
+            }
+            uint8_t yy, u, v;
+            rgb_to_yuv((uint8_t)(r / 4), (uint8_t)(g / 4), (uint8_t)(b / 4), &yy, &u, &v);
+            (void)yy;
+            drow[x] = u;
+            drow[x + 1] = v;
+        }
+    }
+}
+
 static void fill_dualview_demo_rgb(uint8_t *dst, int input0) {
     if (!dst) return;
     for (int y = 0; y < CAM_H; ++y) {
@@ -761,6 +838,47 @@ static void draw_dualview_comparison(uint8_t *dst, int stride, int x, int y, int
     }
 }
 
+static void draw_pano_comparison(uint8_t *dst, int stride, int x, int y, int w, int h,
+                                 const uint8_t *pano_out) {
+    int gap = 10;
+    int label_h = 22;
+    int top_h = (h * 2) / 5;
+    int bottom_h = h - top_h - gap;
+    int cols = 3;
+    int rows = 2;
+    int cell_w = (w - gap * (cols - 1)) / cols;
+    int cell_h = (top_h - gap * (rows - 1)) / rows;
+
+    for (int i = 0; i < PANO_INPUT_COUNT; ++i) {
+        int cx = x + (i % cols) * (cell_w + gap);
+        int cy = y + (i / cols) * (cell_h + gap);
+        char label[16];
+        snprintf(label, sizeof(label), "INPUT %d", i);
+        fill_rect_nv12(dst, stride, cx, cy, cell_w, cell_h, 5, 10, 18);
+        stroke_rect_nv12(dst, stride, cx, cy, cell_w, cell_h, 1, 70, 140, 210);
+        if (g_pano_sample.loaded) {
+            draw_rgb_image_nv12(dst, stride, cx + 4, cy + 4, cell_w - 8, cell_h - label_h - 8,
+                                &g_pano_sample.inputs[i]);
+        } else {
+            draw_text(dst, stride, cx + 12, cy + cell_h / 2 - 10, "WAIT", 1, 255, 190, 100);
+        }
+        fill_rect_nv12(dst, stride, cx, cy + cell_h - label_h, cell_w, label_h, 0, 0, 0);
+        draw_text(dst, stride, cx + 8, cy + cell_h - label_h + 5, label, 1, 180, 230, 255);
+    }
+
+    int oy = y + top_h + gap;
+    fill_rect_nv12(dst, stride, x, oy, w, bottom_h, 5, 10, 18);
+    stroke_rect_nv12(dst, stride, x, oy, w, bottom_h, 1, 80, 255, 180);
+    if (pano_out) {
+        draw_camera_tile(dst, stride, x + 4, oy + 4, w - 8, bottom_h - label_h - 8,
+                         pano_out, PANO_OUT_W, PANO_OUT_H, PANO_OUT_STRIDE);
+    } else {
+        draw_text(dst, stride, x + 12, oy + bottom_h / 2 - 10, "WAIT", 1, 255, 190, 100);
+    }
+    fill_rect_nv12(dst, stride, x, oy + bottom_h - label_h, w, label_h, 0, 0, 0);
+    draw_text(dst, stride, x + 8, oy + bottom_h - label_h + 5, "PANORAMA OUTPUT", 1, 180, 230, 255);
+}
+
 static const char *tile_status_text(int status) {
     switch (status) {
     case TILE_LIVE: return "LIVE";
@@ -793,6 +911,7 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
                              const uint8_t *cap_live, const uint8_t *dcp_live,
                              const uint8_t *conv_live, const uint8_t *clahe_live,
                              const uint8_t *retinex_in, const uint8_t *retinex_live,
+                             const uint8_t *pano_out,
                              const uint8_t *edof_in0, const uint8_t *edof_in1,
                              const uint8_t *edof_out, const uint8_t *stereo_live,
                              const uint8_t *dual_in0, const uint8_t *dual_in1,
@@ -852,6 +971,8 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
     } else if (strcmp(g_tiles[idx].name, "RETINEX") == 0 && (retinex_in || retinex_live)) {
         draw_nv12_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38,
                              retinex_in, retinex_live, "VIDEO IN", "RETINEX OUT");
+    } else if (strcmp(g_tiles[idx].name, "PANO") == 0 && (g_pano_sample.loaded || pano_out)) {
+        draw_pano_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38, pano_out);
     } else if (strcmp(g_tiles[idx].name, "EDOF_CL") == 0 && (edof_in0 || edof_in1 || edof_out)) {
         draw_edof_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38,
                              edof_in0, edof_in1, edof_out);
@@ -900,6 +1021,7 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
                               const uint8_t *cap_live, const uint8_t *dcp_live,
                               const uint8_t *conv_live, const uint8_t *clahe_live,
                               const uint8_t *retinex_live,
+                              const uint8_t *pano_out,
                               const uint8_t *edof_in0, const uint8_t *edof_in1,
                               const uint8_t *edof_out, const uint8_t *stereo_live,
                               const uint8_t *dual_in0, const uint8_t *dual_in1,
@@ -964,6 +1086,11 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
     if (strcmp(g_tiles[idx].name, "RETINEX") == 0 && (cam || retinex_live)) {
         draw_nv12_comparison(dst, stride, x + 12, y + 12, w - 24, h - 24,
                              cam, retinex_live, "VIDEO IN", "RETINEX OUT");
+        return;
+    }
+
+    if (strcmp(g_tiles[idx].name, "PANO") == 0 && (g_pano_sample.loaded || pano_out)) {
+        draw_pano_comparison(dst, stride, x + 12, y + 12, w - 24, h - 24, pano_out);
         return;
     }
 
@@ -1033,6 +1160,7 @@ static void draw_main_showcase(uint8_t *canvas, int stride, int frame,
                                const uint8_t *cap_live, const uint8_t *dcp_live,
                                const uint8_t *conv_live, const uint8_t *clahe_live,
                                const uint8_t *retinex_live,
+                               const uint8_t *pano_out,
                                const uint8_t *edof_in0, const uint8_t *edof_in1,
                                const uint8_t *edof_out, const uint8_t *stereo_live,
                                const uint8_t *dual_in0, const uint8_t *dual_in1,
@@ -1056,7 +1184,7 @@ static void draw_main_showcase(uint8_t *canvas, int stride, int frame,
         draw_tile_content(canvas, stride, x + 14, y + 14, w - 28, h - 70,
                           idx, frame, cam, osd_live, resize_live, vpss_live,
                           csc_rga_live, transform_live, cap_live, dcp_live, conv_live, clahe_live,
-                          retinex_live, edof_in0, edof_in1, edof_out, stereo_live,
+                          retinex_live, pano_out, edof_in0, edof_in1, edof_out, stereo_live,
                           dual_in0, dual_in1, dual_sbs, dual_lbl);
         fill_rect_nv12(canvas, stride, x + 14, y + h - 50, w - 28, 34, 0, 0, 0);
         draw_text(canvas, stride, x + 32, y + h - 42, "MAIN ROTATE", 2, 190, 230, 255);
@@ -2008,6 +2136,93 @@ static int process_live_dualview_one(int grp, const uint8_t *src0, const uint8_t
     return ret;
 }
 
+static int setup_live_pano(void) {
+    if (!g_pano_sample.loaded || g_pano_sample.in_w <= 0 || g_pano_sample.in_h <= 0) return -1;
+    size_t input_size = (size_t)g_pano_sample.in_w * g_pano_sample.in_h * 3 / 2;
+    if (MEDIA_POOL_Create(OSD_INPUT_POOL, input_size, g_pano_sample.input_count) != 0) return -1;
+    if (MEDIA_POOL_Create(OSD_OUTPUT_POOL, PANO_OUTPUT_SIZE, 2) != 0) {
+        MEDIA_POOL_Destroy(OSD_INPUT_POOL);
+        return -1;
+    }
+
+    MEDIA_PANO_ATTR attr = {0};
+    attr.input_count = g_pano_sample.input_count;
+    attr.in_width = g_pano_sample.in_w;
+    attr.in_height = g_pano_sample.in_h;
+    attr.in_stride = g_pano_sample.in_w;
+    attr.out_width = PANO_OUT_W;
+    attr.out_height = PANO_OUT_H;
+    attr.out_stride = PANO_OUT_STRIDE;
+    attr.crop_enable = 1;
+    attr.crop_x = 0;
+    attr.crop_y = 0;
+    attr.crop_width = PANO_DOMAIN_W;
+    attr.crop_height = PANO_DOMAIN_H;
+    attr.lut_width = PANO_OUT_W;
+    attr.lut_height = PANO_OUT_H;
+    attr.output_pool_id = OSD_OUTPUT_POOL;
+    attr.input_depth = g_pano_sample.input_count;
+    attr.output_depth = 2;
+    attr.sync_timeout_ms = 200;
+    attr.pto_path = g_pano_sample.pto_path;
+
+    if (MEDIA_PANO_CreateGrp(LIVE_PANO_GRP, &attr) != 0 ||
+        MEDIA_PANO_Start(LIVE_PANO_GRP) != 0) {
+        MEDIA_PANO_DestroyGrp(LIVE_PANO_GRP);
+        MEDIA_POOL_Destroy(OSD_INPUT_POOL);
+        MEDIA_POOL_Destroy(OSD_OUTPUT_POOL);
+        return -1;
+    }
+    set_tile_status("PANO", TILE_LIVE);
+    return 0;
+}
+
+static void cleanup_live_pano(int enabled) {
+    if (!enabled) return;
+    MEDIA_PANO_Stop(LIVE_PANO_GRP);
+    MEDIA_PANO_DestroyGrp(LIVE_PANO_GRP);
+    MEDIA_POOL_Destroy(OSD_INPUT_POOL);
+    MEDIA_POOL_Destroy(OSD_OUTPUT_POOL);
+}
+
+static int process_live_pano(uint8_t *dst) {
+    MEDIA_BUFFER in_bufs[PANO_INPUT_COUNT];
+    MEDIA_BUFFER out = {-1, -1};
+    int sent[PANO_INPUT_COUNT] = {0};
+    int ret = -1;
+    size_t input_size = (size_t)g_pano_sample.in_w * g_pano_sample.in_h * 3 / 2;
+
+    memset(in_bufs, 0xff, sizeof(in_bufs));
+    if (!dst || !g_pano_sample.loaded) return -1;
+
+    for (int i = 0; i < g_pano_sample.input_count; ++i) {
+        if (MEDIA_POOL_GetBuffer(OSD_INPUT_POOL, &in_bufs[i]) != 0) goto done;
+        if (copy_to_buffer(in_bufs[i], g_pano_sample.nv12[i], input_size) != 0) goto done;
+        if (MEDIA_PANO_SendFrame(LIVE_PANO_GRP, i, in_bufs[i], 1000) != 0) goto done;
+        sent[i] = 1;
+        in_bufs[i].pool_id = -1;
+        in_bufs[i].index = -1;
+    }
+
+    if (MEDIA_PANO_GetFrame(LIVE_PANO_GRP, &out, 30000) == 0) {
+        ret = copy_from_buffer(out, dst, PANO_OUTPUT_SIZE);
+        MEDIA_PANO_ReleaseFrame(LIVE_PANO_GRP, out);
+        out.pool_id = -1;
+        out.index = -1;
+    }
+
+done:
+    if (out.pool_id >= 0) {
+        MEDIA_PANO_ReleaseFrame(LIVE_PANO_GRP, out);
+    }
+    for (int i = 0; i < g_pano_sample.input_count; ++i) {
+        if (!sent[i] && in_bufs[i].pool_id >= 0) {
+            MEDIA_POOL_PutBuffer(in_bufs[i]);
+        }
+    }
+    return ret;
+}
+
 static int setup_live_stereo(void) {
     if (MEDIA_POOL_Create(STEREO_INPUT0_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
     if (MEDIA_POOL_Create(STEREO_INPUT1_POOL, CAM_FRAME_SIZE, 3) != 0) goto fail;
@@ -2169,6 +2384,73 @@ static void unload_edof_pairs(void) {
     }
 }
 
+static int load_pano_sample(void) {
+    pano_sample_t *sample = &g_pano_sample;
+    sample->loaded = 0;
+    sample->in_w = 0;
+    sample->in_h = 0;
+
+    if (access(sample->pto_path, R_OK) != 0) {
+        fprintf(stderr, "warning: failed to access PANO PTO %s\n", sample->pto_path);
+        return 0;
+    }
+
+    for (int i = 0; i < sample->input_count; ++i) {
+        image_asset_t *img = &sample->inputs[i];
+        if (load_image_rgb(sample->image_paths[i], img) != 0) {
+            fprintf(stderr, "warning: failed to load PANO input %s\n", sample->image_paths[i]);
+            goto fail;
+        }
+        if ((img->width & 1) || (img->height & 1)) {
+            fprintf(stderr, "warning: PANO input must be even-sized: %s %dx%d\n",
+                    sample->image_paths[i], img->width, img->height);
+            goto fail;
+        }
+        if (i == 0) {
+            sample->in_w = img->width;
+            sample->in_h = img->height;
+        } else if (img->width != sample->in_w || img->height != sample->in_h) {
+            fprintf(stderr, "warning: PANO input size mismatch: %s %dx%d expected %dx%d\n",
+                    sample->image_paths[i], img->width, img->height, sample->in_w, sample->in_h);
+            goto fail;
+        }
+    }
+
+    size_t nv12_size = (size_t)sample->in_w * sample->in_h * 3 / 2;
+    for (int i = 0; i < sample->input_count; ++i) {
+        sample->nv12[i] = malloc(nv12_size);
+        if (!sample->nv12[i]) goto fail;
+        image_to_nv12_packed(&sample->inputs[i], sample->nv12[i]);
+    }
+
+    sample->loaded = 1;
+    return 1;
+
+fail:
+    for (int i = 0; i < sample->input_count; ++i) {
+        free(sample->inputs[i].rgb);
+        memset(&sample->inputs[i], 0, sizeof(sample->inputs[i]));
+        free(sample->nv12[i]);
+        sample->nv12[i] = NULL;
+    }
+    sample->in_w = 0;
+    sample->in_h = 0;
+    return 0;
+}
+
+static void unload_pano_sample(void) {
+    pano_sample_t *sample = &g_pano_sample;
+    for (int i = 0; i < sample->input_count; ++i) {
+        free(sample->inputs[i].rgb);
+        memset(&sample->inputs[i], 0, sizeof(sample->inputs[i]));
+        free(sample->nv12[i]);
+        sample->nv12[i] = NULL;
+    }
+    sample->in_w = 0;
+    sample->in_h = 0;
+    sample->loaded = 0;
+}
+
 static edof_pair_t *get_loaded_edof_pair(int idx) {
     int seen = 0;
     for (size_t i = 0; i < sizeof(g_edof_pairs) / sizeof(g_edof_pairs[0]); ++i) {
@@ -2203,7 +2485,7 @@ static int run_self_test(void) {
     failures += print_check("rtsp port", g_health.rtsp_port_free, "8554");
     failures += print_check("npu model", g_health.npu_model_ok, "assets/npu/yolov5s-640-640.rknn");
     failures += print_check("avm lut", g_health.avm_lut_ok, "assets/avm/avm_blend.lut");
-    failures += print_check("pano calib", g_health.pano_calib_ok, "assets/panorama/calib_file.pto");
+    failures += print_check("pano calib", g_health.pano_calib_ok, g_pano_sample.pto_path);
     failures += print_check("svm assets", g_health.svm_assets_ok, "assets/svm3d/svm_3d_assets.json");
 
     char detail[64];
@@ -2390,6 +2672,7 @@ static void draw_dashboard(uint8_t *canvas, int stride, int frame, int rotate_ma
                            const uint8_t *cap_live, const uint8_t *dcp_live,
                            const uint8_t *conv_live, const uint8_t *clahe_live,
                            const uint8_t *retinex_live,
+                           const uint8_t *pano_out,
                            const uint8_t *edof_in0, const uint8_t *edof_in1,
                            const uint8_t *edof_out, const uint8_t *stereo_live,
                            const uint8_t *dual_in0, const uint8_t *dual_in1,
@@ -2401,7 +2684,8 @@ static void draw_dashboard(uint8_t *canvas, int stride, int frame, int rotate_ma
 
     draw_main_showcase(canvas, stride, frame, rotate_main, only_tile, cam, osd_live, resize_live,
                        vpss_live, csc_rga_live, transform_live, cap_live, dcp_live,
-                       conv_live, clahe_live, retinex_live, edof_in0, edof_in1, edof_out, stereo_live,
+                       conv_live, clahe_live, retinex_live, pano_out,
+                       edof_in0, edof_in1, edof_out, stereo_live,
                        dual_in0, dual_in1, dual_sbs, dual_lbl);
 
     int cols = 4;
@@ -2417,7 +2701,8 @@ static void draw_dashboard(uint8_t *canvas, int stride, int frame, int rotate_ma
         draw_effect_tile(canvas, stride, cx, cy, tile_w, tile_h, tile_idx, frame,
                          g_tiles[tile_idx].active, osd_live, resize_live, vpss_live,
                          csc_rga_live, transform_live, cap_live, dcp_live,
-                         conv_live, clahe_live, cam, retinex_live, edof_in0, edof_in1, edof_out, stereo_live,
+                         conv_live, clahe_live, cam, retinex_live, pano_out,
+                         edof_in0, edof_in1, edof_out, stereo_live,
                          dual_in0, dual_in1, dual_sbs, dual_lbl);
     }
 
@@ -2513,6 +2798,8 @@ int main(int argc, char **argv) {
     int loaded_assets = solid_test ? 0 : load_loop_assets();
     int loaded_edof_pairs = (!solid_test && only_tile && strcasecmp(only_tile, "EDOF_CL") == 0) ?
         load_edof_pairs() : 0;
+    int loaded_pano_sample = (!solid_test && only_tile && strcasecmp(only_tile, "PANO") == 0) ?
+        load_pano_sample() : 0;
     collect_health(loaded_assets);
     if (heavy_probe && !solid_test) {
         probe_modules();
@@ -2580,6 +2867,14 @@ int main(int argc, char **argv) {
         setup_live_dualview() == 0) {
         live_dualview_ok = 1;
     }
+    int live_pano_ok = 0;
+    if (!solid_test && only_tile && strcasecmp(only_tile, "PANO") == 0 &&
+        loaded_pano_sample > 0 && setup_live_pano() == 0) {
+        live_pano_ok = 1;
+    } else if (!solid_test && only_tile && strcasecmp(only_tile, "PANO") == 0 &&
+               loaded_pano_sample > 0) {
+        set_tile_status("PANO", TILE_LOOP);
+    }
     int live_stereo_ok = 0;
     if (!solid_test && only_tile && strcasecmp(only_tile, "STEREO_3D") == 0 &&
         setup_live_stereo() == 0) {
@@ -2589,6 +2884,7 @@ int main(int argc, char **argv) {
     if (MEDIA_POOL_Create(DISPLAY_POOL, display_size, 4) != 0) {
         fprintf(stderr, "display pool create failed\n");
         cleanup_live_stereo(live_stereo_ok);
+        cleanup_live_pano(live_pano_ok);
         cleanup_live_dualview(live_dualview_ok);
         cleanup_live_edof(live_edof_ok);
         cleanup_live_retinex(live_retinex_ok);
@@ -2601,6 +2897,7 @@ int main(int argc, char **argv) {
         cleanup_live_vpss(live_vpss_ok);
         cleanup_live_resize(live_resize_ok);
         cleanup_live_osd(live_osd_ok);
+        unload_pano_sample();
         unload_edof_pairs();
         unload_loop_assets();
         MEDIA_SYS_Exit();
@@ -2619,6 +2916,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "VO setup failed\n");
         MEDIA_POOL_Destroy(DISPLAY_POOL);
         cleanup_live_stereo(live_stereo_ok);
+        cleanup_live_pano(live_pano_ok);
         cleanup_live_dualview(live_dualview_ok);
         cleanup_live_edof(live_edof_ok);
         cleanup_live_retinex(live_retinex_ok);
@@ -2631,6 +2929,7 @@ int main(int argc, char **argv) {
         cleanup_live_vpss(live_vpss_ok);
         cleanup_live_resize(live_resize_ok);
         cleanup_live_osd(live_osd_ok);
+        unload_pano_sample();
         unload_edof_pairs();
         unload_loop_assets();
         MEDIA_SYS_Exit();
@@ -2679,6 +2978,7 @@ int main(int argc, char **argv) {
     int edof_frames = 0;
     int edof_pair_index = -1;
     int dualview_frames = 0;
+    int pano_frames = 0;
     int stereo_frames = 0;
     uint8_t *last_cam = malloc(CAM_FRAME_SIZE);
     uint8_t *last_osd = malloc(CAM_FRAME_SIZE);
@@ -2698,6 +2998,7 @@ int main(int argc, char **argv) {
     uint8_t *last_dual_in1 = malloc(RGB_FRAME_SIZE);
     uint8_t *last_dual_sbs = malloc(RGB_FRAME_SIZE);
     uint8_t *last_dual_lbl = malloc(RGB_FRAME_SIZE);
+    uint8_t *last_pano = malloc(PANO_OUTPUT_SIZE);
     uint8_t *last_rgb_src = malloc(RGB_FRAME_SIZE);
     uint8_t *last_rgba_src = malloc(RGBA_FRAME_SIZE);
     uint8_t *last_stereo = malloc(CAM_FRAME_SIZE);
@@ -2719,6 +3020,7 @@ int main(int argc, char **argv) {
     if (last_dual_in1) memset(last_dual_in1, 0, RGB_FRAME_SIZE);
     if (last_dual_sbs) memset(last_dual_sbs, 0, RGB_FRAME_SIZE);
     if (last_dual_lbl) memset(last_dual_lbl, 0, RGB_FRAME_SIZE);
+    if (last_pano) memset(last_pano, 0, PANO_OUTPUT_SIZE);
     if (last_rgb_src) memset(last_rgb_src, 0, RGB_FRAME_SIZE);
     if (last_rgba_src) memset(last_rgba_src, 0, RGBA_FRAME_SIZE);
     if (last_stereo) memset(last_stereo, 0, CAM_FRAME_SIZE);
@@ -2827,6 +3129,11 @@ int main(int argc, char **argv) {
                 dualview_frames++;
             }
         }
+        if (!solid_test && only_tile && strcasecmp(only_tile, "PANO") == 0 &&
+            last_pano && live_pano_ok && pano_frames == 0 &&
+            process_live_pano(last_pano) == 0) {
+            pano_frames++;
+        }
 
         MEDIA_BUFFER dbuf = {-1, -1};
         if (MEDIA_POOL_GetBuffer(DISPLAY_POOL, &dbuf) != 0) {
@@ -2861,6 +3168,7 @@ int main(int argc, char **argv) {
                            conv_frames > 0 ? last_conv : NULL,
                            clahe_frames > 0 ? last_clahe : NULL,
                            retinex_frames > 0 ? last_retinex : NULL,
+                           pano_frames > 0 ? last_pano : NULL,
                            last_edof_in0,
                            last_edof_in1,
                            edof_frames > 0 ? last_edof : NULL,
@@ -2884,6 +3192,7 @@ int main(int argc, char **argv) {
     MEDIA_VO_Stop(0, 0);
     MEDIA_VO_DestroyChn(0, 0);
     cleanup_live_stereo(live_stereo_ok);
+    cleanup_live_pano(live_pano_ok);
     cleanup_live_dualview(live_dualview_ok);
     cleanup_live_edof(live_edof_ok);
     cleanup_live_retinex(live_retinex_ok);
@@ -2901,6 +3210,7 @@ int main(int argc, char **argv) {
     MEDIA_POOL_Destroy(WORK_POOL_NV12);
     MEDIA_POOL_Destroy(WORK_POOL_RGB);
     MEDIA_POOL_Destroy(WORK_POOL_OUT);
+    unload_pano_sample();
     unload_edof_pairs();
     unload_loop_assets();
     free(last_stereo);
@@ -2910,6 +3220,7 @@ int main(int argc, char **argv) {
     free(last_dual_sbs);
     free(last_dual_in1);
     free(last_dual_in0);
+    free(last_pano);
     free(last_edof);
     free(last_edof_in1);
     free(last_edof_in0);
