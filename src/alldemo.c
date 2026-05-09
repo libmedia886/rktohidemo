@@ -216,6 +216,9 @@ static const char *g_bind_csc_cl_back_in_port = NULL;
 static const char *g_bind_csc_cl_back_src_port = NULL;
 static const char *g_bind_live_osd_in_port = NULL;
 static const char *g_bind_live_osd_src_port = NULL;
+static const char *g_bind_vpss_raw_src_port = NULL;
+static const char *g_bind_vpss_clahe_src_port = NULL;
+static const char *g_bind_vmix_raw_in_port = NULL;
 static const char *g_bind_clahe_in_port = NULL;
 static const char *g_bind_clahe_src_port = NULL;
 static const char *g_bind_retinex_in_port = NULL;
@@ -2578,6 +2581,19 @@ static int setup_display_vmix_osd(int dstride, size_t display_size, int input_co
             vmix.channels[i].alpha = 1.0f;
             vmix.channels[i].stride = CAM_STRIDE;
         }
+    } else if (input_count == 2) {
+        int start_x = (SCREEN_W - CAM_W) / 2;
+        int top_y = 164;
+        int bottom_y = 840;
+        for (int i = 0; i < 2; ++i) {
+            vmix.channels[i].enabled = 1;
+            vmix.channels[i].x = start_x;
+            vmix.channels[i].y = i == 0 ? top_y : bottom_y;
+            vmix.channels[i].width = CAM_W;
+            vmix.channels[i].height = CAM_H;
+            vmix.channels[i].alpha = 1.0f;
+            vmix.channels[i].stride = CAM_STRIDE;
+        }
     } else {
         vmix.input_count = 1;
         vmix.channels[0].enabled = 1;
@@ -2884,12 +2900,20 @@ static int bind_vi_live_osd_vmix_osd_vo(void) {
 static int bind_vi_clahe_vmix_osd_vo(void) {
     const char *out_ports[] = {"output0", "output"};
     const char *clahe_out_ports[] = {"output", "output0"};
+    const char *vpss_raw_out_ports[] = {"output0"};
+    const char *vpss_clahe_out_ports[] = {"output1"};
     const char *vi_out_ports[] = {"output", "output0"};
     const char *in_ports[] = {"input", "input0"};
-    const char *vmix_in_ports[] = {"input0", "input"};
+    const char *vmix_raw_ports[] = {"input0"};
+    const char *vmix_clahe_ports[] = {"input1"};
+    const char *vo_in_ports[] = {"input0", "input"};
     g_bind_vi_src_port = NULL;
+    g_bind_vpss_in_port = NULL;
+    g_bind_vpss_raw_src_port = NULL;
+    g_bind_vpss_clahe_src_port = NULL;
     g_bind_clahe_in_port = NULL;
     g_bind_clahe_src_port = NULL;
+    g_bind_vmix_raw_in_port = NULL;
     g_bind_vmix_in_port = NULL;
     g_bind_vmix_src_port = NULL;
     g_bind_osd_in_port = NULL;
@@ -2897,17 +2921,39 @@ static int bind_vi_clahe_vmix_osd_vo(void) {
     g_bind_vo_in_port = NULL;
 
     if (bind_first_match("VI", 0, vi_out_ports, (int)ARRAY_SIZE(vi_out_ports),
+                         "VPSS", LIVE_VPSS_GRP, in_ports, (int)ARRAY_SIZE(in_ports),
+                         &g_bind_vi_src_port, &g_bind_vpss_in_port) != 0) {
+        fprintf(stderr, "bind failed: VI -> VPSS split\n");
+        return -1;
+    }
+    if (bind_first_match("VPSS", LIVE_VPSS_GRP, vpss_raw_out_ports, (int)ARRAY_SIZE(vpss_raw_out_ports),
+                         "VMIX", DISPLAY_VMIX_GRP, vmix_raw_ports, (int)ARRAY_SIZE(vmix_raw_ports),
+                         &g_bind_vpss_raw_src_port, &g_bind_vmix_raw_in_port) != 0) {
+        fprintf(stderr, "bind failed: VPSS raw -> VMIX compare\n");
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "VPSS", LIVE_VPSS_GRP, g_bind_vpss_in_port);
+        return -1;
+    }
+    if (bind_first_match("VPSS", LIVE_VPSS_GRP, vpss_clahe_out_ports, (int)ARRAY_SIZE(vpss_clahe_out_ports),
                          "CLAHE", LIVE_CLAHE_GRP, in_ports, (int)ARRAY_SIZE(in_ports),
-                         &g_bind_vi_src_port, &g_bind_clahe_in_port) != 0) {
-        fprintf(stderr, "bind failed: VI -> CLAHE\n");
+                         &g_bind_vpss_clahe_src_port, &g_bind_clahe_in_port) != 0) {
+        fprintf(stderr, "bind failed: VPSS -> CLAHE\n");
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP, g_bind_vpss_raw_src_port,
+                         "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_raw_in_port);
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "VPSS", LIVE_VPSS_GRP, g_bind_vpss_in_port);
         return -1;
     }
     if (bind_first_match("CLAHE", LIVE_CLAHE_GRP, clahe_out_ports, (int)ARRAY_SIZE(clahe_out_ports),
-                         "VMIX", DISPLAY_VMIX_GRP, vmix_in_ports, (int)ARRAY_SIZE(vmix_in_ports),
+                         "VMIX", DISPLAY_VMIX_GRP, vmix_clahe_ports, (int)ARRAY_SIZE(vmix_clahe_ports),
                          &g_bind_clahe_src_port, &g_bind_vmix_in_port) != 0) {
         fprintf(stderr, "bind failed: CLAHE -> VMIX\n");
-        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP, g_bind_vpss_clahe_src_port,
                          "CLAHE", LIVE_CLAHE_GRP, g_bind_clahe_in_port);
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP, g_bind_vpss_raw_src_port,
+                         "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_raw_in_port);
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "VPSS", LIVE_VPSS_GRP, g_bind_vpss_in_port);
         return -1;
     }
     if (bind_first_match("VMIX", DISPLAY_VMIX_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
@@ -2916,20 +2962,28 @@ static int bind_vi_clahe_vmix_osd_vo(void) {
         fprintf(stderr, "bind failed: VMIX -> OSD\n");
         MEDIA_SYS_UnBind("CLAHE", LIVE_CLAHE_GRP, g_bind_clahe_src_port,
                          "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_in_port);
-        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP, g_bind_vpss_clahe_src_port,
                          "CLAHE", LIVE_CLAHE_GRP, g_bind_clahe_in_port);
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP, g_bind_vpss_raw_src_port,
+                         "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_raw_in_port);
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "VPSS", LIVE_VPSS_GRP, g_bind_vpss_in_port);
         return -1;
     }
     if (bind_first_match("OSD", DISPLAY_OSD_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
-                         "VO", 0, vmix_in_ports, (int)ARRAY_SIZE(vmix_in_ports),
+                         "VO", 0, vo_in_ports, (int)ARRAY_SIZE(vo_in_ports),
                          &g_bind_osd_src_port, &g_bind_vo_in_port) != 0) {
         fprintf(stderr, "bind failed: OSD -> VO\n");
         MEDIA_SYS_UnBind("VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_src_port,
                          "OSD", DISPLAY_OSD_GRP, g_bind_osd_in_port);
         MEDIA_SYS_UnBind("CLAHE", LIVE_CLAHE_GRP, g_bind_clahe_src_port,
                          "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_in_port);
-        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP, g_bind_vpss_clahe_src_port,
                          "CLAHE", LIVE_CLAHE_GRP, g_bind_clahe_in_port);
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP, g_bind_vpss_raw_src_port,
+                         "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_raw_in_port);
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "VPSS", LIVE_VPSS_GRP, g_bind_vpss_in_port);
         return -1;
     }
     return 0;
@@ -3437,9 +3491,17 @@ static void unbind_vi_clahe_vmix_osd_vo(int enabled) {
         MEDIA_SYS_UnBind("CLAHE", LIVE_CLAHE_GRP, g_bind_clahe_src_port,
                          "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_in_port);
     }
-    if (g_bind_vi_src_port && g_bind_clahe_in_port) {
-        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+    if (g_bind_vpss_clahe_src_port && g_bind_clahe_in_port) {
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP, g_bind_vpss_clahe_src_port,
                          "CLAHE", LIVE_CLAHE_GRP, g_bind_clahe_in_port);
+    }
+    if (g_bind_vpss_raw_src_port && g_bind_vmix_raw_in_port) {
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP, g_bind_vpss_raw_src_port,
+                         "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_raw_in_port);
+    }
+    if (g_bind_vi_src_port && g_bind_vpss_in_port) {
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "VPSS", LIVE_VPSS_GRP, g_bind_vpss_in_port);
     }
 }
 
@@ -4574,6 +4636,41 @@ static void cleanup_live_clahe(int enabled) {
 }
 
 static int setup_live_clahe_bind(void) {
+    if (MEDIA_POOL_Create(VPSS_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
+    if (MEDIA_POOL_Create(VPSS_OUTPUT_POOL, CAM_FRAME_SIZE, 5) != 0) {
+        MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+        return -1;
+    }
+
+    MEDIA_VPSS_ATTR vpss = {0};
+    vpss.width = CAM_W;
+    vpss.height = CAM_H;
+    vpss.input_stride = CAM_STRIDE;
+    vpss.input_depth = 4;
+    vpss.input_format = MEDIA_FORMAT_NV12;
+    vpss.output_count = 2;
+    for (int i = 0; i < 2; ++i) {
+        vpss.outputs[i].output_id = i;
+        vpss.outputs[i].out_width = CAM_W;
+        vpss.outputs[i].out_height = CAM_H;
+        vpss.outputs[i].out_stride = CAM_STRIDE;
+        vpss.outputs[i].pool_id = VPSS_OUTPUT_POOL;
+        vpss.outputs[i].crop_x = 0;
+        vpss.outputs[i].crop_y = 0;
+        vpss.outputs[i].crop_w = CAM_W;
+        vpss.outputs[i].crop_h = CAM_H;
+        vpss.outputs[i].in_fps = -1;
+        vpss.outputs[i].out_fps = -1;
+        vpss.outputs[i].output_format = MEDIA_FORMAT_NV12;
+    }
+    if (MEDIA_VPSS_SetAttr(LIVE_VPSS_GRP, &vpss) != 0 ||
+        MEDIA_VPSS_Enable(LIVE_VPSS_GRP) != 0) {
+        MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
+        MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+        MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+        return -1;
+    }
+
     MEDIA_CLAHE_ATTR attr = {0};
     attr.width = CAM_W;
     attr.height = CAM_H;
@@ -4593,6 +4690,10 @@ static int setup_live_clahe_bind(void) {
         MEDIA_CLAHE_Start(LIVE_CLAHE_GRP) != 0 ||
         MEDIA_CLAHE_Enable(LIVE_CLAHE_GRP) != 0) {
         MEDIA_CLAHE_DestroyGrp(LIVE_CLAHE_GRP);
+        MEDIA_VPSS_Disable(LIVE_VPSS_GRP);
+        MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
+        MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+        MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
         return -1;
     }
     set_tile_status("CLAHE", TILE_LIVE);
@@ -4604,6 +4705,76 @@ static void cleanup_live_clahe_bind(int enabled) {
     MEDIA_CLAHE_Disable(LIVE_CLAHE_GRP);
     MEDIA_CLAHE_Stop(LIVE_CLAHE_GRP);
     MEDIA_CLAHE_DestroyGrp(LIVE_CLAHE_GRP);
+    MEDIA_VPSS_Disable(LIVE_VPSS_GRP);
+    MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
+    MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+    MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+}
+
+static int update_clahe_compare_overlay(uint64_t vi_count, uint64_t clahe_count,
+                                        float clip, int frame) {
+    static uint8_t masks[16][1024 * 96];
+    const int view_x = (SCREEN_W - CAM_W) / 2;
+    const int top_y = 164;
+    const int bottom_y = 840;
+    char count_line[128];
+    char clip_line[96];
+    char bind_line1[180];
+    char bind_line2[180];
+
+    snprintf(count_line, sizeof(count_line), "FRAMES  VI=%llu  CLAHE=%llu",
+             (unsigned long long)vi_count, (unsigned long long)clahe_count);
+    snprintf(clip_line, sizeof(clip_line), "CLIP LIMIT %.2f  TILE GRID 8x8",
+             clip);
+    snprintf(bind_line1, sizeof(bind_line1), "RAW: VI0.%s -> VPSS%d.%s -> VMIX%d.%s",
+             g_bind_vi_src_port ? g_bind_vi_src_port : "output0",
+             LIVE_VPSS_GRP,
+             g_bind_vpss_raw_src_port ? g_bind_vpss_raw_src_port : "output0",
+             DISPLAY_VMIX_GRP,
+             g_bind_vmix_raw_in_port ? g_bind_vmix_raw_in_port : "input0");
+    snprintf(bind_line2, sizeof(bind_line2), "ENHANCE: VPSS%d.%s -> CLAHE%d.%s -> VMIX%d.%s -> OSD%d -> VO0",
+             LIVE_VPSS_GRP,
+             g_bind_vpss_clahe_src_port ? g_bind_vpss_clahe_src_port : "output1",
+             LIVE_CLAHE_GRP,
+             g_bind_clahe_in_port ? g_bind_clahe_in_port : "input",
+             DISPLAY_VMIX_GRP,
+             g_bind_vmix_in_port ? g_bind_vmix_in_port : "input1",
+             DISPLAY_OSD_GRP);
+
+    if (update_osd_rect_region(18, view_x, top_y - 50, 256, 38, 5, 10, 18, 220) != 0) return -1;
+    if (update_osd_rect_region(19, view_x, bottom_y - 50, 336, 38, 5, 10, 18, 220) != 0) return -1;
+    if (update_osd_utf8_text_region(20, view_x + 16, top_y - 45, 24, 190, 230, 255,
+                                    "上：VI原始输入",
+                                    masks[0], sizeof(masks[0]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(21, view_x + 16, bottom_y - 45, 24, 160, 255, 220,
+                                    "下：CLAHE增强输出",
+                                    masks[1], sizeof(masks[1]), 1024, 96) != 0) return -1;
+
+    if (update_osd_rect_region(23, 34, 1510, 1012, 286, 5, 10, 18, 226) != 0) return -1;
+    if (update_osd_utf8_text_region(24, 66, 1536, 34, 160, 255, 220,
+                                    "CLAHE：原始输入和增强输出同屏对比",
+                                    masks[2], sizeof(masks[2]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(25, 68, 1588, 24, 190, 230, 255,
+                                    "数据流：VI先进入VPSS分成两路，一路直接显示，一路进入CLAHE增强。",
+                                    masks[3], sizeof(masks[3]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(26, 68, 1630, 23, 255, 230, 120,
+                                    "为什么这样做：按8x8小块增强暗部细节，clip limit限制噪声被过度放大。",
+                                    masks[4], sizeof(masks[4]), 1024, 96) != 0) return -1;
+
+    int clip_w = (int)(clip * 120.0f);
+    if (clip_w < 120) clip_w = 120;
+    if (clip_w > 456) clip_w = 456;
+    if (update_osd_rect_region(27, 68, 1676, clip_w, 28, 255, 220, 70, 220) != 0) return -1;
+    if (update_osd_text_region(28, 548, 1666, 1, 170, 255, 220,
+                               clip_line, masks[5], sizeof(masks[5])) != 0) return -1;
+    if (update_osd_text_region(29, 68, 1716, 1, 170, 255, 220,
+                               count_line, masks[6], sizeof(masks[6])) != 0) return -1;
+    if (update_osd_text_region(30, 68, 1746, 1, 170, 205, 235,
+                               bind_line1, masks[7], sizeof(masks[7])) != 0) return -1;
+    if (update_osd_text_region(31, 68, 1772, 1, 170, 205, 235,
+                               bind_line2, masks[8], sizeof(masks[8])) != 0) return -1;
+
+    return 0;
 }
 
 static int process_live_clahe(const uint8_t *src, uint8_t *dst) {
@@ -5995,7 +6166,8 @@ int main(int argc, char **argv) {
     int live_csc_rga_chain_ok = 0;
     int live_csc_cl_chain_ok = 0;
     int display_vmix_osd_ok = 0;
-    int display_vmix_inputs = use_vpss_bind_display ? VPSS_DEMO_OUTPUTS : 1;
+    int display_vmix_inputs = use_vpss_bind_display ? VPSS_DEMO_OUTPUTS :
+        (use_clahe_bind_display ? 2 : 1);
     if (use_vmix_osd_display && setup_display_vmix_osd(dstride, display_size, display_vmix_inputs) == 0) {
         display_vmix_osd_ok = 1;
     } else {
@@ -6193,7 +6365,8 @@ int main(int argc, char **argv) {
             return 1;
         }
         clahe_bind_display_ok = 1;
-        (void)update_display_osd_text("CLAHE  VI CLAHE VMIX OSD VO", "CLIP 2.50  BIND");
+        (void)update_display_osd_text("CLAHE  RAW VS ENHANCED", "VI RAW + CLAHE OUTPUT");
+        (void)update_clahe_compare_overlay(0, 0, 2.5f, 0);
     }
     if (use_retinex_bind_display) {
         if (!camera_ok || !live_retinex_bind_ok || !display_vmix_osd_ok ||
@@ -6676,35 +6849,36 @@ int main(int argc, char **argv) {
             }
             if ((frame % 15) == 0) {
                 uint64_t vi_count = 0;
-                uint64_t out_count = 0;
+                uint64_t clahe_count = 0;
                 char perf[160];
                 update_perf_status();
                 if (MEDIA_SYS_GetModuleFrameCount("VI", 0, &vi_count) == 0) {
                     g_health.camera_frames = (int)vi_count;
                 }
-                (void)MEDIA_SYS_GetModuleFrameCount("VMIX", DISPLAY_VMIX_GRP, &out_count);
+                (void)MEDIA_SYS_GetModuleFrameCount("CLAHE", LIVE_CLAHE_GRP, &clahe_count);
                 if (g_perf.gpu_available && g_perf.rga_available) {
-                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d CLIP %.2f OUT %llu CPU %.0f%% GPU %.0f%% RGA %.0f%%",
+                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d RAW VS CLAHE CLIP %.2f OUT %llu CPU %.0f%% GPU %.0f%% RGA %.0f%%",
                              module_page_number("CLAHE"), (int)ARRAY_SIZE(g_module_pages),
-                             clip, (unsigned long long)out_count,
+                             clip, (unsigned long long)clahe_count,
                              g_perf.cpu_percent, g_perf.gpu_percent, g_perf.rga_percent);
                 } else if (g_perf.gpu_available) {
-                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d CLIP %.2f OUT %llu CPU %.0f%% GPU %.0f%% RGA N/A",
+                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d RAW VS CLAHE CLIP %.2f OUT %llu CPU %.0f%% GPU %.0f%% RGA N/A",
                              module_page_number("CLAHE"), (int)ARRAY_SIZE(g_module_pages),
-                             clip, (unsigned long long)out_count,
+                             clip, (unsigned long long)clahe_count,
                              g_perf.cpu_percent, g_perf.gpu_percent);
                 } else if (g_perf.rga_available) {
-                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d CLIP %.2f OUT %llu CPU %.0f%% GPU N/A RGA %.0f%%",
+                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d RAW VS CLAHE CLIP %.2f OUT %llu CPU %.0f%% GPU N/A RGA %.0f%%",
                              module_page_number("CLAHE"), (int)ARRAY_SIZE(g_module_pages),
-                             clip, (unsigned long long)out_count,
+                             clip, (unsigned long long)clahe_count,
                              g_perf.cpu_percent, g_perf.rga_percent);
                 } else {
-                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d CLIP %.2f OUT %llu CPU %.0f%% GPU N/A RGA N/A",
+                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d RAW VS CLAHE CLIP %.2f OUT %llu CPU %.0f%% GPU N/A RGA N/A",
                              module_page_number("CLAHE"), (int)ARRAY_SIZE(g_module_pages),
-                             clip, (unsigned long long)out_count,
+                             clip, (unsigned long long)clahe_count,
                              g_perf.cpu_percent);
                 }
-                (void)update_display_osd_text("CLAHE  VI CLAHE VMIX OSD VO", perf);
+                (void)update_display_osd_text("CLAHE  RAW VS ENHANCED", perf);
+                (void)update_clahe_compare_overlay(vi_count, clahe_count, clip, frame);
                 if ((frame % FPS) == 0) {
                     char gpu_text[24];
                     char rga_text[24];
@@ -6714,7 +6888,7 @@ int main(int argc, char **argv) {
                              g_perf.rga_percent);
                     printf("CLAHE vi_frames=%llu clahe_out_frames=%llu clip=%.2f cpu=%.0f%% gpu=%s rga=%s\n",
                            (unsigned long long)vi_count,
-                           (unsigned long long)out_count,
+                           (unsigned long long)clahe_count,
                            clip,
                            g_perf.cpu_percent,
                            gpu_text,

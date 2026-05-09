@@ -65,7 +65,7 @@ cmake --build build -j
 `CAP_DEHAZE` 和 `DCP_FAST_DEHAZE` 单独模式使用合成 RGB 输入，不占用摄像头。
 `CONV_CL` 单独模式使用合成 RGBA 输入，不占用摄像头。
 `VPSS` 单独模式使用实时摄像头输入，并在同屏展示 VPSS 多输出能力：全幅缩放、动态裁剪后缩放、水平/垂直翻转切换、中心缩放变化。
-`CLAHE` 单独模式使用合成 NV12 输入，不占用摄像头。
+`CLAHE` 单独模式使用实时摄像头输入，走 `VI -> VPSS` 分成两路：`VPSS(output0) -> VMIX(input0)` 显示原始输入，`VPSS(output1) -> CLAHE -> VMIX(input1) -> OSD -> VO` 显示增强输出，并动态展示 clip limit 和帧计数。
 `RETINEX` 单独模式使用摄像头 video 输入，主画面左右对比原始 video 和 Retinex 输出。
 `EDOF_CL` 单独模式使用 `assets/loop/edof/mfi_whu` 的 `a.jpg/b.jpg/fused.png` 样张做三栏对比，每 3 秒切换一组。
 `DUALVIEW` 单独模式参考 `/userdata/rktohi/demo/dualview` 示例生成两路 RGB888 输入：input0 纯红、input1 纯蓝，主画面同时显示 input0、input1、side-by-side 输出和 line-by-line 输出，不占用摄像头。
