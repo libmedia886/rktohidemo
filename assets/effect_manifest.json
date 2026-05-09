@@ -31,7 +31,7 @@
     {"name": "BLEND_PYR", "source": "camera + loop mask", "effect": "soft wipe fusion"},
     {"name": "EDOF_CL", "source": "loop image pair", "effect": "near/far focus fusion"},
     {"name": "EXPOSURE_FUSION_CL", "source": "synthetic dark/bright pair", "effect": "HDR-style exposure fusion"},
-    {"name": "DUALVIEW", "source": "camera + delayed/loop source", "effect": "side-by-side and interlace modes"},
+    {"name": "DUALVIEW", "source": "assets/loop/avm_inputs/src_1.jpg + src_2.jpg", "effect": "side-by-side and line-by-line dual-output comparison"},
     {"name": "STEREO_3D", "source": "loop image pair", "effect": "side-by-side / line-by-line 3D"},
     {"name": "VMIX", "source": "all tile streams", "effect": "Vulkan compositor path"},
     {"name": "VMIX_RGA", "source": "all tile streams", "effect": "RGA compositor path"},

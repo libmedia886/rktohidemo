@@ -40,6 +40,10 @@
 #define STEREO_OUTPUT_POOL 12
 #define VPSS_INPUT_POOL 13
 #define VPSS_OUTPUT_POOL 14
+#define DUALVIEW_INPUT0_POOL 10
+#define DUALVIEW_INPUT1_POOL 11
+#define DUALVIEW_SBS_OUTPUT_POOL 12
+#define DUALVIEW_LBL_OUTPUT_POOL 13
 #define LIVE_OSD_GRP 60
 #define LIVE_RESIZE_GRP 61
 #define LIVE_STEREO_GRP 62
@@ -51,6 +55,8 @@
 #define LIVE_CONV_CL_GRP 68
 #define LIVE_CLAHE_GRP 69
 #define LIVE_EDOF_GRP 70
+#define LIVE_DUALVIEW_SBS_GRP 71
+#define LIVE_DUALVIEW_LBL_GRP 72
 
 #define CAM_W 640
 #define CAM_H 640
@@ -98,6 +104,14 @@ typedef struct {
     image_asset_t fused;
     int loaded;
 } edof_pair_t;
+
+typedef struct {
+    const char *left_path;
+    const char *right_path;
+    image_asset_t left;
+    image_asset_t right;
+    int loaded;
+} dualview_pair_t;
 
 typedef struct {
     int license_ok;
@@ -178,6 +192,14 @@ static edof_pair_t g_edof_pairs[] = {
     {"assets/loop/edof/mfi_whu/0041/a.jpg",
      "assets/loop/edof/mfi_whu/0041/b.jpg",
      "assets/loop/edof/mfi_whu/0041/fused.png", {0}, {0}, {0}, 0},
+};
+
+static dualview_pair_t g_dualview_pair = {
+    "assets/loop/avm_inputs/src_1.jpg",
+    "assets/loop/avm_inputs/src_2.jpg",
+    {0},
+    {0},
+    0,
 };
 
 static void on_signal(int sig) {
@@ -664,6 +686,34 @@ static void image_to_nv12_frame(const image_asset_t *img, uint8_t *dst) {
     }
 }
 
+static void image_to_rgb_frame(const image_asset_t *img, uint8_t *dst) {
+    if (!img || !img->rgb || !dst || img->width <= 0 || img->height <= 0) return;
+
+    memset(dst, 0, RGB_FRAME_SIZE);
+
+    int out_w = CAM_W;
+    int out_h = (int)((int64_t)img->height * CAM_W / img->width);
+    if (out_h > CAM_H) {
+        out_h = CAM_H;
+        out_w = (int)((int64_t)img->width * CAM_H / img->height);
+    }
+    int ox = (CAM_W - out_w) / 2;
+    int oy = (CAM_H - out_h) / 2;
+
+    for (int y = 0; y < out_h; ++y) {
+        int sy = y * img->height / out_h;
+        uint8_t *drow = dst + ((size_t)(oy + y) * CAM_W + ox) * 3;
+        for (int x = 0; x < out_w; ++x) {
+            int sx = x * img->width / out_w;
+            const uint8_t *src = img->rgb + ((size_t)sy * img->width + sx) * 3;
+            uint8_t *px = drow + x * 3;
+            px[0] = src[0];
+            px[1] = src[1];
+            px[2] = src[2];
+        }
+    }
+}
+
 static void draw_edof_comparison(uint8_t *dst, int stride, int x, int y, int w, int h,
                                  const uint8_t *left, const uint8_t *right, const uint8_t *out) {
     int gap = 10;
@@ -684,6 +734,35 @@ static void draw_edof_comparison(uint8_t *dst, int stride, int x, int y, int w, 
         } else {
             draw_text(dst, stride, cx + 12, y + h / 2 - 10, "WAIT", 1, 255, 190, 100);
         }
+    }
+}
+
+static void draw_dualview_comparison(uint8_t *dst, int stride, int x, int y, int w, int h,
+                                     const uint8_t *in0, const uint8_t *in1,
+                                     const uint8_t *sbs, const uint8_t *lbl) {
+    int gap = 10;
+    int label_h = 22;
+    int col_w = (w - gap) / 2;
+    int row_h = (h - gap) / 2;
+    const char *labels[4] = {"INPUT 0", "INPUT 1", "SIDE BY SIDE", "LINE BY LINE"};
+    const uint8_t *frames[4] = {in0, in1, sbs, lbl};
+
+    for (int i = 0; i < 4; ++i) {
+        int cx = x + (i % 2) * (col_w + gap);
+        int cy = y + (i / 2) * (row_h + gap);
+        image_asset_t frame_img = {CAM_W, CAM_H, (uint8_t *)frames[i]};
+
+        fill_rect_nv12(dst, stride, cx, cy, col_w, row_h, 5, 10, 18);
+        stroke_rect_nv12(dst, stride, cx, cy, col_w, row_h, 1,
+                         i >= 2 ? 80 : 70, i >= 2 ? 255 : 140, i >= 2 ? 180 : 210);
+        if (frames[i]) {
+            draw_rgb_image_nv12(dst, stride, cx + 4, cy + 4, col_w - 8, row_h - label_h - 8,
+                                &frame_img);
+        } else {
+            draw_text(dst, stride, cx + 12, cy + row_h / 2 - 10, "WAIT", 1, 255, 190, 100);
+        }
+        fill_rect_nv12(dst, stride, cx, cy + row_h - label_h, col_w, label_h, 0, 0, 0);
+        draw_text(dst, stride, cx + 8, cy + row_h - label_h + 5, labels[i], 1, 180, 230, 255);
     }
 }
 
@@ -719,7 +798,9 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
                              const uint8_t *cap_live, const uint8_t *dcp_live,
                              const uint8_t *conv_live, const uint8_t *clahe_live,
                              const uint8_t *edof_in0, const uint8_t *edof_in1,
-                             const uint8_t *edof_out, const uint8_t *stereo_live) {
+                             const uint8_t *edof_out, const uint8_t *stereo_live,
+                             const uint8_t *dual_in0, const uint8_t *dual_in1,
+                             const uint8_t *dual_sbs, const uint8_t *dual_lbl) {
     uint8_t r0 = (uint8_t)((idx * 47 + frame * 2) % 180 + 40);
     uint8_t g0 = (uint8_t)((idx * 83 + frame * 3) % 180 + 40);
     uint8_t b0 = (uint8_t)((idx * 29 + frame * 5) % 180 + 40);
@@ -775,6 +856,10 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
     } else if (strcmp(g_tiles[idx].name, "EDOF_CL") == 0 && (edof_in0 || edof_in1 || edof_out)) {
         draw_edof_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38,
                              edof_in0, edof_in1, edof_out);
+    } else if (strcmp(g_tiles[idx].name, "DUALVIEW") == 0 &&
+               (dual_in0 || dual_in1 || dual_sbs || dual_lbl)) {
+        draw_dualview_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38,
+                                 dual_in0, dual_in1, dual_sbs, dual_lbl);
     } else if (strcmp(g_tiles[idx].name, "STEREO_3D") == 0 && stereo_live) {
         draw_camera_tile(dst, stride, x + 6, y + 30, w - 12, h - 38,
                          stereo_live, CAM_W, CAM_H, CAM_STRIDE);
@@ -816,7 +901,9 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
                               const uint8_t *cap_live, const uint8_t *dcp_live,
                               const uint8_t *conv_live, const uint8_t *clahe_live,
                               const uint8_t *edof_in0, const uint8_t *edof_in1,
-                              const uint8_t *edof_out, const uint8_t *stereo_live) {
+                              const uint8_t *edof_out, const uint8_t *stereo_live,
+                              const uint8_t *dual_in0, const uint8_t *dual_in1,
+                              const uint8_t *dual_sbs, const uint8_t *dual_lbl) {
     loop_asset_t *loop = find_loop_asset(g_tiles[idx].name);
     fill_rect_nv12(dst, stride, x, y, w, h, 7, 13, 24);
 
@@ -880,6 +967,13 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
         return;
     }
 
+    if (strcmp(g_tiles[idx].name, "DUALVIEW") == 0 &&
+        (dual_in0 || dual_in1 || dual_sbs || dual_lbl)) {
+        draw_dualview_comparison(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                                 dual_in0, dual_in1, dual_sbs, dual_lbl);
+        return;
+    }
+
     if (strcmp(g_tiles[idx].name, "STEREO_3D") == 0 && stereo_live) {
         draw_camera_tile(dst, stride, x + 12, y + 12, w - 24, h - 24,
                          stereo_live, CAM_W, CAM_H, CAM_STRIDE);
@@ -933,7 +1027,9 @@ static void draw_main_showcase(uint8_t *canvas, int stride, int frame,
                                const uint8_t *cap_live, const uint8_t *dcp_live,
                                const uint8_t *conv_live, const uint8_t *clahe_live,
                                const uint8_t *edof_in0, const uint8_t *edof_in1,
-                               const uint8_t *edof_out, const uint8_t *stereo_live) {
+                               const uint8_t *edof_out, const uint8_t *stereo_live,
+                               const uint8_t *dual_in0, const uint8_t *dual_in1,
+                               const uint8_t *dual_sbs, const uint8_t *dual_lbl) {
     const int x = 28;
     const int y = 116;
     const int w = 1024;
@@ -953,7 +1049,8 @@ static void draw_main_showcase(uint8_t *canvas, int stride, int frame,
         draw_tile_content(canvas, stride, x + 14, y + 14, w - 28, h - 70,
                           idx, frame, cam, osd_live, resize_live, vpss_live,
                           csc_rga_live, transform_live, cap_live, dcp_live, conv_live, clahe_live,
-                          edof_in0, edof_in1, edof_out, stereo_live);
+                          edof_in0, edof_in1, edof_out, stereo_live,
+                          dual_in0, dual_in1, dual_sbs, dual_lbl);
         fill_rect_nv12(canvas, stride, x + 14, y + h - 50, w - 28, 34, 0, 0, 0);
         draw_text(canvas, stride, x + 32, y + h - 42, "MAIN ROTATE", 2, 190, 230, 255);
         draw_text(canvas, stride, x + 268, y + h - 42, g_tiles[idx].name,
@@ -1765,6 +1862,97 @@ static int process_live_edof(const uint8_t *src0, const uint8_t *src1, uint8_t *
     return ret;
 }
 
+static int setup_live_dualview_one(int grp, int output_pool, int mode) {
+    MEDIA_DUALVIEW_ATTR attr = {0};
+    attr.input_width = CAM_W;
+    attr.input_height = CAM_H;
+    attr.input_stride = CAM_W * 3;
+    attr.output_width = CAM_W;
+    attr.output_height = CAM_H;
+    attr.output_stride = CAM_W * 3;
+    attr.mode = mode;
+    attr.format = MEDIA_FORMAT_RGB888;
+    attr.input_depth = 2;
+    attr.output_pool_id = output_pool;
+    attr.inputs[0].enabled = 1;
+    attr.inputs[1].enabled = 1;
+
+    if (mode == MEDIA_DUALVIEW_MODE_SIDE_BY_SIDE) {
+        attr.inputs[0].x = 0;
+        attr.inputs[0].y = 0;
+        attr.inputs[0].width = CAM_W / 2;
+        attr.inputs[0].height = CAM_H;
+        attr.inputs[1].x = CAM_W / 2;
+        attr.inputs[1].y = 0;
+        attr.inputs[1].width = CAM_W / 2;
+        attr.inputs[1].height = CAM_H;
+    }
+
+    if (MEDIA_DUALVIEW_CreateGrp(grp, &attr) != 0 ||
+        MEDIA_DUALVIEW_Start(grp) != 0) {
+        MEDIA_DUALVIEW_DestroyGrp(grp);
+        return -1;
+    }
+    return 0;
+}
+
+static int setup_live_dualview(void) {
+    if (MEDIA_POOL_Create(DUALVIEW_INPUT0_POOL, RGB_FRAME_SIZE, 2) != 0) return -1;
+    if (MEDIA_POOL_Create(DUALVIEW_INPUT1_POOL, RGB_FRAME_SIZE, 2) != 0) goto fail;
+    if (MEDIA_POOL_Create(DUALVIEW_SBS_OUTPUT_POOL, RGB_FRAME_SIZE, 2) != 0) goto fail;
+    if (MEDIA_POOL_Create(DUALVIEW_LBL_OUTPUT_POOL, RGB_FRAME_SIZE, 2) != 0) goto fail;
+
+    if (setup_live_dualview_one(LIVE_DUALVIEW_SBS_GRP, DUALVIEW_SBS_OUTPUT_POOL,
+                                MEDIA_DUALVIEW_MODE_SIDE_BY_SIDE) != 0) {
+        goto fail;
+    }
+    if (setup_live_dualview_one(LIVE_DUALVIEW_LBL_GRP, DUALVIEW_LBL_OUTPUT_POOL,
+                                MEDIA_DUALVIEW_MODE_LINE_BY_LINE) != 0) {
+        MEDIA_DUALVIEW_Stop(LIVE_DUALVIEW_SBS_GRP);
+        MEDIA_DUALVIEW_DestroyGrp(LIVE_DUALVIEW_SBS_GRP);
+        goto fail;
+    }
+    set_tile_status("DUALVIEW", TILE_LIVE);
+    return 0;
+
+fail:
+    MEDIA_POOL_Destroy(DUALVIEW_INPUT0_POOL);
+    MEDIA_POOL_Destroy(DUALVIEW_INPUT1_POOL);
+    MEDIA_POOL_Destroy(DUALVIEW_SBS_OUTPUT_POOL);
+    MEDIA_POOL_Destroy(DUALVIEW_LBL_OUTPUT_POOL);
+    return -1;
+}
+
+static void cleanup_live_dualview(int enabled) {
+    if (!enabled) return;
+    MEDIA_DUALVIEW_Stop(LIVE_DUALVIEW_LBL_GRP);
+    MEDIA_DUALVIEW_DestroyGrp(LIVE_DUALVIEW_LBL_GRP);
+    MEDIA_DUALVIEW_Stop(LIVE_DUALVIEW_SBS_GRP);
+    MEDIA_DUALVIEW_DestroyGrp(LIVE_DUALVIEW_SBS_GRP);
+    MEDIA_POOL_Destroy(DUALVIEW_INPUT0_POOL);
+    MEDIA_POOL_Destroy(DUALVIEW_INPUT1_POOL);
+    MEDIA_POOL_Destroy(DUALVIEW_SBS_OUTPUT_POOL);
+    MEDIA_POOL_Destroy(DUALVIEW_LBL_OUTPUT_POOL);
+}
+
+static int process_live_dualview_one(int grp, const uint8_t *src0, const uint8_t *src1, uint8_t *dst) {
+    MEDIA_BUFFER out = {-1, -1};
+    int ret = -1;
+    if (send_copied_frame("DUALVIEW", grp, "input0",
+                          DUALVIEW_INPUT0_POOL, src0, RGB_FRAME_SIZE, 1000) != 0) {
+        return -1;
+    }
+    if (send_copied_frame("DUALVIEW", grp, "input1",
+                          DUALVIEW_INPUT1_POOL, src1, RGB_FRAME_SIZE, 1000) != 0) {
+        return -1;
+    }
+    if (MEDIA_DUALVIEW_GetFrame(grp, &out, 1000) == 0) {
+        ret = copy_from_buffer(out, dst, RGB_FRAME_SIZE);
+        MEDIA_DUALVIEW_ReleaseFrame(grp, out);
+    }
+    return ret;
+}
+
 static int setup_live_stereo(void) {
     if (MEDIA_POOL_Create(STEREO_INPUT0_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
     if (MEDIA_POOL_Create(STEREO_INPUT1_POOL, CAM_FRAME_SIZE, 3) != 0) goto fail;
@@ -1923,6 +2111,33 @@ static void unload_edof_pairs(void) {
         memset(&pair->fused, 0, sizeof(pair->fused));
         pair->loaded = 0;
     }
+}
+
+static int load_dualview_pair(void) {
+    dualview_pair_t *pair = &g_dualview_pair;
+    pair->loaded = 0;
+    if (load_image_rgb(pair->left_path, &pair->left) == 0 &&
+        load_image_rgb(pair->right_path, &pair->right) == 0) {
+        pair->loaded = 1;
+        return 1;
+    }
+
+    fprintf(stderr, "warning: failed to load DUALVIEW pair %s %s\n",
+            pair->left_path, pair->right_path);
+    free(pair->left.rgb);
+    free(pair->right.rgb);
+    memset(&pair->left, 0, sizeof(pair->left));
+    memset(&pair->right, 0, sizeof(pair->right));
+    return 0;
+}
+
+static void unload_dualview_pair(void) {
+    dualview_pair_t *pair = &g_dualview_pair;
+    free(pair->left.rgb);
+    free(pair->right.rgb);
+    memset(&pair->left, 0, sizeof(pair->left));
+    memset(&pair->right, 0, sizeof(pair->right));
+    pair->loaded = 0;
 }
 
 static edof_pair_t *get_loaded_edof_pair(int idx) {
@@ -2146,7 +2361,9 @@ static void draw_dashboard(uint8_t *canvas, int stride, int frame, int rotate_ma
                            const uint8_t *cap_live, const uint8_t *dcp_live,
                            const uint8_t *conv_live, const uint8_t *clahe_live,
                            const uint8_t *edof_in0, const uint8_t *edof_in1,
-                           const uint8_t *edof_out, const uint8_t *stereo_live) {
+                           const uint8_t *edof_out, const uint8_t *stereo_live,
+                           const uint8_t *dual_in0, const uint8_t *dual_in1,
+                           const uint8_t *dual_sbs, const uint8_t *dual_lbl) {
     fill_rect_nv12(canvas, stride, 0, 0, SCREEN_W, SCREEN_H, 4, 9, 16);
     fill_rect_nv12(canvas, stride, 0, 0, SCREEN_W, 90, 10, 18, 34);
     draw_text(canvas, stride, 28, 24, "RKTOHI VISUAL ENGINE", 4, 160, 255, 220);
@@ -2154,7 +2371,8 @@ static void draw_dashboard(uint8_t *canvas, int stride, int frame, int rotate_ma
 
     draw_main_showcase(canvas, stride, frame, rotate_main, only_tile, cam, osd_live, resize_live,
                        vpss_live, csc_rga_live, transform_live, cap_live, dcp_live,
-                       conv_live, clahe_live, edof_in0, edof_in1, edof_out, stereo_live);
+                       conv_live, clahe_live, edof_in0, edof_in1, edof_out, stereo_live,
+                       dual_in0, dual_in1, dual_sbs, dual_lbl);
 
     int cols = 4;
     int tile_w = 250;
@@ -2169,7 +2387,8 @@ static void draw_dashboard(uint8_t *canvas, int stride, int frame, int rotate_ma
         draw_effect_tile(canvas, stride, cx, cy, tile_w, tile_h, tile_idx, frame,
                          g_tiles[tile_idx].active, osd_live, resize_live, vpss_live,
                          csc_rga_live, transform_live, cap_live, dcp_live,
-                         conv_live, clahe_live, edof_in0, edof_in1, edof_out, stereo_live);
+                         conv_live, clahe_live, edof_in0, edof_in1, edof_out, stereo_live,
+                         dual_in0, dual_in1, dual_sbs, dual_lbl);
     }
 
     fill_rect_nv12(canvas, stride, 28, 1432, 1024, 232, 7, 13, 24);
@@ -2264,6 +2483,8 @@ int main(int argc, char **argv) {
     int loaded_assets = solid_test ? 0 : load_loop_assets();
     int loaded_edof_pairs = (!solid_test && only_tile && strcasecmp(only_tile, "EDOF_CL") == 0) ?
         load_edof_pairs() : 0;
+    int loaded_dualview_pair = (!solid_test && only_tile && strcasecmp(only_tile, "DUALVIEW") == 0) ?
+        load_dualview_pair() : 0;
     collect_health(loaded_assets);
     if (heavy_probe && !solid_test) {
         probe_modules();
@@ -2321,6 +2542,14 @@ int main(int argc, char **argv) {
     } else if (!solid_test && only_tile && strcasecmp(only_tile, "EDOF_CL") == 0 && loaded_edof_pairs > 0) {
         set_tile_status("EDOF_CL", TILE_LOOP);
     }
+    int live_dualview_ok = 0;
+    if (!solid_test && only_tile && strcasecmp(only_tile, "DUALVIEW") == 0 &&
+        loaded_dualview_pair > 0 && setup_live_dualview() == 0) {
+        live_dualview_ok = 1;
+    } else if (!solid_test && only_tile && strcasecmp(only_tile, "DUALVIEW") == 0 &&
+               loaded_dualview_pair > 0) {
+        set_tile_status("DUALVIEW", TILE_LOOP);
+    }
     int live_stereo_ok = 0;
     if (!solid_test && only_tile && strcasecmp(only_tile, "STEREO_3D") == 0 &&
         setup_live_stereo() == 0) {
@@ -2330,6 +2559,7 @@ int main(int argc, char **argv) {
     if (MEDIA_POOL_Create(DISPLAY_POOL, display_size, 4) != 0) {
         fprintf(stderr, "display pool create failed\n");
         cleanup_live_stereo(live_stereo_ok);
+        cleanup_live_dualview(live_dualview_ok);
         cleanup_live_edof(live_edof_ok);
         cleanup_live_clahe(live_clahe_ok);
         cleanup_live_conv_cl(live_conv_ok);
@@ -2340,6 +2570,7 @@ int main(int argc, char **argv) {
         cleanup_live_vpss(live_vpss_ok);
         cleanup_live_resize(live_resize_ok);
         cleanup_live_osd(live_osd_ok);
+        unload_dualview_pair();
         unload_edof_pairs();
         unload_loop_assets();
         MEDIA_SYS_Exit();
@@ -2358,6 +2589,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "VO setup failed\n");
         MEDIA_POOL_Destroy(DISPLAY_POOL);
         cleanup_live_stereo(live_stereo_ok);
+        cleanup_live_dualview(live_dualview_ok);
         cleanup_live_edof(live_edof_ok);
         cleanup_live_clahe(live_clahe_ok);
         cleanup_live_conv_cl(live_conv_ok);
@@ -2368,6 +2600,7 @@ int main(int argc, char **argv) {
         cleanup_live_vpss(live_vpss_ok);
         cleanup_live_resize(live_resize_ok);
         cleanup_live_osd(live_osd_ok);
+        unload_dualview_pair();
         unload_edof_pairs();
         unload_loop_assets();
         MEDIA_SYS_Exit();
@@ -2414,6 +2647,7 @@ int main(int argc, char **argv) {
     int clahe_frames = 0;
     int edof_frames = 0;
     int edof_pair_index = -1;
+    int dualview_frames = 0;
     int stereo_frames = 0;
     uint8_t *last_cam = malloc(CAM_FRAME_SIZE);
     uint8_t *last_osd = malloc(CAM_FRAME_SIZE);
@@ -2428,6 +2662,10 @@ int main(int argc, char **argv) {
     uint8_t *last_edof_in0 = malloc(CAM_FRAME_SIZE);
     uint8_t *last_edof_in1 = malloc(CAM_FRAME_SIZE);
     uint8_t *last_edof = malloc(CAM_FRAME_SIZE);
+    uint8_t *last_dual_in0 = malloc(RGB_FRAME_SIZE);
+    uint8_t *last_dual_in1 = malloc(RGB_FRAME_SIZE);
+    uint8_t *last_dual_sbs = malloc(RGB_FRAME_SIZE);
+    uint8_t *last_dual_lbl = malloc(RGB_FRAME_SIZE);
     uint8_t *last_rgb_src = malloc(RGB_FRAME_SIZE);
     uint8_t *last_rgba_src = malloc(RGBA_FRAME_SIZE);
     uint8_t *last_stereo = malloc(CAM_FRAME_SIZE);
@@ -2444,6 +2682,10 @@ int main(int argc, char **argv) {
     if (last_edof_in0) memset(last_edof_in0, 0, CAM_FRAME_SIZE);
     if (last_edof_in1) memset(last_edof_in1, 0, CAM_FRAME_SIZE);
     if (last_edof) memset(last_edof, 0, CAM_FRAME_SIZE);
+    if (last_dual_in0) memset(last_dual_in0, 0, RGB_FRAME_SIZE);
+    if (last_dual_in1) memset(last_dual_in1, 0, RGB_FRAME_SIZE);
+    if (last_dual_sbs) memset(last_dual_sbs, 0, RGB_FRAME_SIZE);
+    if (last_dual_lbl) memset(last_dual_lbl, 0, RGB_FRAME_SIZE);
     if (last_rgb_src) memset(last_rgb_src, 0, RGB_FRAME_SIZE);
     if (last_rgba_src) memset(last_rgba_src, 0, RGBA_FRAME_SIZE);
     if (last_stereo) memset(last_stereo, 0, CAM_FRAME_SIZE);
@@ -2535,6 +2777,18 @@ int main(int argc, char **argv) {
                 }
             }
         }
+        if (loaded_dualview_pair > 0 && last_dual_in0 && last_dual_in1 &&
+            last_dual_sbs && last_dual_lbl && dualview_frames == 0) {
+            image_to_rgb_frame(&g_dualview_pair.left, last_dual_in0);
+            image_to_rgb_frame(&g_dualview_pair.right, last_dual_in1);
+            if (live_dualview_ok &&
+                process_live_dualview_one(LIVE_DUALVIEW_SBS_GRP, last_dual_in0,
+                                          last_dual_in1, last_dual_sbs) == 0 &&
+                process_live_dualview_one(LIVE_DUALVIEW_LBL_GRP, last_dual_in0,
+                                          last_dual_in1, last_dual_lbl) == 0) {
+                dualview_frames++;
+            }
+        }
 
         MEDIA_BUFFER dbuf = {-1, -1};
         if (MEDIA_POOL_GetBuffer(DISPLAY_POOL, &dbuf) != 0) {
@@ -2571,7 +2825,11 @@ int main(int argc, char **argv) {
                            last_edof_in0,
                            last_edof_in1,
                            edof_frames > 0 ? last_edof : NULL,
-                           stereo_frames > 0 ? last_stereo : NULL);
+                           stereo_frames > 0 ? last_stereo : NULL,
+                           loaded_dualview_pair > 0 ? last_dual_in0 : NULL,
+                           loaded_dualview_pair > 0 ? last_dual_in1 : NULL,
+                           dualview_frames > 0 ? last_dual_sbs : NULL,
+                           dualview_frames > 0 ? last_dual_lbl : NULL);
         }
         (void)MEDIA_POOL_EndCpuAccess(dbuf, DMA_BUF_SYNC_WRITE);
         munmap(addr, size);
@@ -2587,6 +2845,7 @@ int main(int argc, char **argv) {
     MEDIA_VO_Stop(0, 0);
     MEDIA_VO_DestroyChn(0, 0);
     cleanup_live_stereo(live_stereo_ok);
+    cleanup_live_dualview(live_dualview_ok);
     cleanup_live_edof(live_edof_ok);
     cleanup_live_clahe(live_clahe_ok);
     cleanup_live_conv_cl(live_conv_ok);
@@ -2602,11 +2861,16 @@ int main(int argc, char **argv) {
     MEDIA_POOL_Destroy(WORK_POOL_NV12);
     MEDIA_POOL_Destroy(WORK_POOL_RGB);
     MEDIA_POOL_Destroy(WORK_POOL_OUT);
+    unload_dualview_pair();
     unload_edof_pairs();
     unload_loop_assets();
     free(last_stereo);
     free(last_rgba_src);
     free(last_rgb_src);
+    free(last_dual_lbl);
+    free(last_dual_sbs);
+    free(last_dual_in1);
+    free(last_dual_in0);
     free(last_edof);
     free(last_edof_in1);
     free(last_edof_in0);
