@@ -40,6 +40,7 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --only OSD
 /userdata/alldemo/scripts/run_alldemo.sh --only RESIZE_RGA
 /userdata/alldemo/scripts/run_alldemo.sh --only CSC_RGA
+/userdata/alldemo/scripts/run_alldemo.sh --only CSC_CL
 /userdata/alldemo/scripts/run_alldemo.sh --only TRANSFORM
 /userdata/alldemo/scripts/run_alldemo.sh --only CAP_DEHAZE
 /userdata/alldemo/scripts/run_alldemo.sh --only DCP_FAST_DEHAZE
@@ -59,6 +60,7 @@ cmake --build build -j
 `RGA` 单独模式使用实时摄像头输入，走 `VI -> RGA -> VMIX -> OSD -> VO` bind 链路，页面会动态轮播 COPY、移动 CROP+SCALE、水平/垂直翻转和 90/180/270 度旋转，并显示 RGA 数据流和当前硬件操作。
 `RESIZE_RGA` 单独模式使用实时摄像头输入，走 `VI -> RESIZE_RGA -> VMIX -> OSD -> VO` bind 链路，页面动态移动裁剪框并改变 crop 尺寸，展示裁剪区域被硬件缩放放大的效果。
 `CSC_RGA` 单独模式使用实时摄像头输入，走 `VI -> CSC_RGA(NV12->ARGB8888) -> CSC_RGA(ARGB8888->NV12) -> VMIX -> OSD -> VO` bind 链路，页面显示颜色格式转换流程、动态通道条和两级 CSC 帧计数。
+`CSC_CL` 单独模式使用实时摄像头输入，走 `VI -> CSC_CL(NV12->ARGB8888) -> CSC_CL(ARGB8888->NV12) -> VMIX -> OSD -> VO` bind 链路，页面用大号数据流展示 OpenCL/GPU 颜色矩阵转换，并显示 kernel/queue 耗时和两级 CSC_CL 帧计数。
 `CAP_DEHAZE` 和 `DCP_FAST_DEHAZE` 单独模式使用合成 RGB 输入，不占用摄像头。
 `CONV_CL` 单独模式使用合成 RGBA 输入，不占用摄像头。
 `VPSS` 单独模式使用实时摄像头输入，并在同屏展示 VPSS 多输出能力：全幅缩放、动态裁剪后缩放、水平/垂直翻转切换、中心缩放变化。

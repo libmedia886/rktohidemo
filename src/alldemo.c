@@ -2444,6 +2444,112 @@ static int update_csc_rga_bind_flow_overlay(uint64_t front_count, uint64_t back_
     return 0;
 }
 
+static int update_csc_cl_bind_flow_overlay(uint64_t front_count, uint64_t back_count,
+                                           double kernel_ms, double queue_ms, int frame) {
+    static uint8_t masks[28][1024 * 96];
+    char count_line[128];
+    char bind_line1[180];
+    char bind_line2[180];
+    char kernel_text[64];
+    char queue_text[64];
+
+    if (kernel_ms >= 0.0) {
+        snprintf(kernel_text, sizeof(kernel_text), "KERNEL %.2f ms", kernel_ms);
+    } else {
+        snprintf(kernel_text, sizeof(kernel_text), "KERNEL N/A");
+    }
+    if (queue_ms >= 0.0) {
+        snprintf(queue_text, sizeof(queue_text), "QUEUE %.2f ms", queue_ms);
+    } else {
+        snprintf(queue_text, sizeof(queue_text), "QUEUE N/A");
+    }
+    snprintf(count_line, sizeof(count_line), "FRAMES  CL0=%llu  CL1=%llu",
+             (unsigned long long)front_count, (unsigned long long)back_count);
+    snprintf(bind_line1, sizeof(bind_line1), "VI0.%s -> CSC_CL%d.%s -> CSC_CL%d.%s",
+             g_bind_vi_src_port ? g_bind_vi_src_port : "output0",
+             LIVE_CSC_CL_GRP,
+             g_bind_csc_cl_front_in_port ? g_bind_csc_cl_front_in_port : "input",
+             LIVE_CSC_CL_BACK_GRP,
+             g_bind_csc_cl_back_in_port ? g_bind_csc_cl_back_in_port : "input");
+    snprintf(bind_line2, sizeof(bind_line2), "CSC_CL%d.%s -> VMIX%d.%s  |  OSD%d.%s -> VO0.%s",
+             LIVE_CSC_CL_BACK_GRP,
+             g_bind_csc_cl_back_src_port ? g_bind_csc_cl_back_src_port : "output0",
+             DISPLAY_VMIX_GRP,
+             g_bind_vmix_in_port ? g_bind_vmix_in_port : "input0",
+             DISPLAY_OSD_GRP,
+             g_bind_osd_src_port ? g_bind_osd_src_port : "output0",
+             g_bind_vo_in_port ? g_bind_vo_in_port : "input0");
+
+    if (update_osd_rect_region(4, 34, 968, 1012, 664, 5, 10, 18, 226) != 0) return -1;
+    if (update_osd_utf8_text_region(5, 66, 996, 36, 160, 255, 220,
+                                    "CSC_CL：GPU/OpenCL颜色矩阵转换",
+                                    masks[0], sizeof(masks[0]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(6, 68, 1052, 25, 190, 230, 255,
+                                    "数据流：摄像头NV12进入OpenCL，先转ARGB，再转回NV12送显示。",
+                                    masks[1], sizeof(masks[1]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(7, 68, 1096, 24, 255, 230, 120,
+                                    "为什么这样做：颜色转换是逐像素矩阵计算，GPU并行处理可减少CPU压力。",
+                                    masks[2], sizeof(masks[2]), 1024, 96) != 0) return -1;
+
+    const int card_y = 1172;
+    const int card_w = 224;
+    const int card_h = 168;
+    const int xs[4] = {50, 300, 550, 800};
+    const char *titles[4] = {"输入", "OpenCL 0", "中间格式", "OpenCL 1"};
+    const char *values[4] = {"NV12", "GPU", "ARGB", "NV12"};
+    const char *subs[4] = {"摄像头Y/UV", "BT.601矩阵", "8888四通道", "显示Y/UV"};
+    for (int i = 0; i < 4; ++i) {
+        int r = (i == 1 || i == 3) ? 16 : 12;
+        int g = (i == 1 || i == 3) ? 48 : 28;
+        int b = (i == 1 || i == 3) ? 76 : 46;
+        if (update_osd_rect_region(8 + i, xs[i], card_y, card_w, card_h, r, g, b, 240) != 0) return -1;
+        if (update_osd_utf8_text_region(12 + i, xs[i] + 20, card_y + 18, 24, 160, 255, 220,
+                                        titles[i], masks[3 + i], sizeof(masks[3 + i]), 1024, 96) != 0) return -1;
+        if (update_osd_text_region(16 + i, xs[i] + 20, card_y + 64, 3, 255, 230, 120,
+                                   values[i], masks[7 + i], sizeof(masks[7 + i])) != 0) return -1;
+        if (update_osd_utf8_text_region(20 + i, xs[i] + 20, card_y + 124, 19, 190, 230, 255,
+                                        subs[i], masks[11 + i], sizeof(masks[11 + i]), 1024, 96) != 0) return -1;
+    }
+
+    if (update_osd_utf8_text_region(24, 260, card_y + 58, 40, 255, 230, 120,
+                                    "→", masks[15], sizeof(masks[15]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(25, 510, card_y + 58, 40, 255, 230, 120,
+                                    "→", masks[16], sizeof(masks[16]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(26, 760, card_y + 58, 40, 255, 230, 120,
+                                    "→", masks[17], sizeof(masks[17]), 1024, 96) != 0) return -1;
+
+    int pulse = 56 + ((frame * 7) % 84);
+    if (update_osd_rect_region(27, 318, card_y + 46, pulse, 14, 120, 220, 255, 210) != 0) return -1;
+    if (update_osd_rect_region(28, 818, card_y + 46, pulse, 14, 120, 220, 255, 210) != 0) return -1;
+
+    int kernel_w = kernel_ms >= 0.0 ? (int)(kernel_ms * 38.0) : 80;
+    int queue_w = queue_ms >= 0.0 ? (int)(queue_ms * 26.0) : 80;
+    if (kernel_w < 80) kernel_w = 80;
+    if (kernel_w > 440) kernel_w = 440;
+    if (queue_w < 80) queue_w = 80;
+    if (queue_w > 440) queue_w = 440;
+    if (update_osd_rect_region(29, 72, 1374, kernel_w, 34, 120, 220, 255, 228) != 0) return -1;
+    if (update_osd_rect_region(30, 72, 1428, queue_w, 34, 255, 210, 90, 228) != 0) return -1;
+    if (update_osd_text_region(31, 540, 1362, 2, 170, 255, 220,
+                               kernel_text, masks[18], sizeof(masks[18])) != 0) return -1;
+    if (update_osd_text_region(37, 540, 1416, 2, 255, 230, 120,
+                               queue_text, masks[23], sizeof(masks[23])) != 0) return -1;
+    if (update_osd_utf8_text_region(32, 72, 1478, 23, 255, 230, 120,
+                                    "BT.601矩阵：把YUV颜色分量按矩阵换算成RGB，再换回显示需要的NV12。",
+                                    masks[19], sizeof(masks[19]), 1024, 96) != 0) return -1;
+    if (update_osd_text_region(33, 72, 1526, 2, 170, 255, 220,
+                               count_line, masks[20], sizeof(masks[20])) != 0) return -1;
+    if (update_osd_text_region(34, 72, 1570, 1, 170, 205, 235,
+                               bind_line1, masks[21], sizeof(masks[21])) != 0) return -1;
+    if (update_osd_text_region(35, 72, 1600, 1, 170, 205, 235,
+                               bind_line2, masks[22], sizeof(masks[22])) != 0) return -1;
+
+    int packet_x = 54 + ((frame * 18) % 910);
+    if (update_osd_rect_region(36, packet_x, 1350, 52, 12, 255, 255, 255, 190) != 0) return -1;
+
+    return 0;
+}
+
 static int setup_display_vmix_osd(int dstride, size_t display_size, int input_count) {
     if (MEDIA_POOL_Create(DISPLAY_VMIX_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
     if (MEDIA_POOL_Create(DISPLAY_VMIX_OUTPUT_POOL, display_size, 4) != 0) goto fail_input;
@@ -6147,6 +6253,7 @@ int main(int argc, char **argv) {
         }
         csc_cl_bind_display_ok = 1;
         (void)update_display_osd_text("CSC_CL  DOUBLE CL CSC", "NV12 TO ARGB8888 TO NV12");
+        (void)update_csc_cl_bind_flow_overlay(0, 0, -1.0, -1.0, 0);
     }
 
     printf("alldemo running on DSI 1080x1920%s%s%s%s. Ctrl+C to stop.\n",
@@ -6773,6 +6880,8 @@ int main(int argc, char **argv) {
                              g_perf.cpu_percent);
                 }
                 (void)update_display_osd_text("CSC_CL  VI CSC_CL CSC_CL VMIX OSD VO", perf);
+                (void)update_csc_cl_bind_flow_overlay(csc_front_count, csc_back_count,
+                                                       kernel_ms, queue_ms, frame);
                 if ((frame % FPS) == 0) {
                     char gpu_text[24];
                     char cl_text[48];
