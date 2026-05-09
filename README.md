@@ -57,6 +57,7 @@ cmake --build build -j
 `TRANSFORM` 单独模式使用合成 NV12 输入和本地 LUT，不占用摄像头。
 `VO` 单独模式不占用摄像头，页面直接展示 MIPI/DSI 输出、1080x1920、NV12 plane、动态扫描条和彩条。
 `VO` 单独模式会动态调用 `MEDIA_VO_FreezeMain`、`MEDIA_VO_FreezePlane` 和 `MEDIA_VO_HidePlane`，展示正常刷新、主显示冻结、plane 冻结、短暂隐藏再恢复。隐藏只持续约 1 秒，退出时会强制恢复显示。
+`OSD` 单独模式使用实时摄像头输入，走 `VI -> OSD -> VMIX -> OSD -> VO` bind 链路，页面展示动态 region 坐标、zorder 层级、alpha 透明度、enabled 告警开关和两级 OSD 帧计数。
 `RGA` 单独模式使用实时摄像头输入，走 `VI -> RGA -> VMIX -> OSD -> VO` bind 链路，页面会动态轮播 COPY、移动 CROP+SCALE、水平/垂直翻转和 90/180/270 度旋转，并显示 RGA 数据流和当前硬件操作。
 `RESIZE_RGA` 单独模式使用实时摄像头输入，走 `VI -> RESIZE_RGA -> VMIX -> OSD -> VO` bind 链路，页面动态移动裁剪框并改变 crop 尺寸，展示裁剪区域被硬件缩放放大的效果。
 `CSC_RGA` 单独模式使用实时摄像头输入，走 `VI -> CSC_RGA(NV12->ARGB8888) -> CSC_RGA(ARGB8888->NV12) -> VMIX -> OSD -> VO` bind 链路，页面显示颜色格式转换流程、动态通道条和两级 CSC 帧计数。

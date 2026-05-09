@@ -3571,23 +3571,48 @@ static void cleanup_live_osd(int enabled) {
     MEDIA_POOL_Destroy(OSD_OUTPUT_POOL);
 }
 
+typedef struct {
+    int box_x;
+    int box_y;
+    int box_w;
+    int box_h;
+    int bar_w;
+    int scan_x;
+    int alpha;
+    int alert_enabled;
+} OSD_DEMO_PARAMS;
+
+static OSD_DEMO_PARAMS osd_demo_params_for_frame(int frame) {
+    OSD_DEMO_PARAMS p = {0};
+    p.box_w = 250;
+    p.box_h = 170;
+    p.box_x = 48 + ((frame * 3) % (CAM_W - p.box_w - 96));
+    p.box_y = 58 + ((frame * 2) % (CAM_H - p.box_h - 120));
+    p.bar_w = 160 + ((frame * 5) % 300);
+    p.scan_x = (frame * 9) % (CAM_W - 24);
+    p.alpha = 120 + ((frame * 5) % 100);
+    p.alert_enabled = ((frame / 18) % 2) == 0;
+    return p;
+}
+
 static int set_live_osd_rect_region(int region_id, int x, int y, int w, int h,
-                                    int zorder, uint8_t r, uint8_t g, uint8_t b) {
+                                    int zorder, uint8_t r, uint8_t g, uint8_t b,
+                                    uint8_t alpha, int enabled) {
     MEDIA_OSD_REGION_ATTR attr = {0};
     MEDIA_OSD_RECT_DESC rect = {0};
-    attr.enabled = 1;
+    attr.enabled = enabled;
     attr.x = x;
     attr.y = y;
     attr.width = w;
     attr.height = h;
     attr.zorder = zorder;
-    attr.global_alpha = 255;
+    attr.global_alpha = alpha;
     rect.filled = 1;
     rect.line_width = 1;
     rect.color.r = r;
     rect.color.g = g;
     rect.color.b = b;
-    rect.color.a = 255;
+    rect.color.a = alpha;
     if (MEDIA_OSD_UpdateRegion(LIVE_OSD_GRP, region_id, &attr) != 0 ||
         MEDIA_OSD_SetRegionRect(LIVE_OSD_GRP, region_id, &rect) != 0) {
         return -1;
@@ -3596,22 +3621,113 @@ static int set_live_osd_rect_region(int region_id, int x, int y, int w, int h,
 }
 
 static int update_live_osd_bind_regions(int frame) {
-    int box_w = 250;
-    int box_h = 170;
-    int x = 48 + ((frame * 3) % (CAM_W - box_w - 96));
-    int y = 58 + ((frame * 2) % (CAM_H - box_h - 120));
+    OSD_DEMO_PARAMS p = osd_demo_params_for_frame(frame);
     int t = 7;
-    int bar_w = 160 + ((frame * 5) % 300);
-    int scan_x = (frame * 9) % (CAM_W - 24);
 
-    if (set_live_osd_rect_region(0, x, y, box_w, t, 0, 0, 255, 190) != 0 ||
-        set_live_osd_rect_region(1, x, y + box_h - t, box_w, t, 0, 0, 255, 190) != 0 ||
-        set_live_osd_rect_region(2, x, y, t, box_h, 0, 0, 255, 190) != 0 ||
-        set_live_osd_rect_region(3, x + box_w - t, y, t, box_h, 0, 0, 255, 190) != 0 ||
-        set_live_osd_rect_region(4, 42, 548, bar_w, 34, 1, 255, 220, 70) != 0 ||
-        set_live_osd_rect_region(5, scan_x, 42, 24, CAM_H - 84, 2, 255, 80, 80) != 0) {
+    if (set_live_osd_rect_region(0, p.box_x, p.box_y, p.box_w, t, 0, 0, 255, 190, 255, 1) != 0 ||
+        set_live_osd_rect_region(1, p.box_x, p.box_y + p.box_h - t, p.box_w, t, 0, 0, 255, 190, 255, 1) != 0 ||
+        set_live_osd_rect_region(2, p.box_x, p.box_y, t, p.box_h, 0, 0, 255, 190, 255, 1) != 0 ||
+        set_live_osd_rect_region(3, p.box_x + p.box_w - t, p.box_y, t, p.box_h, 0, 0, 255, 190, 255, 1) != 0 ||
+        set_live_osd_rect_region(4, 42, 548, p.bar_w, 34, 1, 255, 220, 70, (uint8_t)p.alpha, 1) != 0 ||
+        set_live_osd_rect_region(5, p.scan_x, 42, 24, CAM_H - 84, 2, 255, 80, 80, 210, 1) != 0 ||
+        set_live_osd_rect_region(6, CAM_W - 180, 48, 132, 54, 3, 255, 60, 90, 215, p.alert_enabled) != 0 ||
+        set_live_osd_rect_region(7, 36, 532, 500, 64, 0, 8, 18, 30, 150, 1) != 0) {
         return -1;
     }
+    return 0;
+}
+
+static int update_osd_bind_flow_overlay(uint64_t osd_count, uint64_t display_osd_count,
+                                        OSD_DEMO_PARAMS p, int frame) {
+    static uint8_t masks[30][1024 * 96];
+    char region_line[160];
+    char count_line[128];
+    char bind_line1[180];
+    char bind_line2[180];
+
+    snprintf(region_line, sizeof(region_line), "BOX X=%d Y=%d  BAR=%d  ALPHA=%d  ALERT=%s",
+             p.box_x, p.box_y, p.bar_w, p.alpha, p.alert_enabled ? "ON" : "OFF");
+    snprintf(count_line, sizeof(count_line), "FRAMES  LIVE_OSD=%llu  PAGE_OSD=%llu",
+             (unsigned long long)osd_count, (unsigned long long)display_osd_count);
+    snprintf(bind_line1, sizeof(bind_line1), "VI0.%s -> OSD%d.%s  |  OSD%d.%s -> VMIX%d.%s",
+             g_bind_vi_src_port ? g_bind_vi_src_port : "output0",
+             LIVE_OSD_GRP,
+             g_bind_live_osd_in_port ? g_bind_live_osd_in_port : "input",
+             LIVE_OSD_GRP,
+             g_bind_live_osd_src_port ? g_bind_live_osd_src_port : "output0",
+             DISPLAY_VMIX_GRP,
+             g_bind_vmix_in_port ? g_bind_vmix_in_port : "input0");
+    snprintf(bind_line2, sizeof(bind_line2), "VMIX%d.%s -> OSD%d.%s  |  OSD%d.%s -> VO0.%s",
+             DISPLAY_VMIX_GRP,
+             g_bind_vmix_src_port ? g_bind_vmix_src_port : "output0",
+             DISPLAY_OSD_GRP,
+             g_bind_osd_in_port ? g_bind_osd_in_port : "input",
+             DISPLAY_OSD_GRP,
+             g_bind_osd_src_port ? g_bind_osd_src_port : "output0",
+             g_bind_vo_in_port ? g_bind_vo_in_port : "input0");
+
+    if (update_osd_rect_region(4, 34, 968, 1012, 666, 5, 10, 18, 226) != 0) return -1;
+    if (update_osd_utf8_text_region(5, 66, 996, 36, 160, 255, 220,
+                                    "OSD：视频叠加层和动态Region",
+                                    masks[0], sizeof(masks[0]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(6, 68, 1052, 25, 190, 230, 255,
+                                    "数据流：VI原始视频进入OSD，叠加框、状态条和告警后再上屏。",
+                                    masks[1], sizeof(masks[1]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(7, 68, 1096, 24, 255, 230, 120,
+                                    "为什么这样做：OSD只更新叠加区域，不需要CPU逐像素重画整帧视频。",
+                                    masks[2], sizeof(masks[2]), 1024, 96) != 0) return -1;
+
+    const int card_y = 1172;
+    const int card_w = 168;
+    const int card_h = 156;
+    const int xs[5] = {52, 248, 444, 640, 836};
+    const char *titles[5] = {"VI", "OSD", "VMIX", "页面OSD", "VO"};
+    const char *values[5] = {"原始帧", "叠加层", "排版", "说明层", "显示"};
+    for (int i = 0; i < 5; ++i) {
+        int highlight = (i == 1 || i == 3);
+        if (update_osd_rect_region(8 + i, xs[i], card_y, card_w, card_h,
+                                   highlight ? 16 : 12, highlight ? 46 : 28, highlight ? 72 : 46, 240) != 0) return -1;
+        if (update_osd_utf8_text_region(13 + i, xs[i] + 18, card_y + 16, 23, 160, 255, 220,
+                                        titles[i], masks[3 + i], sizeof(masks[3 + i]), 1024, 96) != 0) return -1;
+        if (update_osd_utf8_text_region(18 + i, xs[i] + 18, card_y + 62, 22, 255, 230, 120,
+                                        values[i], masks[8 + i], sizeof(masks[8 + i]), 1024, 96) != 0) return -1;
+    }
+
+    if (update_osd_utf8_text_region(23, 214, card_y + 54, 34, 255, 230, 120,
+                                    "→", masks[13], sizeof(masks[13]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(24, 410, card_y + 54, 34, 255, 230, 120,
+                                    "→", masks[14], sizeof(masks[14]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(25, 606, card_y + 54, 34, 255, 230, 120,
+                                    "→", masks[15], sizeof(masks[15]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(26, 802, card_y + 54, 34, 255, 230, 120,
+                                    "→", masks[16], sizeof(masks[16]), 1024, 96) != 0) return -1;
+
+    int packet_x = 58 + ((frame * 18) % 890);
+    if (update_osd_rect_region(27, packet_x, 1350, 58, 14, 255, 255, 255, 190) != 0) return -1;
+
+    if (update_osd_rect_region(28, 74, 1382, 240, 34, 0, 255, 190, 220) != 0) return -1;
+    if (update_osd_rect_region(29, 74, 1436, p.alpha * 2, 34, 255, 220, 70, (uint8_t)p.alpha) != 0) return -1;
+    if (update_osd_rect_region(30, 74, 1490, 180, 34, 255, 80, 80, p.alert_enabled ? 220 : 70) != 0) return -1;
+
+    if (update_osd_utf8_text_region(31, 342, 1372, 22, 160, 255, 220,
+                                    "REGION0 目标框  z=0  坐标动态更新",
+                                    masks[17], sizeof(masks[17]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(32, 342, 1426, 22, 255, 230, 120,
+                                    "REGION4 状态条  z=1  alpha透明度变化",
+                                    masks[18], sizeof(masks[18]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(33, 342, 1480, 22, 255, 150, 160,
+                                    "REGION6 告警块  z=3  enabled开关闪烁",
+                                    masks[19], sizeof(masks[19]), 1024, 96) != 0) return -1;
+
+    if (update_osd_text_region(34, 72, 1530, 1, 170, 255, 220,
+                               region_line, masks[20], sizeof(masks[20])) != 0) return -1;
+    if (update_osd_text_region(35, 72, 1562, 1, 170, 255, 220,
+                               count_line, masks[21], sizeof(masks[21])) != 0) return -1;
+    if (update_osd_text_region(36, 72, 1594, 1, 170, 205, 235,
+                               bind_line1, masks[22], sizeof(masks[22])) != 0) return -1;
+    if (update_osd_text_region(37, 72, 1624, 1, 170, 205, 235,
+                               bind_line2, masks[23], sizeof(masks[23])) != 0) return -1;
+
     return 0;
 }
 
@@ -6042,6 +6158,7 @@ int main(int argc, char **argv) {
         }
         osd_bind_display_ok = 1;
         (void)update_display_osd_text("OSD  VI OSD VMIX OSD VO", "REGIONS  DYNAMIC  BIND");
+        (void)update_osd_bind_flow_overlay(0, 0, osd_demo_params_for_frame(0), 0);
     }
     if (use_clahe_bind_display) {
         if (!camera_ok || !live_clahe_bind_ok || !display_vmix_osd_ok ||
@@ -6530,6 +6647,8 @@ int main(int argc, char **argv) {
                              g_perf.cpu_percent);
                 }
                 (void)update_display_osd_text("OSD  VI OSD VMIX OSD VO", perf);
+                (void)update_osd_bind_flow_overlay(osd_count, display_osd_count,
+                                                   osd_demo_params_for_frame(frame), frame);
                 if ((frame % FPS) == 0) {
                     char gpu_text[24];
                     char rga_text[24];
