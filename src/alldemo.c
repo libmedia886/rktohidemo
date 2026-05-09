@@ -77,6 +77,8 @@
 #define CAM_W 640
 #define CAM_H 640
 #define CAM_STRIDE 640
+#define VPSS_TILE_W 480
+#define VPSS_TILE_H 480
 #define PANO_INPUT_COUNT 6
 #define PANO_DOMAIN_W 8378
 #define PANO_DOMAIN_H 4189
@@ -1088,7 +1090,7 @@ static void draw_vpss_showcase_labels(uint8_t *dst, int stride, int x, int y, in
     int label_h = 24;
     int col_w = (w - gap) / 2;
     int row_h = (h - gap) / 2;
-    const char *labels[4] = {"FULL", "CROP+SCALE", "FLIP H", "ROTATE 90"};
+    const char *labels[4] = {"FULL SCALE", "MOVING CROP", "FLIP H/V", "ZOOM CROP"};
 
     for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
         int cx = x + (i % 2) * (col_w + gap);
@@ -2017,6 +2019,118 @@ static int update_vi_bind_flow_overlay(void) {
     return 0;
 }
 
+static int update_vpss_bind_flow_overlay(void) {
+    static uint8_t masks[24][1024 * 96];
+    const int box_y = 1332;
+    const int box_w = 166;
+    const int box_h = 88;
+    const int box_gap = 14;
+    const int box_x0 = 90;
+    char line1[160];
+    char line2[160];
+
+    snprintf(line1, sizeof(line1), "VI0.%s -> VPSS%d.%s  |  VPSS outputs 0/1/2/3 -> VMIX inputs 0/1/2/3",
+             g_bind_vi_src_port ? g_bind_vi_src_port : "output0",
+             LIVE_VPSS_GRP,
+             g_bind_vpss_in_port ? g_bind_vpss_in_port : "input0");
+    snprintf(line2, sizeof(line2), "VMIX%d.%s -> OSD%d.%s  |  OSD%d.%s -> VO0.%s",
+             DISPLAY_VMIX_GRP,
+             g_bind_vmix_src_port ? g_bind_vmix_src_port : "output0",
+             DISPLAY_OSD_GRP,
+             g_bind_osd_in_port ? g_bind_osd_in_port : "input0",
+             DISPLAY_OSD_GRP,
+             g_bind_osd_src_port ? g_bind_osd_src_port : "output0",
+             g_bind_vo_in_port ? g_bind_vo_in_port : "input0");
+
+    MEDIA_OSD_RECT_DESC panel = {0};
+    panel.filled = 1;
+    panel.color.r = 5;
+    panel.color.g = 10;
+    panel.color.b = 18;
+    panel.color.a = 230;
+
+    MEDIA_OSD_REGION_ATTR panel_attr = {0};
+    panel_attr.enabled = 1;
+    panel_attr.x = 58;
+    panel_attr.y = 1280;
+    panel_attr.width = 964;
+    panel_attr.height = 488;
+    panel_attr.zorder = 2;
+    panel_attr.global_alpha = 230;
+
+    if (MEDIA_OSD_UpdateRegion(DISPLAY_OSD_GRP, 4, &panel_attr) != 0 ||
+        MEDIA_OSD_SetRegionRect(DISPLAY_OSD_GRP, 4, &panel) != 0) {
+        return -1;
+    }
+
+    if (update_osd_utf8_text_region(5, 84, 1304, 29, 160, 255, 220,
+                                    "数据流：VI输入经过VPSS处理后上屏",
+                                    masks[0], sizeof(masks[0]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(6, 86, 1348, 22, 190, 230, 255,
+                                    "VI不是单独显示，它是VPSS的实时输入源。",
+                                    masks[1], sizeof(masks[1]), 1024, 96) != 0) return -1;
+
+    for (int i = 0; i < 5; ++i) {
+        if (update_osd_rect_region(7 + i, box_x0 + i * (box_w + box_gap), box_y + 58,
+                                   box_w, box_h, 18, 42, 64, 235) != 0) {
+            return -1;
+        }
+    }
+
+    if (update_osd_utf8_text_region(12, box_x0 + 30, box_y + 74, 23, 160, 255, 220,
+                                    "采集 VI",
+                                    masks[2], sizeof(masks[2]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(13, box_x0 + box_w + box_gap + 18, box_y + 74, 23, 160, 255, 220,
+                                    "缩放 VPSS",
+                                    masks[3], sizeof(masks[3]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(14, box_x0 + (box_w + box_gap) * 2 + 18, box_y + 74, 23, 160, 255, 220,
+                                    "合成 VMIX",
+                                    masks[4], sizeof(masks[4]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(15, box_x0 + (box_w + box_gap) * 3 + 30, box_y + 74, 23, 160, 255, 220,
+                                    "叠字 OSD",
+                                    masks[5], sizeof(masks[5]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(16, box_x0 + (box_w + box_gap) * 4 + 30, box_y + 74, 23, 160, 255, 220,
+                                    "出屏 VO",
+                                    masks[6], sizeof(masks[6]), 1024, 96) != 0) return -1;
+
+    if (update_osd_utf8_text_region(17, box_x0 + 14, box_y + 110, 17, 190, 230, 255,
+                                    "摄像头原始帧",
+                                    masks[7], sizeof(masks[7]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(18, box_x0 + box_w + box_gap + 8, box_y + 110, 17, 190, 230, 255,
+                                    "缩放 裁剪 翻转",
+                                    masks[8], sizeof(masks[8]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(19, box_x0 + (box_w + box_gap) * 2 + 8, box_y + 110, 17, 190, 230, 255,
+                                    "只排版不缩放",
+                                    masks[9], sizeof(masks[9]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(20, box_x0 + (box_w + box_gap) * 3 + 8, box_y + 110, 17, 190, 230, 255,
+                                    "叠加标题状态",
+                                    masks[10], sizeof(masks[10]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(21, box_x0 + (box_w + box_gap) * 4 + 22, box_y + 110, 17, 190, 230, 255,
+                                    "送显示屏",
+                                    masks[11], sizeof(masks[11]), 1024, 96) != 0) return -1;
+
+    for (int i = 0; i < 4; ++i) {
+        if (update_osd_utf8_text_region(22 + i, box_x0 + box_w + 3 + i * (box_w + box_gap),
+                                        box_y + 88, 24, 255, 230, 120,
+                                        "→", masks[12 + i], sizeof(masks[12 + i]), 1024, 96) != 0) {
+            return -1;
+        }
+    }
+
+    if (update_osd_utf8_text_region(26, 86, 1538, 23, 255, 230, 120,
+                                    "VPSS把同一份VI输入处理成四路480x480输出。",
+                                    masks[16], sizeof(masks[16]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(27, 86, 1578, 23, 140, 210, 180,
+                                    "VMIX只负责摆放四路画面，不依赖VMIX缩小。",
+                                    masks[17], sizeof(masks[17]), 1024, 96) != 0) return -1;
+    if (update_osd_text_region(28, 86, 1648, 1, 170, 205, 235,
+                               line1, masks[18], sizeof(masks[18])) != 0) return -1;
+    if (update_osd_text_region(29, 86, 1678, 1, 170, 205, 235,
+                               line2, masks[19], sizeof(masks[19])) != 0) return -1;
+
+    return 0;
+}
+
 static int setup_display_vmix_osd(int dstride, size_t display_size, int input_count) {
     if (MEDIA_POOL_Create(DISPLAY_VMIX_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
     if (MEDIA_POOL_Create(DISPLAY_VMIX_OUTPUT_POOL, display_size, 4) != 0) goto fail_input;
@@ -2032,7 +2146,7 @@ static int setup_display_vmix_osd(int dstride, size_t display_size, int input_co
     vmix.output_pool_id = DISPLAY_VMIX_OUTPUT_POOL;
     vmix.primary_index = -1;
     if (input_count == VPSS_DEMO_OUTPUTS) {
-        int cell = 480;
+        int cell = VPSS_TILE_W;
         int gap = 40;
         int start_x = (SCREEN_W - cell * 2 - gap) / 2;
         int start_y = 300;
@@ -3225,11 +3339,22 @@ static int process_live_resize(const uint8_t *src, uint8_t *dst) {
     return ret;
 }
 
-static void fill_vpss_demo_output_attr(MEDIA_VPSS_OUT_ATTR *out, int output_id, int rotate) {
+static int pingpong_i(int t, int max_value) {
+    int period;
+    int v;
+    if (max_value <= 0) return 0;
+    period = max_value * 2;
+    v = t % period;
+    return v <= max_value ? v : period - v;
+}
+
+static void fill_vpss_demo_output_attr(MEDIA_VPSS_OUT_ATTR *out, int output_id,
+                                       int crop_x, int crop_y, int crop_w, int crop_h,
+                                       int flip_h, int flip_v) {
     memset(out, 0, sizeof(*out));
     out->output_id = output_id;
-    out->out_width = CAM_W;
-    out->out_height = CAM_H;
+    out->out_width = VPSS_TILE_W;
+    out->out_height = VPSS_TILE_H;
     out->out_stride = CAM_STRIDE;
     out->pool_id = VPSS_OUTPUT_POOL;
     out->crop_x = 0;
@@ -3239,22 +3364,49 @@ static void fill_vpss_demo_output_attr(MEDIA_VPSS_OUT_ATTR *out, int output_id, 
     out->in_fps = -1;
     out->out_fps = -1;
     out->output_format = MEDIA_FORMAT_NV12;
+    out->crop_x = crop_x;
+    out->crop_y = crop_y;
+    out->crop_w = crop_w;
+    out->crop_h = crop_h;
+    out->flip_h = flip_h;
+    out->flip_v = flip_v;
+}
+
+static void fill_vpss_initial_output_attr(MEDIA_VPSS_OUT_ATTR *out, int output_id) {
+    fill_vpss_demo_output_attr(out, output_id, 0, 0, CAM_W, CAM_H, 0, 0);
     if (output_id == 1) {
-        out->crop_x = 160;
-        out->crop_y = 160;
-        out->crop_w = 320;
-        out->crop_h = 320;
+        fill_vpss_demo_output_attr(out, output_id, 160, 160, 320, 320, 0, 0);
     } else if (output_id == 2) {
-        out->flip_h = 1;
+        fill_vpss_demo_output_attr(out, output_id, 0, 0, CAM_W, CAM_H, 1, 0);
     } else if (output_id == 3) {
-        out->rotate = rotate;
+        fill_vpss_demo_output_attr(out, output_id, 80, 80, 480, 480, 0, 0);
     }
 }
 
-static int set_vpss_auto_rotate(int rotate) {
+static int update_vpss_dynamic_attrs(int frame) {
     MEDIA_VPSS_OUT_ATTR out = {0};
-    fill_vpss_demo_output_attr(&out, 3, rotate);
-    return MEDIA_VPSS_SetOutAttr(LIVE_VPSS_GRP, &out);
+    int ret = 0;
+
+    int crop_size = 320;
+    int crop_range = CAM_W - crop_size;
+    int crop_x = pingpong_i(frame * 4, crop_range) & ~1;
+    int crop_y = pingpong_i(frame * 3, crop_range) & ~1;
+    fill_vpss_demo_output_attr(&out, 1, crop_x, crop_y, crop_size, crop_size, 0, 0);
+    if (MEDIA_VPSS_SetOutAttr(LIVE_VPSS_GRP, &out) != 0) ret = -1;
+
+    int flip_h = ((frame / (FPS * 2)) & 1) != 0;
+    int flip_v = ((frame / (FPS * 4)) & 1) != 0;
+    fill_vpss_demo_output_attr(&out, 2, 0, 0, CAM_W, CAM_H, flip_h, flip_v);
+    if (MEDIA_VPSS_SetOutAttr(LIVE_VPSS_GRP, &out) != 0) ret = -1;
+
+    crop_size = 640 - (pingpong_i(frame * 2, 320) & ~1);
+    if (crop_size < 320) crop_size = 320;
+    crop_x = ((CAM_W - crop_size) / 2) & ~1;
+    crop_y = ((CAM_H - crop_size) / 2) & ~1;
+    fill_vpss_demo_output_attr(&out, 3, crop_x, crop_y, crop_size, crop_size, 0, 0);
+    if (MEDIA_VPSS_SetOutAttr(LIVE_VPSS_GRP, &out) != 0) ret = -1;
+
+    return ret;
 }
 
 static int setup_live_vpss(void) {
@@ -3272,7 +3424,7 @@ static int setup_live_vpss(void) {
     attr.input_format = MEDIA_FORMAT_NV12;
     attr.output_count = VPSS_DEMO_OUTPUTS;
     for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
-        fill_vpss_demo_output_attr(&attr.outputs[i], i, 0);
+        fill_vpss_initial_output_attr(&attr.outputs[i], i);
     }
 
     if (MEDIA_VPSS_SetAttr(LIVE_VPSS_GRP, &attr) != 0 ||
@@ -5324,7 +5476,8 @@ int main(int argc, char **argv) {
             return 1;
         }
         vpss_bind_display_ok = 1;
-        (void)update_display_osd_text("VPSS  VMIX OSD BIND", "FULL  CROP  FLIP  ROTATE AUTO");
+        (void)update_display_osd_text("VPSS  VMIX OSD BIND", "FULL  MOVING CROP  FLIP  ZOOM");
+        (void)update_vpss_bind_flow_overlay();
     }
     if (use_osd_bind_display) {
         if (!camera_ok || !live_osd_bind_ok || !display_vmix_osd_ok ||
@@ -5777,10 +5930,14 @@ int main(int argc, char **argv) {
             continue;
         }
         if (vpss_bind_display_ok) {
-            int rotate = frame % 360;
-            if ((frame % 2) == 0) {
-                if (set_vpss_auto_rotate(rotate) != 0 && (frame % FPS) == 0) {
-                    fprintf(stderr, "warning: VPSS rotate=%d rejected\n", rotate);
+            int crop_size = 320;
+            int crop_x = pingpong_i(frame * 4, CAM_W - crop_size) & ~1;
+            int crop_y = pingpong_i(frame * 3, CAM_H - crop_size) & ~1;
+            int zoom_crop = 640 - (pingpong_i(frame * 2, 320) & ~1);
+            if (zoom_crop < 320) zoom_crop = 320;
+            if ((frame % 4) == 0) {
+                if (update_vpss_dynamic_attrs(frame) != 0 && (frame % FPS) == 0) {
+                    fprintf(stderr, "warning: VPSS dynamic attr update rejected\n");
                 }
             }
             if ((frame % 15) == 0) {
@@ -5791,11 +5948,11 @@ int main(int argc, char **argv) {
                     g_health.camera_frames = (int)vi_count;
                 }
                 if (g_perf.gpu_available) {
-                    snprintf(perf, sizeof(perf), "FULL CROP FLIP ROT%d  CPU %.0f%% GPU %.0f%%",
-                             rotate, g_perf.cpu_percent, g_perf.gpu_percent);
+                    snprintf(perf, sizeof(perf), "CROP %d,%d ZOOM %d CPU %.0f%% GPU %.0f%%",
+                             crop_x, crop_y, zoom_crop, g_perf.cpu_percent, g_perf.gpu_percent);
                 } else {
-                    snprintf(perf, sizeof(perf), "FULL CROP FLIP ROT%d  CPU %.0f%% GPU N/A",
-                             rotate, g_perf.cpu_percent);
+                    snprintf(perf, sizeof(perf), "CROP %d,%d ZOOM %d CPU %.0f%% GPU N/A",
+                             crop_x, crop_y, zoom_crop, g_perf.cpu_percent);
                 }
                 (void)update_display_osd_text("VPSS  VMIX OSD BIND", perf);
             }

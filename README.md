@@ -58,7 +58,7 @@ cmake --build build -j
 `RGA` 单独模式不占用摄像头，页面展示 RGA 2D 图像操作：fast blit、crop/scale、rotate、flip、mosaic、compose/OSD。
 `CAP_DEHAZE` 和 `DCP_FAST_DEHAZE` 单独模式使用合成 RGB 输入，不占用摄像头。
 `CONV_CL` 单独模式使用合成 RGBA 输入，不占用摄像头。
-`VPSS` 单独模式使用实时摄像头输入，并在同屏展示 VPSS 多输出能力：原始输出、裁剪后缩放、水平翻转、90 度旋转。
+`VPSS` 单独模式使用实时摄像头输入，并在同屏展示 VPSS 多输出能力：全幅缩放、动态裁剪后缩放、水平/垂直翻转切换、中心缩放变化。
 `CLAHE` 单独模式使用合成 NV12 输入，不占用摄像头。
 `RETINEX` 单独模式使用摄像头 video 输入，主画面左右对比原始 video 和 Retinex 输出。
 `EDOF_CL` 单独模式使用 `assets/loop/edof/mfi_whu` 的 `a.jpg/b.jpg/fused.png` 样张做三栏对比，每 3 秒切换一组。
@@ -90,7 +90,7 @@ cmake --build build -j
 - `bind_vi_vmix_osd_vo()` 负责建立 `VI -> VMIX -> OSD -> VO` 三段 bind，并保存实际命中的端口名。
 - `update_vi_bind_flow_overlay()` 负责把这三段数据流画到 `DISPLAY_OSD_GRP` 的 OSD region 上。
 
-`--only VPSS` 已接入 `VI -> VPSS -> VMIX -> OSD -> VO` bind 显示链路，VPSS 四路输出分别绑定到 VMIX 四个输入，同屏展示原始、裁剪、翻转、旋转输出。
+`--only VPSS` 已接入 `VI -> VPSS -> VMIX -> OSD -> VO` bind 显示链路，屏幕会显示“VI 输入经过 VPSS 处理后上屏”的中文数据流说明。VPSS 四路输出分别缩放/处理为 480x480 后绑定到 VMIX 四个输入，其中裁剪窗口、翻转状态和缩放裁剪会动态变化；VMIX 只负责四宫格摆放，不依赖 VMIX 缩放能力。
 
 小窗体右上角状态含义：
 
