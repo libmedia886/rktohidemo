@@ -2365,6 +2365,85 @@ static int update_resize_bind_flow_overlay(resize_demo_params_t p, int frame) {
     return 0;
 }
 
+static int update_csc_rga_bind_flow_overlay(uint64_t front_count, uint64_t back_count, int frame) {
+    static uint8_t masks[22][1024 * 96];
+    char count_line[128];
+    char bind_line1[180];
+    char bind_line2[180];
+
+    snprintf(count_line, sizeof(count_line), "FRAMES  CSC0=%llu  CSC1=%llu",
+             (unsigned long long)front_count, (unsigned long long)back_count);
+    snprintf(bind_line1, sizeof(bind_line1), "VI0.%s -> CSC_RGA%d.%s -> CSC_RGA%d.%s",
+             g_bind_vi_src_port ? g_bind_vi_src_port : "output0",
+             LIVE_CSC_RGA_GRP,
+             g_bind_csc_front_in_port ? g_bind_csc_front_in_port : "input",
+             LIVE_CSC_RGA_BACK_GRP,
+             g_bind_csc_back_in_port ? g_bind_csc_back_in_port : "input");
+    snprintf(bind_line2, sizeof(bind_line2), "CSC_RGA%d.%s -> VMIX%d.%s  |  OSD%d.%s -> VO0.%s",
+             LIVE_CSC_RGA_BACK_GRP,
+             g_bind_csc_back_src_port ? g_bind_csc_back_src_port : "output0",
+             DISPLAY_VMIX_GRP,
+             g_bind_vmix_in_port ? g_bind_vmix_in_port : "input0",
+             DISPLAY_OSD_GRP,
+             g_bind_osd_src_port ? g_bind_osd_src_port : "output0",
+             g_bind_vo_in_port ? g_bind_vo_in_port : "input0");
+
+    if (update_osd_rect_region(4, 42, 980, 996, 530, 5, 10, 18, 225) != 0) return -1;
+    if (update_osd_utf8_text_region(5, 72, 1012, 36, 160, 255, 220,
+                                    "CSC_RGA硬件颜色格式转换",
+                                    masks[0], sizeof(masks[0]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(6, 74, 1070, 26, 190, 230, 255,
+                                    "数据流：摄像头NV12先转ARGB8888，再转回NV12送显示。",
+                                    masks[1], sizeof(masks[1]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(7, 74, 1116, 25, 255, 230, 120,
+                                    "为什么这样做：算法和图形常用ARGB，摄像头和显示常用NV12。",
+                                    masks[2], sizeof(masks[2]), 1024, 96) != 0) return -1;
+
+    int card_y = 1192;
+    int card_w = 280;
+    int card_h = 154;
+    int xs[3] = {74, 400, 726};
+    const char *titles[3] = {"输入", "转换中", "输出"};
+    const char *formats[3] = {"NV12", "ARGB8888", "NV12"};
+    const char *subs[3] = {"摄像头 Y/UV", "A/R/G/B 四通道", "显示 Y/UV"};
+    for (int i = 0; i < 3; ++i) {
+        if (update_osd_rect_region(8 + i, xs[i], card_y, card_w, card_h, 12, 28, 46, 240) != 0) return -1;
+        if (update_osd_utf8_text_region(11 + i, xs[i] + 24, card_y + 18, 26, 160, 255, 220,
+                                        titles[i], masks[3 + i], sizeof(masks[3 + i]), 1024, 96) != 0) return -1;
+        if (update_osd_text_region(14 + i, xs[i] + 24, card_y + 66, 3, 255, 230, 120,
+                                   formats[i], masks[6 + i], sizeof(masks[6 + i])) != 0) return -1;
+        if (update_osd_utf8_text_region(17 + i, xs[i] + 24, card_y + 118, 19, 190, 230, 255,
+                                        subs[i], masks[18 + i], sizeof(masks[18 + i]), 1024, 96) != 0) return -1;
+    }
+
+    if (update_osd_utf8_text_region(20, 356, card_y + 54, 42, 255, 230, 120,
+                                    "→", masks[9], sizeof(masks[9]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(21, 682, card_y + 54, 42, 255, 230, 120,
+                                    "→", masks[10], sizeof(masks[10]), 1024, 96) != 0) return -1;
+
+    int bar_y = 1380;
+    const uint8_t colors[4][3] = {
+        {230, 230, 230}, {240, 70, 70}, {70, 220, 110}, {80, 150, 255},
+    };
+    const char *labels[4] = {"Y", "R", "G", "B"};
+    for (int i = 0; i < 4; ++i) {
+        int w = 120 + ((frame * (i + 2) + i * 37) % 120);
+        if (update_osd_rect_region(22 + i, 88 + i * 225, bar_y, w, 32,
+                                   colors[i][0], colors[i][1], colors[i][2], 230) != 0) return -1;
+        if (update_osd_text_region(26 + i, 92 + i * 225, bar_y + 48, 2, 190, 230, 255,
+                                   labels[i], masks[11 + i], sizeof(masks[11 + i])) != 0) return -1;
+    }
+
+    if (update_osd_text_region(30, 74, 1464, 2, 170, 255, 220,
+                               count_line, masks[15], sizeof(masks[15])) != 0) return -1;
+    if (update_osd_text_region(31, 74, 1508, 1, 170, 205, 235,
+                               bind_line1, masks[16], sizeof(masks[16])) != 0) return -1;
+    if (update_osd_text_region(32, 74, 1532, 1, 170, 205, 235,
+                               bind_line2, masks[17], sizeof(masks[17])) != 0) return -1;
+
+    return 0;
+}
+
 static int setup_display_vmix_osd(int dstride, size_t display_size, int input_count) {
     if (MEDIA_POOL_Create(DISPLAY_VMIX_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
     if (MEDIA_POOL_Create(DISPLAY_VMIX_OUTPUT_POOL, display_size, 4) != 0) goto fail_input;
@@ -2418,7 +2497,7 @@ static int setup_display_vmix_osd(int dstride, size_t display_size, int input_co
     osd.output_pool_id = DISPLAY_OSD_OUTPUT_POOL;
     osd.input_stride = dstride;
     osd.output_stride = dstride;
-    osd.max_regions = 32;
+    osd.max_regions = 40;
     if (MEDIA_OSD_CreateGrp(DISPLAY_OSD_GRP, &osd) != 0) goto fail_vmix;
 
     MEDIA_OSD_RECT_DESC rect = {0};
@@ -6032,6 +6111,7 @@ int main(int argc, char **argv) {
         }
         csc_rga_bind_display_ok = 1;
         (void)update_display_osd_text("CSC_RGA  DOUBLE CSC", "NV12 TO ARGB8888 TO NV12");
+        (void)update_csc_rga_bind_flow_overlay(0, 0, 0);
     }
     if (use_csc_cl_bind_display) {
         if (!camera_ok || !live_csc_cl_chain_ok || !display_vmix_osd_ok ||
@@ -6628,6 +6708,7 @@ int main(int argc, char **argv) {
                              g_perf.cpu_percent);
                 }
                 (void)update_display_osd_text("CSC_RGA  VI CSC CSC VMIX OSD VO", perf);
+                (void)update_csc_rga_bind_flow_overlay(csc_front_count, csc_back_count, frame);
                 if ((frame % FPS) == 0) {
                     char gpu_text[24];
                     char rga_text[24];
