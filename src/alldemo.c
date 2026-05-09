@@ -49,6 +49,7 @@
 #define LIVE_CAP_DEHAZE_GRP 66
 #define LIVE_DCP_DEHAZE_GRP 67
 #define LIVE_CONV_CL_GRP 68
+#define LIVE_CLAHE_GRP 69
 
 #define CAM_W 640
 #define CAM_H 640
@@ -623,7 +624,8 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
                              const uint8_t *resize_live, const uint8_t *vpss_live,
                              const uint8_t *csc_rga_live, const uint8_t *transform_live,
                              const uint8_t *cap_live, const uint8_t *dcp_live,
-                             const uint8_t *conv_live, const uint8_t *stereo_live) {
+                             const uint8_t *conv_live, const uint8_t *clahe_live,
+                             const uint8_t *stereo_live) {
     uint8_t r0 = (uint8_t)((idx * 47 + frame * 2) % 180 + 40);
     uint8_t g0 = (uint8_t)((idx * 83 + frame * 3) % 180 + 40);
     uint8_t b0 = (uint8_t)((idx * 29 + frame * 5) % 180 + 40);
@@ -671,6 +673,11 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
                              conv_live, CAM_W, CAM_H, CAM_W * 4);
         fill_rect_nv12(dst, stride, x + 6, y + h - 24, w - 12, 18, 0, 0, 0);
         draw_text(dst, stride, x + 12, y + h - 22, "SYNTH RGBA > CONV", 1, 220, 255, 230);
+    } else if (strcmp(g_tiles[idx].name, "CLAHE") == 0 && clahe_live) {
+        draw_camera_tile(dst, stride, x + 6, y + 30, w - 12, h - 38,
+                         clahe_live, CAM_W, CAM_H, CAM_STRIDE);
+        fill_rect_nv12(dst, stride, x + 6, y + h - 24, w - 12, 18, 0, 0, 0);
+        draw_text(dst, stride, x + 12, y + h - 22, "SYNTH NV12 > CLAHE", 1, 220, 255, 230);
     } else if (strcmp(g_tiles[idx].name, "STEREO_3D") == 0 && stereo_live) {
         draw_camera_tile(dst, stride, x + 6, y + 30, w - 12, h - 38,
                          stereo_live, CAM_W, CAM_H, CAM_STRIDE);
@@ -710,7 +717,8 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
                               const uint8_t *resize_live, const uint8_t *vpss_live,
                               const uint8_t *csc_rga_live, const uint8_t *transform_live,
                               const uint8_t *cap_live, const uint8_t *dcp_live,
-                              const uint8_t *conv_live, const uint8_t *stereo_live) {
+                              const uint8_t *conv_live, const uint8_t *clahe_live,
+                              const uint8_t *stereo_live) {
     loop_asset_t *loop = find_loop_asset(g_tiles[idx].name);
     fill_rect_nv12(dst, stride, x, y, w, h, 7, 13, 24);
 
@@ -759,6 +767,12 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
     if (strcmp(g_tiles[idx].name, "CONV_CL") == 0 && conv_live) {
         draw_rgba_frame_nv12(dst, stride, x + 12, y + 12, w - 24, h - 24,
                              conv_live, CAM_W, CAM_H, CAM_W * 4);
+        return;
+    }
+
+    if (strcmp(g_tiles[idx].name, "CLAHE") == 0 && clahe_live) {
+        draw_camera_tile(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                         clahe_live, CAM_W, CAM_H, CAM_STRIDE);
         return;
     }
 
@@ -813,7 +827,8 @@ static void draw_main_showcase(uint8_t *canvas, int stride, int frame,
                                const uint8_t *resize_live, const uint8_t *vpss_live,
                                const uint8_t *csc_rga_live, const uint8_t *transform_live,
                                const uint8_t *cap_live, const uint8_t *dcp_live,
-                               const uint8_t *conv_live, const uint8_t *stereo_live) {
+                               const uint8_t *conv_live, const uint8_t *clahe_live,
+                               const uint8_t *stereo_live) {
     const int x = 28;
     const int y = 116;
     const int w = 1024;
@@ -832,7 +847,7 @@ static void draw_main_showcase(uint8_t *canvas, int stride, int frame,
         tile_status_color(g_tiles[idx].status, &sr, &sg, &sb);
         draw_tile_content(canvas, stride, x + 14, y + 14, w - 28, h - 70,
                           idx, frame, cam, osd_live, resize_live, vpss_live,
-                          csc_rga_live, transform_live, cap_live, dcp_live, conv_live, stereo_live);
+                          csc_rga_live, transform_live, cap_live, dcp_live, conv_live, clahe_live, stereo_live);
         fill_rect_nv12(canvas, stride, x + 14, y + h - 50, w - 28, 34, 0, 0, 0);
         draw_text(canvas, stride, x + 32, y + h - 42, "MAIN ROTATE", 2, 190, 230, 255);
         draw_text(canvas, stride, x + 268, y + h - 42, g_tiles[idx].name,
@@ -1526,6 +1541,63 @@ static int process_live_conv_cl(const uint8_t *src, uint8_t *dst) {
     return ret;
 }
 
+static int setup_live_clahe(void) {
+    if (MEDIA_POOL_Create(OSD_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
+    if (MEDIA_POOL_Create(OSD_OUTPUT_POOL, CAM_FRAME_SIZE, 3) != 0) {
+        MEDIA_POOL_Destroy(OSD_INPUT_POOL);
+        return -1;
+    }
+
+    MEDIA_CLAHE_ATTR attr = {0};
+    attr.width = CAM_W;
+    attr.height = CAM_H;
+    attr.format = MEDIA_FORMAT_NV12;
+    attr.tile_grid_x = 8;
+    attr.tile_grid_y = 8;
+    attr.bins = 256;
+    attr.input_depth = 3;
+    attr.output_pool_id = OSD_OUTPUT_POOL;
+    attr.input_stride = CAM_STRIDE;
+    attr.output_stride = CAM_STRIDE;
+    attr.clip_limit = 2.5f;
+    attr.highlight_protect_start = 0.92f;
+    attr.highlight_protect_strength = 0.4f;
+
+    if (MEDIA_CLAHE_CreateGrp(LIVE_CLAHE_GRP, &attr) != 0 ||
+        MEDIA_CLAHE_Start(LIVE_CLAHE_GRP) != 0 ||
+        MEDIA_CLAHE_Enable(LIVE_CLAHE_GRP) != 0) {
+        MEDIA_CLAHE_DestroyGrp(LIVE_CLAHE_GRP);
+        MEDIA_POOL_Destroy(OSD_INPUT_POOL);
+        MEDIA_POOL_Destroy(OSD_OUTPUT_POOL);
+        return -1;
+    }
+    set_tile_status("CLAHE", TILE_LIVE);
+    return 0;
+}
+
+static void cleanup_live_clahe(int enabled) {
+    if (!enabled) return;
+    MEDIA_CLAHE_Disable(LIVE_CLAHE_GRP);
+    MEDIA_CLAHE_Stop(LIVE_CLAHE_GRP);
+    MEDIA_CLAHE_DestroyGrp(LIVE_CLAHE_GRP);
+    MEDIA_POOL_Destroy(OSD_INPUT_POOL);
+    MEDIA_POOL_Destroy(OSD_OUTPUT_POOL);
+}
+
+static int process_live_clahe(const uint8_t *src, uint8_t *dst) {
+    MEDIA_BUFFER out = {-1, -1};
+    int ret = -1;
+    if (send_copied_frame("CLAHE", LIVE_CLAHE_GRP, "input",
+                          OSD_INPUT_POOL, src, CAM_FRAME_SIZE, 20) != 0) {
+        return -1;
+    }
+    if (MEDIA_CLAHE_GetFrame(LIVE_CLAHE_GRP, &out, 20) == 0) {
+        ret = copy_from_buffer(out, dst, CAM_FRAME_SIZE);
+        MEDIA_CLAHE_ReleaseFrame(LIVE_CLAHE_GRP, out);
+    }
+    return ret;
+}
+
 static int setup_live_stereo(void) {
     if (MEDIA_POOL_Create(STEREO_INPUT0_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
     if (MEDIA_POOL_Create(STEREO_INPUT1_POOL, CAM_FRAME_SIZE, 3) != 0) goto fail;
@@ -1857,14 +1929,15 @@ static void draw_dashboard(uint8_t *canvas, int stride, int frame, int rotate_ma
                            const uint8_t *resize_live, const uint8_t *vpss_live,
                            const uint8_t *csc_rga_live, const uint8_t *transform_live,
                            const uint8_t *cap_live, const uint8_t *dcp_live,
-                           const uint8_t *conv_live, const uint8_t *stereo_live) {
+                           const uint8_t *conv_live, const uint8_t *clahe_live,
+                           const uint8_t *stereo_live) {
     fill_rect_nv12(canvas, stride, 0, 0, SCREEN_W, SCREEN_H, 4, 9, 16);
     fill_rect_nv12(canvas, stride, 0, 0, SCREEN_W, 90, 10, 18, 34);
     draw_text(canvas, stride, 28, 24, "RKTOHI VISUAL ENGINE", 4, 160, 255, 220);
     draw_text(canvas, stride, 760, 26, "1080X1920", 2, 90, 180, 255);
 
     draw_main_showcase(canvas, stride, frame, rotate_main, only_tile, cam, osd_live, resize_live,
-                       vpss_live, csc_rga_live, transform_live, cap_live, dcp_live, conv_live, stereo_live);
+                       vpss_live, csc_rga_live, transform_live, cap_live, dcp_live, conv_live, clahe_live, stereo_live);
 
     int cols = 4;
     int tile_w = 250;
@@ -1878,7 +1951,7 @@ static void draw_dashboard(uint8_t *canvas, int stride, int frame, int rotate_ma
         int tile_idx = TILE_FIRST_INDEX + i;
         draw_effect_tile(canvas, stride, cx, cy, tile_w, tile_h, tile_idx, frame,
                          g_tiles[tile_idx].active, osd_live, resize_live, vpss_live,
-                         csc_rga_live, transform_live, cap_live, dcp_live, conv_live, stereo_live);
+                         csc_rga_live, transform_live, cap_live, dcp_live, conv_live, clahe_live, stereo_live);
     }
 
     fill_rect_nv12(canvas, stride, 28, 1432, 1024, 232, 7, 13, 24);
@@ -2016,11 +2089,17 @@ int main(int argc, char **argv) {
         setup_live_conv_cl() == 0) {
         live_conv_ok = 1;
     }
+    int live_clahe_ok = 0;
+    if (!solid_test && only_tile && strcasecmp(only_tile, "CLAHE") == 0 &&
+        setup_live_clahe() == 0) {
+        live_clahe_ok = 1;
+    }
     int live_stereo_ok = 0;
 
     if (MEDIA_POOL_Create(DISPLAY_POOL, display_size, 4) != 0) {
         fprintf(stderr, "display pool create failed\n");
         cleanup_live_stereo(live_stereo_ok);
+        cleanup_live_clahe(live_clahe_ok);
         cleanup_live_conv_cl(live_conv_ok);
         cleanup_live_dcp_dehaze(live_dcp_ok);
         cleanup_live_cap_dehaze(live_cap_ok);
@@ -2046,6 +2125,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "VO setup failed\n");
         MEDIA_POOL_Destroy(DISPLAY_POOL);
         cleanup_live_stereo(live_stereo_ok);
+        cleanup_live_clahe(live_clahe_ok);
         cleanup_live_conv_cl(live_conv_ok);
         cleanup_live_dcp_dehaze(live_dcp_ok);
         cleanup_live_cap_dehaze(live_cap_ok);
@@ -2096,6 +2176,7 @@ int main(int argc, char **argv) {
     int cap_frames = 0;
     int dcp_frames = 0;
     int conv_frames = 0;
+    int clahe_frames = 0;
     int stereo_frames = 0;
     uint8_t *last_cam = malloc(CAM_FRAME_SIZE);
     uint8_t *last_osd = malloc(CAM_FRAME_SIZE);
@@ -2106,6 +2187,7 @@ int main(int argc, char **argv) {
     uint8_t *last_cap = malloc(RGB_FRAME_SIZE);
     uint8_t *last_dcp = malloc(RGB_FRAME_SIZE);
     uint8_t *last_conv = malloc(RGBA_FRAME_SIZE);
+    uint8_t *last_clahe = malloc(CAM_FRAME_SIZE);
     uint8_t *last_rgb_src = malloc(RGB_FRAME_SIZE);
     uint8_t *last_rgba_src = malloc(RGBA_FRAME_SIZE);
     uint8_t *last_stereo = malloc(CAM_FRAME_SIZE);
@@ -2118,6 +2200,7 @@ int main(int argc, char **argv) {
     if (last_cap) memset(last_cap, 0, RGB_FRAME_SIZE);
     if (last_dcp) memset(last_dcp, 0, RGB_FRAME_SIZE);
     if (last_conv) memset(last_conv, 0, RGBA_FRAME_SIZE);
+    if (last_clahe) memset(last_clahe, 0, CAM_FRAME_SIZE);
     if (last_rgb_src) memset(last_rgb_src, 0, RGB_FRAME_SIZE);
     if (last_rgba_src) memset(last_rgba_src, 0, RGBA_FRAME_SIZE);
     if (last_stereo) memset(last_stereo, 0, CAM_FRAME_SIZE);
@@ -2188,6 +2271,12 @@ int main(int argc, char **argv) {
                 conv_frames++;
             }
         }
+        if (live_clahe_ok && last_cam && last_clahe) {
+            fill_synthetic_nv12(last_cam, CAM_W, CAM_H, CAM_STRIDE, frame);
+            if (process_live_clahe(last_cam, last_clahe) == 0) {
+                clahe_frames++;
+            }
+        }
 
         MEDIA_BUFFER dbuf = {-1, -1};
         if (MEDIA_POOL_GetBuffer(DISPLAY_POOL, &dbuf) != 0) {
@@ -2220,6 +2309,7 @@ int main(int argc, char **argv) {
                            cap_frames > 0 ? last_cap : NULL,
                            dcp_frames > 0 ? last_dcp : NULL,
                            conv_frames > 0 ? last_conv : NULL,
+                           clahe_frames > 0 ? last_clahe : NULL,
                            stereo_frames > 0 ? last_stereo : NULL);
         }
         (void)MEDIA_POOL_EndCpuAccess(dbuf, DMA_BUF_SYNC_WRITE);
@@ -2236,6 +2326,7 @@ int main(int argc, char **argv) {
     MEDIA_VO_Stop(0, 0);
     MEDIA_VO_DestroyChn(0, 0);
     cleanup_live_stereo(live_stereo_ok);
+    cleanup_live_clahe(live_clahe_ok);
     cleanup_live_conv_cl(live_conv_ok);
     cleanup_live_dcp_dehaze(live_dcp_ok);
     cleanup_live_cap_dehaze(live_cap_ok);
@@ -2253,6 +2344,7 @@ int main(int argc, char **argv) {
     free(last_stereo);
     free(last_rgba_src);
     free(last_rgb_src);
+    free(last_clahe);
     free(last_conv);
     free(last_dcp);
     free(last_cap);
