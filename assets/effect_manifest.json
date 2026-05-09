@@ -25,7 +25,7 @@
     {"name": "RETINEX", "source": "camera video", "effect": "original video and Retinex output comparison"},
     {"name": "CAP_DEHAZE", "source": "camera", "effect": "CAP dehaze comparison"},
     {"name": "DCP_FAST_DEHAZE", "source": "camera", "effect": "fast dark-channel dehaze comparison"},
-    {"name": "THERMAL", "source": "assets/loop/thermal/*.png", "effect": "pseudo thermal color map from loop images"},
+    {"name": "THERMAL", "source": "/userdata/rktohi/demo/thermal/1.png, /userdata/rktohi/demo/thermal/2.png", "effect": "pseudo thermal color map from rktohi demo images"},
     {"name": "CONV_CL", "source": "camera", "effect": "edge / sharpen / blur tiles"},
     {"name": "TRANSFORM", "source": "assets/loop/transform/*.png", "effect": "fisheye / swirl / LUT warp"},
     {"name": "BLEND_PYR", "source": "camera + loop mask", "effect": "soft wipe fusion"},

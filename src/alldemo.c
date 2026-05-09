@@ -14,6 +14,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
@@ -99,6 +100,7 @@
 #define RGA_OP_SECONDS 3
 #define EDOF_PAIR_SECONDS 3
 #define RESIZE_DEMO_UPDATE_FRAMES (FPS * 2)
+#define THERMAL_VO_CAPTURE_SECONDS 5
 #define TILE_FIRST_INDEX 4
 #define TILE_ROTATE_COUNT 16
 
@@ -281,9 +283,9 @@ static const char *g_module_pages[] = {
 };
 
 static loop_asset_t g_loop_assets[] = {
-    {"THERMAL", "THERMAL LOOP", {
-        "assets/loop/thermal/thermal_1.png",
-        "assets/loop/thermal/thermal_2.png",
+    {"THERMAL", "RKTOHI THERMAL DEMO", {
+        "/userdata/rktohi/demo/thermal/1.png",
+        "/userdata/rktohi/demo/thermal/2.png",
     }, 2, {{0}}, 0},
     {"TRANSFORM", "TRANSFORM LOOP", {
         "assets/loop/transform/transform_1.png",
@@ -393,6 +395,130 @@ static void rgb_to_yuv(uint8_t r, uint8_t g, uint8_t b, uint8_t *y, uint8_t *u, 
     *y = clamp_u8(((66 * r + 129 * g + 25 * b + 128) >> 8) + 16);
     *u = clamp_u8(((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128);
     *v = clamp_u8(((112 * r - 94 * g - 18 * b + 128) >> 8) + 128);
+}
+
+static void yuv_to_rgb(uint8_t y, uint8_t u, uint8_t v,
+                       uint8_t *r, uint8_t *g, uint8_t *b) {
+    int c = (int)y - 16;
+    int d = (int)u - 128;
+    int e = (int)v - 128;
+    if (c < 0) c = 0;
+    *r = clamp_u8((298 * c + 409 * e + 128) >> 8);
+    *g = clamp_u8((298 * c - 100 * d - 208 * e + 128) >> 8);
+    *b = clamp_u8((298 * c + 516 * d + 128) >> 8);
+}
+
+static void nv12_to_rgb_frame(const uint8_t *src, uint8_t *dst,
+                              int width, int height, int stride) {
+    if (!src || !dst || width <= 0 || height <= 0 || stride <= 0) return;
+    const uint8_t *y_plane = src;
+    const uint8_t *uv_plane = src + stride * height;
+    for (int y = 0; y < height; ++y) {
+        const uint8_t *y_row = y_plane + y * stride;
+        const uint8_t *uv_row = uv_plane + (y / 2) * stride;
+        uint8_t *rgb_row = dst + (size_t)y * width * 3;
+        for (int x = 0; x < width; ++x) {
+            uint8_t yy = y_row[x];
+            uint8_t uu = uv_row[x & ~1];
+            uint8_t vv = uv_row[(x & ~1) + 1];
+            yuv_to_rgb(yy, uu, vv, &rgb_row[x * 3], &rgb_row[x * 3 + 1], &rgb_row[x * 3 + 2]);
+        }
+    }
+}
+
+static void write_le16(FILE *fp, uint16_t v) {
+    fputc((int)(v & 0xff), fp);
+    fputc((int)((v >> 8) & 0xff), fp);
+}
+
+static void write_le32(FILE *fp, uint32_t v) {
+    fputc((int)(v & 0xff), fp);
+    fputc((int)((v >> 8) & 0xff), fp);
+    fputc((int)((v >> 16) & 0xff), fp);
+    fputc((int)((v >> 24) & 0xff), fp);
+}
+
+static int write_nv12_bmp(const char *path, const uint8_t *src,
+                          int width, int height, int stride) {
+    if (!path || !src || width <= 0 || height <= 0 || stride < width) return -1;
+
+    int row_bytes = (width * 3 + 3) & ~3;
+    uint32_t pixel_bytes = (uint32_t)row_bytes * (uint32_t)height;
+    uint32_t file_bytes = 14u + 40u + pixel_bytes;
+    uint8_t *row = malloc((size_t)row_bytes);
+    if (!row) return -1;
+
+    FILE *fp = fopen(path, "wb");
+    if (!fp) {
+        free(row);
+        return -1;
+    }
+
+    fputc('B', fp);
+    fputc('M', fp);
+    write_le32(fp, file_bytes);
+    write_le16(fp, 0);
+    write_le16(fp, 0);
+    write_le32(fp, 14u + 40u);
+
+    write_le32(fp, 40u);
+    write_le32(fp, (uint32_t)width);
+    write_le32(fp, (uint32_t)height);
+    write_le16(fp, 1);
+    write_le16(fp, 24);
+    write_le32(fp, 0);
+    write_le32(fp, pixel_bytes);
+    write_le32(fp, 2835);
+    write_le32(fp, 2835);
+    write_le32(fp, 0);
+    write_le32(fp, 0);
+
+    const uint8_t *y_plane = src;
+    const uint8_t *uv_plane = src + (size_t)stride * height;
+    for (int out_y = 0; out_y < height; ++out_y) {
+        int y = height - 1 - out_y;
+        const uint8_t *y_row = y_plane + (size_t)y * stride;
+        const uint8_t *uv_row = uv_plane + (size_t)(y / 2) * stride;
+        memset(row, 0, (size_t)row_bytes);
+        for (int x = 0; x < width; ++x) {
+            uint8_t r, g, b;
+            int uv_x = x & ~1;
+            yuv_to_rgb(y_row[x], uv_row[uv_x], uv_row[uv_x + 1], &r, &g, &b);
+            row[x * 3 + 0] = b;
+            row[x * 3 + 1] = g;
+            row[x * 3 + 2] = r;
+        }
+        if (fwrite(row, 1, (size_t)row_bytes, fp) != (size_t)row_bytes) {
+            fclose(fp);
+            free(row);
+            return -1;
+        }
+    }
+
+    int ok = ferror(fp) ? -1 : 0;
+    fclose(fp);
+    free(row);
+    return ok;
+}
+
+static void maybe_capture_thermal_vo_frame(const char *only_tile, int frame,
+                                           const uint8_t *nv12, int stride) {
+    if (!only_tile || strcasecmp(only_tile, "THERMAL") != 0 || !nv12) return;
+    if ((frame % (FPS * THERMAL_VO_CAPTURE_SECONDS)) != 0) return;
+
+    const char *dir = "/userdata/alldemo/vo_captures";
+    if (mkdir(dir, 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "THERMAL VO capture mkdir failed: %s\n", strerror(errno));
+        return;
+    }
+
+    char path[256];
+    snprintf(path, sizeof(path), "%s/thermal_vo_%06d.bmp", dir, frame);
+    if (write_nv12_bmp(path, nv12, SCREEN_W, SCREEN_H, stride) == 0) {
+        printf("THERMAL VO capture: %s\n", path);
+    } else {
+        fprintf(stderr, "THERMAL VO capture failed: %s\n", path);
+    }
 }
 
 static int load_png_rgb(const char *path, image_asset_t *out) {
@@ -639,6 +765,13 @@ static loop_asset_t *find_loop_asset(const char *tile_name) {
     return NULL;
 }
 
+static void stroke_rect_nv12(uint8_t *dst, int stride, int x, int y, int w, int h,
+                             int thick, uint8_t r, uint8_t g, uint8_t b);
+static void draw_text(uint8_t *dst, int stride, int x, int y, const char *text,
+                      int scale, uint8_t r, uint8_t g, uint8_t b);
+static void draw_utf8_text(uint8_t *dst, int stride, int x, int y, const char *text,
+                           int pixel_size, uint8_t r, uint8_t g, uint8_t b);
+
 static void draw_rgb_image_nv12(uint8_t *dst, int stride, int x, int y, int w, int h,
                                 const image_asset_t *img) {
     if (!img || !img->rgb || img->width <= 0 || img->height <= 0 || w <= 0 || h <= 0) return;
@@ -690,6 +823,251 @@ static void draw_rgb_image_nv12(uint8_t *dst, int stride, int x, int y, int w, i
             drow[xx] = u;
             drow[xx + 1] = v;
         }
+    }
+}
+
+static void thermal_palette(float t, const uint8_t stops[][3], int count,
+                            uint8_t *r, uint8_t *g, uint8_t *b) {
+    if (count <= 0) {
+        *r = *g = *b = 0;
+        return;
+    }
+    if (t <= 0.0f) {
+        *r = stops[0][0];
+        *g = stops[0][1];
+        *b = stops[0][2];
+        return;
+    }
+    if (t >= 1.0f) {
+        *r = stops[count - 1][0];
+        *g = stops[count - 1][1];
+        *b = stops[count - 1][2];
+        return;
+    }
+
+    float scaled = t * (float)(count - 1);
+    int idx = (int)scaled;
+    float f = scaled - (float)idx;
+    const uint8_t *a = stops[idx];
+    const uint8_t *c = stops[idx + 1];
+    *r = (uint8_t)((float)a[0] + ((float)c[0] - (float)a[0]) * f);
+    *g = (uint8_t)((float)a[1] + ((float)c[1] - (float)a[1]) * f);
+    *b = (uint8_t)((float)a[2] + ((float)c[2] - (float)a[2]) * f);
+}
+
+static void thermal_color_for_mode(int mode, uint8_t value,
+                                   uint8_t *r, uint8_t *g, uint8_t *b) {
+    float t = (float)value / 255.0f;
+    static const uint8_t rainbow[][3] = {
+        {0, 0, 70}, {0, 70, 210}, {0, 220, 170}, {220, 230, 0}, {255, 80, 0}, {255, 255, 255}
+    };
+    static const uint8_t rainbow1[][3] = {
+        {22, 0, 92}, {0, 136, 255}, {0, 255, 128}, {255, 220, 0}, {255, 32, 32}
+    };
+    static const uint8_t rainbow2[][3] = {
+        {0, 0, 0}, {0, 0, 160}, {0, 255, 255}, {255, 255, 0}, {255, 0, 0}
+    };
+    static const uint8_t rainbow3[][3] = {
+        {0, 0, 80}, {60, 0, 160}, {0, 160, 255}, {0, 255, 70}, {255, 230, 0}, {255, 255, 255}
+    };
+    static const uint8_t iron[][3] = {
+        {0, 0, 0}, {76, 0, 96}, {180, 36, 0}, {255, 154, 0}, {255, 255, 210}
+    };
+    static const uint8_t sepia[][3] = {
+        {20, 12, 6}, {88, 54, 24}, {164, 104, 48}, {236, 190, 116}, {255, 246, 200}
+    };
+    static const uint8_t blue_red[][3] = {
+        {0, 26, 140}, {0, 170, 255}, {238, 238, 238}, {255, 120, 0}, {170, 0, 0}
+    };
+    static const uint8_t pseudo1[][3] = {
+        {0, 0, 0}, {0, 96, 96}, {64, 255, 64}, {255, 255, 80}, {255, 255, 255}
+    };
+    static const uint8_t pseudo2[][3] = {
+        {12, 18, 42}, {50, 110, 180}, {120, 210, 150}, {246, 205, 92}, {255, 72, 72}
+    };
+    static const uint8_t metal1[][3] = {
+        {8, 10, 14}, {42, 52, 66}, {110, 124, 132}, {200, 178, 126}, {255, 246, 210}
+    };
+    static const uint8_t metal2[][3] = {
+        {0, 0, 20}, {28, 62, 92}, {100, 110, 116}, {178, 144, 88}, {255, 255, 235}
+    };
+    static const uint8_t zhou[][3] = {
+        {0, 12, 32}, {0, 92, 118}, {80, 170, 86}, {220, 184, 52}, {252, 248, 190}
+    };
+    static const uint8_t ning[][3] = {
+        {12, 4, 30}, {52, 18, 96}, {130, 52, 130}, {220, 108, 96}, {255, 236, 190}
+    };
+
+    switch (mode) {
+    case MEDIA_THERMAL_COLOR_BLACK_HOT:
+        *r = *g = *b = 255 - value;
+        break;
+    case MEDIA_THERMAL_COLOR_WHITE_HOT:
+    case MEDIA_THERMAL_COLOR_GRAYSCALE:
+        *r = *g = *b = value;
+        break;
+    case MEDIA_THERMAL_COLOR_IRON:
+        thermal_palette(t, iron, (int)(sizeof(iron) / sizeof(iron[0])), r, g, b);
+        break;
+    case MEDIA_THERMAL_COLOR_SEPIA:
+        thermal_palette(t, sepia, (int)(sizeof(sepia) / sizeof(sepia[0])), r, g, b);
+        break;
+    case MEDIA_THERMAL_COLOR_BLUE_RED:
+        thermal_palette(t, blue_red, (int)(sizeof(blue_red) / sizeof(blue_red[0])), r, g, b);
+        break;
+    case MEDIA_THERMAL_COLOR_RAINBOW1:
+        thermal_palette(t, rainbow1, (int)(sizeof(rainbow1) / sizeof(rainbow1[0])), r, g, b);
+        break;
+    case MEDIA_THERMAL_COLOR_RAINBOW2:
+        thermal_palette(t, rainbow2, (int)(sizeof(rainbow2) / sizeof(rainbow2[0])), r, g, b);
+        break;
+    case MEDIA_THERMAL_COLOR_RAINBOW3:
+        thermal_palette(t, rainbow3, (int)(sizeof(rainbow3) / sizeof(rainbow3[0])), r, g, b);
+        break;
+    case MEDIA_THERMAL_COLOR_PSEUDO1:
+        thermal_palette(t, pseudo1, (int)(sizeof(pseudo1) / sizeof(pseudo1[0])), r, g, b);
+        break;
+    case MEDIA_THERMAL_COLOR_PSEUDO2:
+        thermal_palette(t, pseudo2, (int)(sizeof(pseudo2) / sizeof(pseudo2[0])), r, g, b);
+        break;
+    case MEDIA_THERMAL_COLOR_METAL1:
+        thermal_palette(t, metal1, (int)(sizeof(metal1) / sizeof(metal1[0])), r, g, b);
+        break;
+    case MEDIA_THERMAL_COLOR_METAL2:
+        thermal_palette(t, metal2, (int)(sizeof(metal2) / sizeof(metal2[0])), r, g, b);
+        break;
+    case MEDIA_THERMAL_COLOR_ZHOU:
+        thermal_palette(t, zhou, (int)(sizeof(zhou) / sizeof(zhou[0])), r, g, b);
+        break;
+    case MEDIA_THERMAL_COLOR_NING:
+        thermal_palette(t, ning, (int)(sizeof(ning) / sizeof(ning[0])), r, g, b);
+        break;
+    case MEDIA_THERMAL_COLOR_RAINBOW:
+    default:
+        thermal_palette(t, rainbow, (int)(sizeof(rainbow) / sizeof(rainbow[0])), r, g, b);
+        break;
+    }
+}
+
+static uint8_t thermal_source_luma(const image_asset_t *img, int sx, int sy) {
+    const uint8_t *rgb = img->rgb + ((size_t)sy * img->width + sx) * 3;
+    return (uint8_t)((77 * rgb[0] + 150 * rgb[1] + 29 * rgb[2]) >> 8);
+}
+
+static void draw_thermal_mode_image_nv12(uint8_t *dst, int stride, int x, int y, int w, int h,
+                                         const image_asset_t *img, int mode) {
+    if (!img || !img->rgb || img->width <= 0 || img->height <= 0 || w <= 0 || h <= 0) return;
+
+    int out_w = w;
+    int out_h = (int)((int64_t)img->height * w / img->width);
+    if (out_h > h) {
+        out_h = h;
+        out_w = (int)((int64_t)img->width * h / img->height);
+    }
+    if (out_w <= 0 || out_h <= 0) return;
+
+    int ox = x + (w - out_w) / 2;
+    int oy = y + (h - out_h) / 2;
+    uint8_t *yp = dst;
+    uint8_t *uv = dst + stride * SCREEN_H;
+
+    for (int dy = 0; dy < out_h; ++dy) {
+        int sy = dy * img->height / out_h;
+        int yy = oy + dy;
+        if (yy < 0 || yy >= SCREEN_H) continue;
+        uint8_t *drow = yp + yy * stride;
+        for (int dx = 0; dx < out_w; ++dx) {
+            int sx = dx * img->width / out_w;
+            int xx = ox + dx;
+            if (xx < 0 || xx >= SCREEN_W) continue;
+            uint8_t r, g, b, yv, u, v;
+            thermal_color_for_mode(mode, thermal_source_luma(img, sx, sy), &r, &g, &b);
+            rgb_to_yuv(r, g, b, &yv, &u, &v);
+            (void)u;
+            (void)v;
+            drow[xx] = yv;
+        }
+    }
+
+    for (int dy = 0; dy < out_h; dy += 2) {
+        int sy = dy * img->height / out_h;
+        int yy = oy + dy;
+        if (yy < 0 || yy >= SCREEN_H) continue;
+        uint8_t *drow = uv + (yy / 2) * stride;
+        for (int dx = 0; dx < out_w; dx += 2) {
+            int sx = dx * img->width / out_w;
+            int xx = (ox + dx) & ~1;
+            if (xx < 0 || xx + 1 >= SCREEN_W) continue;
+            uint8_t r, g, b, yv, u, v;
+            thermal_color_for_mode(mode, thermal_source_luma(img, sx, sy), &r, &g, &b);
+            rgb_to_yuv(r, g, b, &yv, &u, &v);
+            (void)yv;
+            drow[xx] = u;
+            drow[xx + 1] = v;
+        }
+    }
+}
+
+static void draw_thermal_mode_grid(uint8_t *dst, int stride, int x, int y, int w, int h,
+                                   int frame) {
+    static const struct {
+        int mode;
+        const char *name;
+    } modes[] = {
+        {MEDIA_THERMAL_COLOR_RAINBOW, "RAINBOW"},
+        {MEDIA_THERMAL_COLOR_BLACK_HOT, "BLACK HOT"},
+        {MEDIA_THERMAL_COLOR_WHITE_HOT, "WHITE HOT"},
+        {MEDIA_THERMAL_COLOR_IRON, "IRON"},
+        {MEDIA_THERMAL_COLOR_SEPIA, "SEPIA"},
+        {MEDIA_THERMAL_COLOR_BLUE_RED, "BLUE RED"},
+        {MEDIA_THERMAL_COLOR_GRAYSCALE, "GRAYSCALE"},
+        {MEDIA_THERMAL_COLOR_RAINBOW1, "RAINBOW1"},
+        {MEDIA_THERMAL_COLOR_RAINBOW2, "RAINBOW2"},
+        {MEDIA_THERMAL_COLOR_RAINBOW3, "RAINBOW3"},
+        {MEDIA_THERMAL_COLOR_PSEUDO1, "PSEUDO1"},
+        {MEDIA_THERMAL_COLOR_PSEUDO2, "PSEUDO2"},
+        {MEDIA_THERMAL_COLOR_METAL1, "METAL1"},
+        {MEDIA_THERMAL_COLOR_METAL2, "METAL2"},
+        {MEDIA_THERMAL_COLOR_ZHOU, "ZHOU"},
+        {MEDIA_THERMAL_COLOR_NING, "NING"},
+    };
+    loop_asset_t *loop = find_loop_asset("THERMAL");
+    if (!loop || loop->loaded_count <= 0) return;
+
+    const image_asset_t *img = &loop->images[(frame / (FPS * 3)) % loop->loaded_count];
+    int header_h = h >= 620 ? 88 : 0;
+    if (header_h > 0) {
+        fill_rect_nv12(dst, stride, x, y, w, header_h - 12, 6, 13, 24);
+        stroke_rect_nv12(dst, stride, x, y, w, header_h - 12, 2, 66, 150, 210);
+        draw_utf8_text(dst, stride, x + 24, y + 14,
+                       "THERMAL 热成像伪彩模式对比", 26, 170, 255, 220);
+        draw_utf8_text(dst, stride, x + 24, y + 50,
+                       "为什么这样做：同一张红外灰度图表示温度强弱，不同色表只改变显示颜色，便于按场景突出热目标。每3秒切换下一张rktohi样张。",
+                       20, 210, 235, 255);
+    }
+
+    int grid_y = y + header_h;
+    int grid_h = h - header_h;
+    int cols = 4;
+    int rows = 4;
+    int gap = 8;
+    int label_h = 18;
+    int cell_w = (w - gap * (cols - 1)) / cols;
+    int cell_h = (grid_h - gap * (rows - 1)) / rows;
+
+    for (int i = 0; i < (int)(sizeof(modes) / sizeof(modes[0])); ++i) {
+        int col = i % cols;
+        int row = i / cols;
+        int cx = x + col * (cell_w + gap);
+        int cy = grid_y + row * (cell_h + gap);
+        fill_rect_nv12(dst, stride, cx, cy, cell_w, cell_h, 5, 10, 18);
+        draw_thermal_mode_image_nv12(dst, stride, cx + 3, cy + 3,
+                                     cell_w - 6, cell_h - label_h - 6,
+                                     img, modes[i].mode);
+        fill_rect_nv12(dst, stride, cx, cy + cell_h - label_h, cell_w, label_h, 0, 0, 0);
+        draw_text(dst, stride, cx + 6, cy + cell_h - label_h + 4, modes[i].name,
+                  1, 210, 235, 255);
+        stroke_rect_nv12(dst, stride, cx, cy, cell_w, cell_h, 1, 68, 110, 140);
     }
 }
 
@@ -1118,6 +1496,47 @@ static void draw_nv12_comparison(uint8_t *dst, int stride, int x, int y, int w, 
     }
 }
 
+static void draw_nv12_rgb_comparison(uint8_t *dst, int stride, int x, int y, int w, int h,
+                                     const uint8_t *input_nv12, const uint8_t *output_rgb,
+                                     const char *input_label, const char *output_label) {
+    int gap = 18;
+    int label_h = 30;
+    int pane_w = (w - gap) / 2;
+    int pane_h = h;
+    int left_x = x;
+    int right_x = x + pane_w + gap;
+    int image_box = pane_w - 12;
+    int image_max_h = pane_h - label_h - 10;
+    if (image_box > image_max_h) image_box = image_max_h;
+    if (image_box <= 0) return;
+    int image_y = y + 6 + (image_max_h - image_box) / 2;
+    int left_image_x = left_x + (pane_w - image_box) / 2;
+    int right_image_x = right_x + (pane_w - image_box) / 2;
+
+    fill_rect_nv12(dst, stride, left_x, y, pane_w, pane_h, 8, 16, 28);
+    fill_rect_nv12(dst, stride, right_x, y, pane_w, pane_h, 8, 16, 28);
+    stroke_rect_nv12(dst, stride, left_x, y, pane_w, pane_h, 1, 70, 140, 210);
+    stroke_rect_nv12(dst, stride, right_x, y, pane_w, pane_h, 1, 80, 255, 180);
+
+    if (input_nv12) {
+        draw_camera_tile(dst, stride, left_image_x, image_y, image_box, image_box,
+                         input_nv12, CAM_W, CAM_H, CAM_STRIDE);
+    } else {
+        draw_text(dst, stride, left_x + 18, y + pane_h / 2 - 10, "WAIT", 1, 255, 190, 100);
+    }
+    if (output_rgb) {
+        image_asset_t rgb_frame = {CAM_W, CAM_H, (uint8_t *)output_rgb};
+        draw_rgb_image_nv12(dst, stride, right_image_x, image_y, image_box, image_box, &rgb_frame);
+    } else {
+        draw_text(dst, stride, right_x + 18, y + pane_h / 2 - 10, "WAIT", 1, 255, 190, 100);
+    }
+
+    fill_rect_nv12(dst, stride, left_x, y + pane_h - label_h, pane_w, label_h, 0, 0, 0);
+    fill_rect_nv12(dst, stride, right_x, y + pane_h - label_h, pane_w, label_h, 0, 0, 0);
+    draw_text(dst, stride, left_x + 14, y + pane_h - label_h + 8, input_label, 1, 190, 230, 255);
+    draw_text(dst, stride, right_x + 14, y + pane_h - label_h + 8, output_label, 1, 170, 255, 220);
+}
+
 static void draw_vpss_showcase_labels(uint8_t *dst, int stride, int x, int y, int w, int h) {
     int gap = 10;
     int label_h = 24;
@@ -1448,11 +1867,9 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
         draw_rgb_image_nv12(dst, stride, x + 6, y + 30, w - 12, h - 38, &rgb_frame);
         fill_rect_nv12(dst, stride, x + 6, y + h - 24, w - 12, 18, 0, 0, 0);
         draw_text(dst, stride, x + 12, y + h - 22, "SYNTH RGB > CAP", 1, 220, 255, 230);
-    } else if (strcmp(g_tiles[idx].name, "DCP_FAST_DEHAZE") == 0 && dcp_live) {
-        image_asset_t rgb_frame = {CAM_W, CAM_H, (uint8_t *)dcp_live};
-        draw_rgb_image_nv12(dst, stride, x + 6, y + 30, w - 12, h - 38, &rgb_frame);
-        fill_rect_nv12(dst, stride, x + 6, y + h - 24, w - 12, 18, 0, 0, 0);
-        draw_text(dst, stride, x + 12, y + h - 22, "SYNTH RGB > DCP", 1, 220, 255, 230);
+    } else if (strcmp(g_tiles[idx].name, "DCP_FAST_DEHAZE") == 0 && (retinex_in || dcp_live)) {
+        draw_nv12_rgb_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38,
+                                 retinex_in, dcp_live, "VI RAW", "DCP OUT");
     } else if (strcmp(g_tiles[idx].name, "CONV_CL") == 0 && conv_live) {
         draw_rgba_frame_nv12(dst, stride, x + 6, y + 30, w - 12, h - 38,
                              conv_live, CAM_W, CAM_H, CAM_W * 4);
@@ -1565,15 +1982,20 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
         return;
     }
 
-    if (strcmp(g_tiles[idx].name, "CAP_DEHAZE") == 0 && cap_live) {
-        image_asset_t rgb_frame = {CAM_W, CAM_H, (uint8_t *)cap_live};
-        draw_rgb_image_nv12(dst, stride, x + 12, y + 12, w - 24, h - 24, &rgb_frame);
+    if (strcmp(g_tiles[idx].name, "CAP_DEHAZE") == 0 && (cam || cap_live)) {
+        draw_nv12_rgb_comparison(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                                 cam, cap_live, "LEFT: VI RAW INPUT", "RIGHT: CAP_DEHAZE OUTPUT");
         return;
     }
 
-    if (strcmp(g_tiles[idx].name, "DCP_FAST_DEHAZE") == 0 && dcp_live) {
-        image_asset_t rgb_frame = {CAM_W, CAM_H, (uint8_t *)dcp_live};
-        draw_rgb_image_nv12(dst, stride, x + 12, y + 12, w - 24, h - 24, &rgb_frame);
+    if (strcmp(g_tiles[idx].name, "DCP_FAST_DEHAZE") == 0 && (cam || dcp_live)) {
+        draw_nv12_rgb_comparison(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                                 cam, dcp_live, "LEFT: VI RAW INPUT", "RIGHT: DCP_FAST OUTPUT");
+        return;
+    }
+
+    if (strcmp(g_tiles[idx].name, "THERMAL") == 0 && loop && loop->loaded_count > 0) {
+        draw_thermal_mode_grid(dst, stride, x + 12, y + 12, w - 24, h - 24, frame);
         return;
     }
 
@@ -4477,12 +4899,12 @@ static int setup_live_cap_dehaze(void) {
     attr.output_pool_id = OSD_OUTPUT_POOL;
     attr.input_stride = CAM_W * 3;
     attr.output_stride = CAM_W * 3;
-    attr.guided_radius = 8;
-    attr.guided_eps = 0.01f;
-    attr.t0 = 0.1f;
-    attr.beta0 = 1.0f;
-    attr.beta1 = 1.0f;
-    attr.beta2 = 1.0f;
+    attr.guided_radius = 24;
+    attr.guided_eps = 1e-3f;
+    attr.t0 = 0.12f;
+    attr.beta0 = 0.121779f;
+    attr.beta1 = 0.959710f;
+    attr.beta2 = -0.780245f;
     attr.depth_scale = 1.0f;
 
     if (MEDIA_CAP_DEHAZE_CreateGrp(LIVE_CAP_DEHAZE_GRP, &attr) != 0 ||
@@ -4543,11 +4965,11 @@ static int setup_live_dcp_dehaze(void) {
     attr.output_stride = CAM_W * 3;
     attr.patch = 15;
     attr.omega = 0.95f;
-    attr.t0 = 0.1f;
+    attr.t0 = 0.12f;
     attr.airlight_percent = 0.001f;
-    attr.guided_radius = 8;
-    attr.guided_eps = 0.01f;
-    attr.refine_scale = 0.25f;
+    attr.guided_radius = 24;
+    attr.guided_eps = 1e-3f;
+    attr.refine_scale = 0.5f;
 
     if (MEDIA_DCP_FAST_DEHAZE_CreateGrp(LIVE_DCP_DEHAZE_GRP, &attr) != 0 ||
         MEDIA_DCP_FAST_DEHAZE_Start(LIVE_DCP_DEHAZE_GRP) != 0 ||
@@ -5353,6 +5775,8 @@ static int tile_needs_camera(const char *name) {
            strcasecmp(name, "VPSS") == 0 ||
            strcasecmp(name, "CSC_RGA") == 0 ||
            strcasecmp(name, "CSC_CL") == 0 ||
+           strcasecmp(name, "CAP_DEHAZE") == 0 ||
+           strcasecmp(name, "DCP_FAST_DEHAZE") == 0 ||
            strcasecmp(name, "CLAHE") == 0 ||
            strcasecmp(name, "RETINEX") == 0 ||
            strcasecmp(name, "STEREO_3D") == 0;
@@ -6811,6 +7235,18 @@ int main(int argc, char **argv) {
                                 process_live_retinex(last_cam, last_retinex) == 0) {
                                 retinex_frames++;
                             }
+                            if (live_cap_ok && last_rgb_src && last_cap) {
+                                nv12_to_rgb_frame(last_cam, last_rgb_src, CAM_W, CAM_H, CAM_STRIDE);
+                                if (process_live_cap_dehaze(last_rgb_src, last_cap) == 0) {
+                                    cap_frames++;
+                                }
+                            }
+                            if (live_dcp_ok && last_rgb_src && last_dcp) {
+                                nv12_to_rgb_frame(last_cam, last_rgb_src, CAM_W, CAM_H, CAM_STRIDE);
+                                if (process_live_dcp_dehaze(last_rgb_src, last_dcp) == 0) {
+                                    dcp_frames++;
+                                }
+                            }
                         }
                         munmap(addr, size);
                     }
@@ -6826,13 +7262,15 @@ int main(int argc, char **argv) {
                 transform_frames++;
             }
         }
-        if (live_cap_ok && last_rgb_src && last_cap) {
+        if (live_cap_ok && last_rgb_src && last_cap &&
+            !(only_tile && strcasecmp(only_tile, "CAP_DEHAZE") == 0 && camera_ok)) {
             fill_synthetic_rgb(last_rgb_src, CAM_W, CAM_H, CAM_W * 3, frame);
             if (process_live_cap_dehaze(last_rgb_src, last_cap) == 0) {
                 cap_frames++;
             }
         }
-        if (live_dcp_ok && last_rgb_src && last_dcp) {
+        if (live_dcp_ok && last_rgb_src && last_dcp &&
+            !(only_tile && strcasecmp(only_tile, "DCP_FAST_DEHAZE") == 0 && camera_ok)) {
             fill_synthetic_rgb(last_rgb_src, CAM_W, CAM_H, CAM_W * 3, frame);
             if (process_live_dcp_dehaze(last_rgb_src, last_dcp) == 0) {
                 dcp_frames++;
@@ -7422,6 +7860,7 @@ int main(int argc, char **argv) {
                            dualview_frames > 0 ? last_dual_sbs : NULL,
                            dualview_frames > 0 ? last_dual_lbl : NULL);
         }
+        maybe_capture_thermal_vo_frame(only_tile, frame, (const uint8_t *)addr, dstride);
         (void)MEDIA_POOL_EndCpuAccess(dbuf, DMA_BUF_SYNC_WRITE);
         munmap(addr, size);
 

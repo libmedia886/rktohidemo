@@ -3,3 +3,4 @@ build/
 *.a.out
 core
 core.*
+vo_captures/
