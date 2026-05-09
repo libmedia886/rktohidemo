@@ -2193,6 +2193,91 @@ static int update_vpss_bind_flow_overlay(void) {
     return 0;
 }
 
+typedef struct {
+    const char *label;
+    int algo;
+    int crop_x;
+    int crop_y;
+    int crop_w;
+    int crop_h;
+    int rotate;
+    int flip_h;
+    int flip_v;
+} rga_demo_op_t;
+
+static const rga_demo_op_t g_rga_demo_ops[] = {
+    {"COPY", MEDIA_RGA_ALG_COPY, 0, 0, CAM_W, CAM_H, 0, 0, 0},
+    {"CROP_ZOOM", MEDIA_RGA_ALG_RESIZE, 120, 120, 400, 400, 0, 0, 0},
+    {"FLIP_H", MEDIA_RGA_ALG_FLIP, 0, 0, CAM_W, CAM_H, 0, 1, 0},
+    {"FLIP_V", MEDIA_RGA_ALG_FLIP, 0, 0, CAM_W, CAM_H, 0, 0, 1},
+    {"ROTATE90", MEDIA_RGA_ALG_ROTATE, 0, 0, CAM_W, CAM_H, 90, 0, 0},
+    {"ROTATE180", MEDIA_RGA_ALG_ROTATE, 0, 0, CAM_W, CAM_H, 180, 0, 0},
+    {"ROTATE270", MEDIA_RGA_ALG_ROTATE, 0, 0, CAM_W, CAM_H, 270, 0, 0},
+};
+
+static int update_rga_bind_flow_overlay(int op_index, int frame) {
+    static uint8_t masks[22][1024 * 96];
+    const int panel_x = 58;
+    const int panel_y = 1028;
+    const int card_y = 1248;
+    const int card_w = 122;
+    const int card_h = 58;
+    const int card_gap = 10;
+    char op_line[160];
+    char bind_line[180];
+    const rga_demo_op_t *op = &g_rga_demo_ops[op_index];
+
+    snprintf(op_line, sizeof(op_line), "CURRENT RGA OP  %s", op->label);
+    snprintf(bind_line, sizeof(bind_line), "VI0.%s -> RGA%d.%s  |  RGA%d.%s -> VMIX%d.%s  |  OSD%d.%s -> VO0.%s",
+             g_bind_vi_src_port ? g_bind_vi_src_port : "output0",
+             LIVE_RGA_GRP,
+             g_bind_rga_in_port ? g_bind_rga_in_port : "input0",
+             LIVE_RGA_GRP,
+             g_bind_rga_src_port ? g_bind_rga_src_port : "output0",
+             DISPLAY_VMIX_GRP,
+             g_bind_vmix_in_port ? g_bind_vmix_in_port : "input0",
+             DISPLAY_OSD_GRP,
+             g_bind_osd_src_port ? g_bind_osd_src_port : "output0",
+             g_bind_vo_in_port ? g_bind_vo_in_port : "input0");
+
+    if (update_osd_rect_region(4, panel_x, panel_y, 964, 458, 5, 10, 18, 225) != 0) return -1;
+    if (update_osd_utf8_text_region(5, 86, 1056, 31, 160, 255, 220,
+                                    "RGA硬件2D图像处理",
+                                    masks[0], sizeof(masks[0]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(6, 88, 1104, 23, 190, 230, 255,
+                                    "数据流：VI实时画面进入RGA，硬件完成拷贝、裁剪、翻转和旋转。",
+                                    masks[1], sizeof(masks[1]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(7, 88, 1144, 23, 255, 230, 120,
+                                    "为什么这样做：图像变换交给RGA，CPU不用搬帧逐像素处理。",
+                                    masks[2], sizeof(masks[2]), 1024, 96) != 0) return -1;
+
+    if (update_osd_text_region(8, 88, 1196, 2, 255, 230, 120,
+                               op_line, masks[3], sizeof(masks[3])) != 0) return -1;
+
+    for (int i = 0; i < (int)ARRAY_SIZE(g_rga_demo_ops); ++i) {
+        int x = 88 + i * (card_w + card_gap);
+        int active = i == op_index;
+        uint8_t rr = active ? 32 : 10;
+        uint8_t gg = active ? (uint8_t)(70 + ((frame * 3) & 31)) : 28;
+        uint8_t bb = active ? 78 : 42;
+        if (update_osd_rect_region(9 + i, x, card_y, card_w, card_h, rr, gg, bb, 235) != 0) return -1;
+        if (update_osd_text_region(16 + i, x + 12, card_y + 22, 1,
+                                   active ? 255 : 150,
+                                   active ? 240 : 180,
+                                   active ? 130 : 210,
+                                   g_rga_demo_ops[i].label,
+                                   masks[4 + i], sizeof(masks[4 + i])) != 0) return -1;
+    }
+
+    if (update_osd_utf8_text_region(23, 88, 1344, 23, 140, 210, 180,
+                                    "效果会自动轮播：COPY、移动裁剪放大、翻转、90/180/270度旋转。",
+                                    masks[11], sizeof(masks[11]), 1024, 96) != 0) return -1;
+    if (update_osd_text_region(24, 88, 1404, 1, 170, 205, 235,
+                               bind_line, masks[12], sizeof(masks[12])) != 0) return -1;
+
+    return 0;
+}
+
 static int setup_display_vmix_osd(int dstride, size_t display_size, int input_count) {
     if (MEDIA_POOL_Create(DISPLAY_VMIX_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
     if (MEDIA_POOL_Create(DISPLAY_VMIX_OUTPUT_POOL, display_size, 4) != 0) goto fail_input;
@@ -2289,28 +2374,6 @@ fail_input:
     return -1;
 }
 
-typedef struct {
-    const char *label;
-    int algo;
-    int crop_x;
-    int crop_y;
-    int crop_w;
-    int crop_h;
-    int rotate;
-    int flip_h;
-    int flip_v;
-} rga_demo_op_t;
-
-static const rga_demo_op_t g_rga_demo_ops[] = {
-    {"COPY", MEDIA_RGA_ALG_COPY, 0, 0, CAM_W, CAM_H, 0, 0, 0},
-    {"CROP_ZOOM", MEDIA_RGA_ALG_RESIZE, 120, 120, 400, 400, 0, 0, 0},
-    {"FLIP_H", MEDIA_RGA_ALG_FLIP, 0, 0, CAM_W, CAM_H, 0, 1, 0},
-    {"FLIP_V", MEDIA_RGA_ALG_FLIP, 0, 0, CAM_W, CAM_H, 0, 0, 1},
-    {"ROTATE90", MEDIA_RGA_ALG_ROTATE, 0, 0, CAM_W, CAM_H, 90, 0, 0},
-    {"ROTATE180", MEDIA_RGA_ALG_ROTATE, 0, 0, CAM_W, CAM_H, 180, 0, 0},
-    {"ROTATE270", MEDIA_RGA_ALG_ROTATE, 0, 0, CAM_W, CAM_H, 270, 0, 0},
-};
-
 static int module_page_number(const char *name) {
     if (!name) return 1;
     for (size_t i = 0; i < ARRAY_SIZE(g_module_pages); ++i) {
@@ -2365,10 +2428,27 @@ static void cleanup_live_rga(int enabled) {
     MEDIA_RGA_DestroyChn(LIVE_RGA_GRP);
 }
 
-static int set_live_rga_op(int op_index) {
+static int rga_wave_i(int t, int max_value) {
+    int period;
+    int v;
+    if (max_value <= 0) return 0;
+    period = max_value * 2;
+    v = t % period;
+    return v <= max_value ? v : period - v;
+}
+
+static int set_live_rga_op(int op_index, int frame) {
     MEDIA_RGA_GRP_ATTR attr = {0};
     if (op_index < 0 || op_index >= (int)ARRAY_SIZE(g_rga_demo_ops)) return -1;
     fill_live_rga_attr(&attr, &g_rga_demo_ops[op_index]);
+    if (op_index == 1) {
+        int crop = 320 + (rga_wave_i(frame * 3, 160) & ~1);
+        int max_xy = CAM_W - crop;
+        attr.inputs[0].crop_x = rga_wave_i(frame * 5, max_xy) & ~1;
+        attr.inputs[0].crop_y = rga_wave_i(frame * 4, max_xy) & ~1;
+        attr.inputs[0].crop_w = crop;
+        attr.inputs[0].crop_h = crop;
+    }
     return MEDIA_RGA_SetGrpAttr(LIVE_RGA_GRP, &attr);
 }
 
@@ -5754,6 +5834,7 @@ int main(int argc, char **argv) {
         }
         rga_bind_display_ok = 1;
         (void)update_display_osd_text("RGA  NV12 BIND", "VI RGA VMIX OSD VO  OP COPY");
+        (void)update_rga_bind_flow_overlay(0, 0);
     }
     if (use_resize_bind_display) {
         if (!camera_ok || !live_resize_bind_ok || !display_vmix_osd_ok ||
@@ -6264,8 +6345,8 @@ int main(int argc, char **argv) {
         }
         if (rga_bind_display_ok) {
             rga_op_index = (frame / (FPS * RGA_OP_SECONDS)) % (int)ARRAY_SIZE(g_rga_demo_ops);
-            if (rga_op_index != last_rga_op_index) {
-                if (set_live_rga_op(rga_op_index) != 0) {
+            if (rga_op_index != last_rga_op_index || (rga_op_index == 1 && (frame % 4) == 0)) {
+                if (set_live_rga_op(rga_op_index, frame) != 0) {
                     fprintf(stderr, "warning: RGA op %s rejected\n", g_rga_demo_ops[rga_op_index].label);
                 } else {
                     last_rga_op_index = rga_op_index;
@@ -6302,6 +6383,7 @@ int main(int argc, char **argv) {
                              g_perf.cpu_percent);
                 }
                 (void)update_display_osd_text("RGA  VI RGA VMIX OSD VO", perf);
+                (void)update_rga_bind_flow_overlay(rga_op_index, frame);
                 if ((frame % FPS) == 0) {
                     char gpu_text[24];
                     char rga_text[24];
