@@ -20,16 +20,18 @@ cmake --build build -j
 
 - 屏幕：DSI/MIPI 竖屏 `1080x1920`
 - 摄像头：`/dev/video-camera0`
-- 主画面：默认每 5 秒轮播一个下方小窗体内容 + 竖屏视觉墙
+- 主画面：默认每个功能模块单独一屏轮播，屏幕上显示当前模块名、页码、CPU 占用和 GPU 占用
 - 缺真实传感器输入的模块：用生成帧/循环素材方式参与
 
 按 `Ctrl+C` 退出。
 
-如果只想固定主画面为实时摄像头：
+如果只想固定在第一个功能模块屏：
 
 ```bash
 /userdata/alldemo/scripts/run_alldemo.sh --no-rotate-main
 ```
+
+默认分页策略：`VI` 到 `PIC_IO` 每个功能模块单独一屏；`RTSP_SEND`、`RTSP_RECV` 不参与默认功能屏；`LICENSE` 只作为健康状态显示，不占功能页。后续确认每个模块的真实效果后，再考虑把低负载页面合并。
 
 如果要逐个验证某个小窗体，不让其它实时算法一起运行：
 
@@ -52,8 +54,11 @@ cmake --build build -j
 
 `--only <tile>` 会把主画面固定到指定小窗体，并且只初始化该小窗体需要的实时模块；未接入真实实时链路的 tile 会显示循环素材或合成占位，且不会强制打开摄像头。
 `TRANSFORM` 单独模式使用合成 NV12 输入和本地 LUT，不占用摄像头。
+`VO` 单独模式不占用摄像头，页面直接展示 MIPI/DSI 输出、1080x1920、NV12 plane、动态扫描条和彩条。
+`RGA` 单独模式不占用摄像头，页面展示 RGA 2D 图像操作：fast blit、crop/scale、rotate、flip、mosaic、compose/OSD。
 `CAP_DEHAZE` 和 `DCP_FAST_DEHAZE` 单独模式使用合成 RGB 输入，不占用摄像头。
 `CONV_CL` 单独模式使用合成 RGBA 输入，不占用摄像头。
+`VPSS` 单独模式使用实时摄像头输入，并在同屏展示 VPSS 多输出能力：原始输出、裁剪后缩放、水平翻转、90 度旋转。
 `CLAHE` 单独模式使用合成 NV12 输入，不占用摄像头。
 `RETINEX` 单独模式使用摄像头 video 输入，主画面左右对比原始 video 和 Retinex 输出。
 `EDOF_CL` 单独模式使用 `assets/loop/edof/mfi_whu` 的 `a.jpg/b.jpg/fused.png` 样张做三栏对比，每 3 秒切换一组。
@@ -77,7 +82,8 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --asset-check
 ```
 
-正常运行时，底部状态栏会显示摄像头出帧数、素材加载数、模块激活数、license/DRM/RTSP/NPU 状态。摄像头未出帧时主画面会明确显示 `CAMERA OFFLINE`。
+正常运行时，屏幕标题区会显示当前页码、CPU 占用和 GPU 占用；底部状态栏会显示摄像头出帧数、素材加载数、模块激活数、license/DRM/NPU 状态。摄像头未出帧时主画面会明确显示 `CAMERA OFFLINE`。如果当前系统没有暴露可读 GPU load 节点，GPU 会显示 `N/A`。
+当前 `--only VI` 已接入 `VI -> VMIX(NV12) -> OSD -> VO` bind 显示链路，不再 CPU 拷贝 VI 图像帧；`--only VPSS` 暂时仍使用手动取帧路径验证 VMIX/OSD 显示，待下一步迁移到 bind。
 
 小窗体右上角状态含义：
 
