@@ -106,14 +106,6 @@ typedef struct {
 } edof_pair_t;
 
 typedef struct {
-    const char *left_path;
-    const char *right_path;
-    image_asset_t left;
-    image_asset_t right;
-    int loaded;
-} dualview_pair_t;
-
-typedef struct {
     int license_ok;
     int camera_node_ok;
     int drm_ok;
@@ -192,14 +184,6 @@ static edof_pair_t g_edof_pairs[] = {
     {"assets/loop/edof/mfi_whu/0041/a.jpg",
      "assets/loop/edof/mfi_whu/0041/b.jpg",
      "assets/loop/edof/mfi_whu/0041/fused.png", {0}, {0}, {0}, 0},
-};
-
-static dualview_pair_t g_dualview_pair = {
-    "assets/loop/avm_inputs/src_1.jpg",
-    "assets/loop/avm_inputs/src_2.jpg",
-    {0},
-    {0},
-    0,
 };
 
 static void on_signal(int sig) {
@@ -686,30 +670,15 @@ static void image_to_nv12_frame(const image_asset_t *img, uint8_t *dst) {
     }
 }
 
-static void image_to_rgb_frame(const image_asset_t *img, uint8_t *dst) {
-    if (!img || !img->rgb || !dst || img->width <= 0 || img->height <= 0) return;
-
-    memset(dst, 0, RGB_FRAME_SIZE);
-
-    int out_w = CAM_W;
-    int out_h = (int)((int64_t)img->height * CAM_W / img->width);
-    if (out_h > CAM_H) {
-        out_h = CAM_H;
-        out_w = (int)((int64_t)img->width * CAM_H / img->height);
-    }
-    int ox = (CAM_W - out_w) / 2;
-    int oy = (CAM_H - out_h) / 2;
-
-    for (int y = 0; y < out_h; ++y) {
-        int sy = y * img->height / out_h;
-        uint8_t *drow = dst + ((size_t)(oy + y) * CAM_W + ox) * 3;
-        for (int x = 0; x < out_w; ++x) {
-            int sx = x * img->width / out_w;
-            const uint8_t *src = img->rgb + ((size_t)sy * img->width + sx) * 3;
-            uint8_t *px = drow + x * 3;
-            px[0] = src[0];
-            px[1] = src[1];
-            px[2] = src[2];
+static void fill_dualview_demo_rgb(uint8_t *dst, int input0) {
+    if (!dst) return;
+    for (int y = 0; y < CAM_H; ++y) {
+        uint8_t *row = dst + (size_t)y * CAM_W * 3;
+        for (int x = 0; x < CAM_W; ++x) {
+            uint8_t *px = row + x * 3;
+            px[0] = input0 ? 255 : 0;
+            px[1] = 0;
+            px[2] = input0 ? 0 : 255;
         }
     }
 }
@@ -2113,33 +2082,6 @@ static void unload_edof_pairs(void) {
     }
 }
 
-static int load_dualview_pair(void) {
-    dualview_pair_t *pair = &g_dualview_pair;
-    pair->loaded = 0;
-    if (load_image_rgb(pair->left_path, &pair->left) == 0 &&
-        load_image_rgb(pair->right_path, &pair->right) == 0) {
-        pair->loaded = 1;
-        return 1;
-    }
-
-    fprintf(stderr, "warning: failed to load DUALVIEW pair %s %s\n",
-            pair->left_path, pair->right_path);
-    free(pair->left.rgb);
-    free(pair->right.rgb);
-    memset(&pair->left, 0, sizeof(pair->left));
-    memset(&pair->right, 0, sizeof(pair->right));
-    return 0;
-}
-
-static void unload_dualview_pair(void) {
-    dualview_pair_t *pair = &g_dualview_pair;
-    free(pair->left.rgb);
-    free(pair->right.rgb);
-    memset(&pair->left, 0, sizeof(pair->left));
-    memset(&pair->right, 0, sizeof(pair->right));
-    pair->loaded = 0;
-}
-
 static edof_pair_t *get_loaded_edof_pair(int idx) {
     int seen = 0;
     for (size_t i = 0; i < sizeof(g_edof_pairs) / sizeof(g_edof_pairs[0]); ++i) {
@@ -2483,8 +2425,6 @@ int main(int argc, char **argv) {
     int loaded_assets = solid_test ? 0 : load_loop_assets();
     int loaded_edof_pairs = (!solid_test && only_tile && strcasecmp(only_tile, "EDOF_CL") == 0) ?
         load_edof_pairs() : 0;
-    int loaded_dualview_pair = (!solid_test && only_tile && strcasecmp(only_tile, "DUALVIEW") == 0) ?
-        load_dualview_pair() : 0;
     collect_health(loaded_assets);
     if (heavy_probe && !solid_test) {
         probe_modules();
@@ -2544,11 +2484,8 @@ int main(int argc, char **argv) {
     }
     int live_dualview_ok = 0;
     if (!solid_test && only_tile && strcasecmp(only_tile, "DUALVIEW") == 0 &&
-        loaded_dualview_pair > 0 && setup_live_dualview() == 0) {
+        setup_live_dualview() == 0) {
         live_dualview_ok = 1;
-    } else if (!solid_test && only_tile && strcasecmp(only_tile, "DUALVIEW") == 0 &&
-               loaded_dualview_pair > 0) {
-        set_tile_status("DUALVIEW", TILE_LOOP);
     }
     int live_stereo_ok = 0;
     if (!solid_test && only_tile && strcasecmp(only_tile, "STEREO_3D") == 0 &&
@@ -2570,7 +2507,6 @@ int main(int argc, char **argv) {
         cleanup_live_vpss(live_vpss_ok);
         cleanup_live_resize(live_resize_ok);
         cleanup_live_osd(live_osd_ok);
-        unload_dualview_pair();
         unload_edof_pairs();
         unload_loop_assets();
         MEDIA_SYS_Exit();
@@ -2600,7 +2536,6 @@ int main(int argc, char **argv) {
         cleanup_live_vpss(live_vpss_ok);
         cleanup_live_resize(live_resize_ok);
         cleanup_live_osd(live_osd_ok);
-        unload_dualview_pair();
         unload_edof_pairs();
         unload_loop_assets();
         MEDIA_SYS_Exit();
@@ -2777,10 +2712,11 @@ int main(int argc, char **argv) {
                 }
             }
         }
-        if (loaded_dualview_pair > 0 && last_dual_in0 && last_dual_in1 &&
+        if (!solid_test && only_tile && strcasecmp(only_tile, "DUALVIEW") == 0 &&
+            last_dual_in0 && last_dual_in1 &&
             last_dual_sbs && last_dual_lbl && dualview_frames == 0) {
-            image_to_rgb_frame(&g_dualview_pair.left, last_dual_in0);
-            image_to_rgb_frame(&g_dualview_pair.right, last_dual_in1);
+            fill_dualview_demo_rgb(last_dual_in0, 1);
+            fill_dualview_demo_rgb(last_dual_in1, 0);
             if (live_dualview_ok &&
                 process_live_dualview_one(LIVE_DUALVIEW_SBS_GRP, last_dual_in0,
                                           last_dual_in1, last_dual_sbs) == 0 &&
@@ -2826,8 +2762,8 @@ int main(int argc, char **argv) {
                            last_edof_in1,
                            edof_frames > 0 ? last_edof : NULL,
                            stereo_frames > 0 ? last_stereo : NULL,
-                           loaded_dualview_pair > 0 ? last_dual_in0 : NULL,
-                           loaded_dualview_pair > 0 ? last_dual_in1 : NULL,
+                           (only_tile && strcasecmp(only_tile, "DUALVIEW") == 0) ? last_dual_in0 : NULL,
+                           (only_tile && strcasecmp(only_tile, "DUALVIEW") == 0) ? last_dual_in1 : NULL,
                            dualview_frames > 0 ? last_dual_sbs : NULL,
                            dualview_frames > 0 ? last_dual_lbl : NULL);
         }
@@ -2861,7 +2797,6 @@ int main(int argc, char **argv) {
     MEDIA_POOL_Destroy(WORK_POOL_NV12);
     MEDIA_POOL_Destroy(WORK_POOL_RGB);
     MEDIA_POOL_Destroy(WORK_POOL_OUT);
-    unload_dualview_pair();
     unload_edof_pairs();
     unload_loop_assets();
     free(last_stereo);

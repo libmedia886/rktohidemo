@@ -54,7 +54,7 @@ cmake --build build -j
 `CONV_CL` 单独模式使用合成 RGBA 输入，不占用摄像头。
 `CLAHE` 单独模式使用合成 NV12 输入，不占用摄像头。
 `EDOF_CL` 单独模式使用 `assets/loop/edof/mfi_whu` 的 `a.jpg/b.jpg/fused.png` 样张做三栏对比，每 3 秒切换一组。
-`DUALVIEW` 单独模式使用两张本地 RGB 输入图，主画面同时显示 input0、input1、side-by-side 输出和 line-by-line 输出，不占用摄像头。
+`DUALVIEW` 单独模式参考 `/userdata/rktohi/demo/dualview` 示例生成两路 RGB888 输入：input0 纯红、input1 纯蓝，主画面同时显示 input0、input1、side-by-side 输出和 line-by-line 输出，不占用摄像头。
 `STEREO_3D` 单独模式使用摄像头输入。
 
 ## 快速自检
