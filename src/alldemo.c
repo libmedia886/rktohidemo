@@ -100,7 +100,7 @@
 #define RGA_OP_SECONDS 3
 #define EDOF_PAIR_SECONDS 3
 #define RESIZE_DEMO_UPDATE_FRAMES (FPS * 2)
-#define THERMAL_VO_CAPTURE_SECONDS 5
+#define VO_CAPTURE_SECONDS 5
 #define TILE_FIRST_INDEX 4
 #define TILE_ROTATE_COUNT 16
 
@@ -501,23 +501,83 @@ static int write_nv12_bmp(const char *path, const uint8_t *src,
     return ok;
 }
 
-static void maybe_capture_thermal_vo_frame(const char *only_tile, int frame,
-                                           const uint8_t *nv12, int stride) {
-    if (!only_tile || strcasecmp(only_tile, "THERMAL") != 0 || !nv12) return;
-    if ((frame % (FPS * THERMAL_VO_CAPTURE_SECONDS)) != 0) return;
+static void maybe_capture_module_vo_frame(const char *only_tile, int frame,
+                                          const uint8_t *nv12, int stride) {
+    if (!only_tile || !nv12) return;
+    const char *prefix = NULL;
+    if (strcasecmp(only_tile, "THERMAL") == 0) {
+        prefix = "thermal";
+    } else if (strcasecmp(only_tile, "EDOF_CL") == 0) {
+        prefix = "edof_cl";
+    } else if (strcasecmp(only_tile, "RETINEX") == 0) {
+        prefix = "retinex";
+    } else {
+        return;
+    }
+    if ((frame % (FPS * VO_CAPTURE_SECONDS)) != 0) return;
 
     const char *dir = "/userdata/alldemo/vo_captures";
     if (mkdir(dir, 0755) != 0 && errno != EEXIST) {
-        fprintf(stderr, "THERMAL VO capture mkdir failed: %s\n", strerror(errno));
+        fprintf(stderr, "%s VO capture mkdir failed: %s\n", only_tile, strerror(errno));
         return;
     }
 
     char path[256];
-    snprintf(path, sizeof(path), "%s/thermal_vo_%06d.bmp", dir, frame);
+    snprintf(path, sizeof(path), "%s/%s_vo_%06d.bmp", dir, prefix, frame);
     if (write_nv12_bmp(path, nv12, SCREEN_W, SCREEN_H, stride) == 0) {
-        printf("THERMAL VO capture: %s\n", path);
+        printf("%s VO capture: %s\n", only_tile, path);
     } else {
-        fprintf(stderr, "THERMAL VO capture failed: %s\n", path);
+        fprintf(stderr, "%s VO capture failed: %s\n", only_tile, path);
+    }
+}
+
+static void maybe_capture_vo_channel_frame(const char *only_tile, int frame, int stride) {
+    if (!only_tile || strcasecmp(only_tile, "RETINEX") != 0) return;
+    if ((frame % (FPS * VO_CAPTURE_SECONDS)) != 0) return;
+
+    MEDIA_BUFFER buf = {-1, -1};
+    int source = 0;
+    if (MEDIA_VO_GetFrame(0, 0, &buf, 1) == 0) {
+        source = 1;
+    } else if (MEDIA_OSD_GetFrame(DISPLAY_OSD_GRP, &buf, 1) == 0) {
+        source = 2;
+    } else if (MEDIA_VMIX_GetFrame(DISPLAY_VMIX_GRP, &buf, 1) == 0) {
+        source = 3;
+    } else {
+        fprintf(stderr, "RETINEX VO capture no output frame at %d\n", frame);
+        return;
+    }
+
+    void *addr = NULL;
+    size_t size = 0;
+    int fd = -1;
+    int cpu_access = MEDIA_POOL_BeginCpuAccess(buf, DMA_BUF_SYNC_READ) == 0;
+    if (cpu_access &&
+        MEDIA_POOL_GetFd(buf, &fd, &size) == 0 && fd >= 0 && size > 0 &&
+        (addr = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0)) != MAP_FAILED) {
+        const char *dir = "/userdata/alldemo/vo_captures";
+        if (mkdir(dir, 0755) == 0 || errno == EEXIST) {
+            char path[256];
+            snprintf(path, sizeof(path), "%s/retinex_vo_%06d.bmp", dir, frame);
+            if (size >= (size_t)stride * SCREEN_H * 3 / 2 &&
+                write_nv12_bmp(path, (const uint8_t *)addr, SCREEN_W, SCREEN_H, stride) == 0) {
+                printf("RETINEX VO capture: %s source=%s\n", path,
+                       source == 1 ? "VO" : (source == 2 ? "OSD" : "VMIX"));
+            } else {
+                fprintf(stderr, "RETINEX VO capture failed: %s\n", path);
+            }
+        } else {
+            fprintf(stderr, "RETINEX VO capture mkdir failed: %s\n", strerror(errno));
+        }
+        munmap(addr, size);
+    }
+    if (cpu_access) (void)MEDIA_POOL_EndCpuAccess(buf, DMA_BUF_SYNC_READ);
+    if (source == 1) {
+        MEDIA_VO_ReleaseFrame(0, 0, buf);
+    } else if (source == 2) {
+        MEDIA_OSD_ReleaseFrame(DISPLAY_OSD_GRP, buf);
+    } else if (source == 3) {
+        MEDIA_VMIX_ReleaseFrame(DISPLAY_VMIX_GRP, buf);
     }
 }
 
@@ -1349,6 +1409,105 @@ static void draw_camera_tile(uint8_t *dst, int dstride, int dx, int dy, int dw, 
     }
 }
 
+static void draw_camera_tile_fit(uint8_t *dst, int dstride, int dx, int dy, int dw, int dh,
+                                 const uint8_t *src, int sw, int sh, int sstride) {
+    if (!src || dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return;
+    int out_w = dw;
+    int out_h = (int)((int64_t)sh * out_w / sw);
+    if (out_h > dh) {
+        out_h = dh;
+        out_w = (int)((int64_t)sw * out_h / sh);
+    }
+    if (out_w <= 0 || out_h <= 0) return;
+    int ox = dx + (dw - out_w) / 2;
+    int oy = dy + (dh - out_h) / 2;
+    draw_camera_tile(dst, dstride, ox, oy, out_w, out_h, src, sw, sh, sstride);
+}
+
+static void nv12_content_rect(const uint8_t *src, int sw, int sh, int sstride,
+                              int *sx, int *sy, int *cw, int *ch) {
+    int min_x = sw, min_y = sh, max_x = -1, max_y = -1;
+    if (!src || sw <= 0 || sh <= 0 || sstride < sw) {
+        *sx = 0; *sy = 0; *cw = sw; *ch = sh;
+        return;
+    }
+
+    for (int y = 0; y < sh; ++y) {
+        const uint8_t *row = src + (size_t)y * sstride;
+        for (int x = 0; x < sw; ++x) {
+            if (row[x] > 24) {
+                if (x < min_x) min_x = x;
+                if (x > max_x) max_x = x;
+                if (y < min_y) min_y = y;
+                if (y > max_y) max_y = y;
+            }
+        }
+    }
+
+    if (max_x < min_x || max_y < min_y) {
+        *sx = 0; *sy = 0; *cw = sw; *ch = sh;
+        return;
+    }
+    min_x &= ~1;
+    min_y &= ~1;
+    max_x |= 1;
+    max_y |= 1;
+    if (max_x >= sw) max_x = sw - 1;
+    if (max_y >= sh) max_y = sh - 1;
+    *sx = min_x;
+    *sy = min_y;
+    *cw = max_x - min_x + 1;
+    *ch = max_y - min_y + 1;
+}
+
+static void draw_camera_tile_crop(uint8_t *dst, int dstride, int dx, int dy, int dw, int dh,
+                                  const uint8_t *src, int sw, int sh, int sstride,
+                                  int sx, int sy, int cw, int ch) {
+    if (!src || dw <= 0 || dh <= 0 || cw <= 0 || ch <= 0) return;
+    const uint8_t *src_y = src;
+    const uint8_t *src_uv = src + (size_t)sstride * sh;
+    uint8_t *dst_y = dst;
+    uint8_t *dst_uv = dst + (size_t)dstride * SCREEN_H;
+
+    for (int y = 0; y < dh; ++y) {
+        int sample_y = sy + y * ch / dh;
+        uint8_t *drow = dst_y + (size_t)(dy + y) * dstride + dx;
+        const uint8_t *srow = src_y + (size_t)sample_y * sstride;
+        for (int x = 0; x < dw; ++x) {
+            drow[x] = srow[sx + x * cw / dw];
+        }
+    }
+
+    for (int y = 0; y < dh / 2; ++y) {
+        int sample_y = sy + (y * 2) * ch / dh;
+        const uint8_t *srow = src_uv + (size_t)(sample_y / 2) * sstride;
+        uint8_t *drow = dst_uv + (size_t)((dy / 2) + y) * dstride + (dx & ~1);
+        for (int x = 0; x < dw; x += 2) {
+            int sample_x = (sx + x * cw / dw) & ~1;
+            drow[x] = srow[sample_x];
+            drow[x + 1] = srow[sample_x + 1];
+        }
+    }
+}
+
+static void draw_camera_tile_fit_content(uint8_t *dst, int dstride, int dx, int dy, int dw, int dh,
+                                         const uint8_t *src, int sw, int sh, int sstride) {
+    int sx = 0, sy = 0, cw = sw, ch = sh;
+    if (!src || dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return;
+    nv12_content_rect(src, sw, sh, sstride, &sx, &sy, &cw, &ch);
+    int out_w = dw;
+    int out_h = (int)((int64_t)ch * out_w / cw);
+    if (out_h > dh) {
+        out_h = dh;
+        out_w = (int)((int64_t)cw * out_h / ch);
+    }
+    if (out_w <= 0 || out_h <= 0) return;
+    int ox = dx + (dw - out_w) / 2;
+    int oy = dy + (dh - out_h) / 2;
+    draw_camera_tile_crop(dst, dstride, ox, oy, out_w, out_h, src, sw, sh, sstride,
+                          sx, sy, cw, ch);
+}
+
 static void image_to_nv12_frame(const image_asset_t *img, uint8_t *dst) {
     if (!img || !img->rgb || !dst || img->width <= 0 || img->height <= 0) return;
 
@@ -1450,23 +1609,41 @@ static void fill_dualview_demo_rgb(uint8_t *dst, int input0) {
 
 static void draw_edof_comparison(uint8_t *dst, int stride, int x, int y, int w, int h,
                                  const uint8_t *left, const uint8_t *right, const uint8_t *out) {
-    int gap = 10;
+    int gap = 12;
     int label_h = 22;
-    int col_w = (w - gap * 2) / 3;
-    const char *labels[3] = {"INPUT A", "INPUT B", "OUTPUT"};
-    const uint8_t *frames[3] = {left, right, out};
+    int top_h = (h * 42) / 100;
+    int bottom_h = h - top_h - gap;
+    int input_w = (w - gap) / 2;
+
+    struct {
+        const char *label;
+        const uint8_t *frame;
+        int x, y, w, h;
+        int highlight;
+    } panels[3] = {
+        {"INPUT A", left, x, y, input_w, top_h, 0},
+        {"INPUT B", right, x + input_w + gap, y, input_w, top_h, 0},
+        {"OUTPUT", out, x, y + top_h + gap, w, bottom_h, 1},
+    };
 
     for (int i = 0; i < 3; ++i) {
-        int cx = x + i * (col_w + gap);
-        fill_rect_nv12(dst, stride, cx, y, col_w, h, 5, 10, 18);
-        stroke_rect_nv12(dst, stride, cx, y, col_w, h, 1, i == 2 ? 80 : 70, i == 2 ? 255 : 140, i == 2 ? 180 : 210);
-        fill_rect_nv12(dst, stride, cx, y + h - label_h, col_w, label_h, 0, 0, 0);
-        draw_text(dst, stride, cx + 8, y + h - label_h + 5, labels[i], 1, 180, 230, 255);
-        if (frames[i]) {
-            draw_camera_tile(dst, stride, cx + 4, y + 4, col_w - 8, h - label_h - 8,
-                             frames[i], CAM_W, CAM_H, CAM_STRIDE);
+        int px = panels[i].x;
+        int py = panels[i].y;
+        int pw = panels[i].w;
+        int ph = panels[i].h;
+        fill_rect_nv12(dst, stride, px, py, pw, ph, 5, 10, 18);
+        stroke_rect_nv12(dst, stride, px, py, pw, ph, 1,
+                         panels[i].highlight ? 80 : 70,
+                         panels[i].highlight ? 255 : 140,
+                         panels[i].highlight ? 180 : 210);
+        fill_rect_nv12(dst, stride, px, py + ph - label_h, pw, label_h, 0, 0, 0);
+        draw_text(dst, stride, px + 8, py + ph - label_h + 5,
+                  panels[i].label, 1, 180, 230, 255);
+        if (panels[i].frame) {
+            draw_camera_tile_fit_content(dst, stride, px + 4, py + 4, pw - 8, ph - label_h - 8,
+                                         panels[i].frame, CAM_W, CAM_H, CAM_STRIDE);
         } else {
-            draw_text(dst, stride, cx + 12, y + h / 2 - 10, "WAIT", 1, 255, 190, 100);
+            draw_text(dst, stride, px + 12, py + ph / 2 - 10, "WAIT", 1, 255, 190, 100);
         }
     }
 }
@@ -1486,8 +1663,8 @@ static void draw_nv12_comparison(uint8_t *dst, int stride, int x, int y, int w, 
         stroke_rect_nv12(dst, stride, cx, y, col_w, h, 1,
                          i == 0 ? 70 : 80, i == 0 ? 140 : 255, i == 0 ? 210 : 180);
         if (frames[i]) {
-            draw_camera_tile(dst, stride, cx + 4, y + 4, col_w - 8, h - label_h - 8,
-                             frames[i], CAM_W, CAM_H, CAM_STRIDE);
+            draw_camera_tile_fit(dst, stride, cx + 4, y + 4, col_w - 8, h - label_h - 8,
+                                 frames[i], CAM_W, CAM_H, CAM_STRIDE);
         } else {
             draw_text(dst, stride, cx + 12, y + h / 2 - 10, "WAIT", 1, 255, 190, 100);
         }
@@ -6614,7 +6791,7 @@ int main(int argc, char **argv) {
         live_clahe_ok = 1;
     }
     int live_retinex_ok = 0;
-    if (!solid_test && !only_tile &&
+    if (!solid_test && (!only_tile || strcasecmp(only_tile, "RETINEX") == 0) &&
         setup_live_retinex() == 0) {
         live_retinex_ok = 1;
     }
@@ -6716,13 +6893,12 @@ int main(int argc, char **argv) {
          strcasecmp(only_tile, "RESIZE_RGA") == 0 ||
          strcasecmp(only_tile, "CSC_RGA") == 0 ||
          strcasecmp(only_tile, "CSC_CL") == 0 ||
-         strcasecmp(only_tile, "CLAHE") == 0 ||
-         strcasecmp(only_tile, "RETINEX") == 0);
+         strcasecmp(only_tile, "CLAHE") == 0);
     int use_vi_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "VI") == 0;
     int use_vpss_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "VPSS") == 0;
     int use_osd_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "OSD") == 0;
     int use_clahe_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "CLAHE") == 0;
-    int use_retinex_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "RETINEX") == 0;
+    int use_retinex_bind_display = 0;
     int use_rga_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "RGA") == 0;
     int use_resize_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "RESIZE_RGA") == 0;
     int use_csc_rga_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "CSC_RGA") == 0;
@@ -7539,6 +7715,7 @@ int main(int argc, char **argv) {
                            rga_text);
                 }
             }
+            maybe_capture_vo_channel_frame(only_tile, frame, dstride);
             frame++;
             usleep(1000000 / FPS);
             continue;
@@ -7860,7 +8037,7 @@ int main(int argc, char **argv) {
                            dualview_frames > 0 ? last_dual_sbs : NULL,
                            dualview_frames > 0 ? last_dual_lbl : NULL);
         }
-        maybe_capture_thermal_vo_frame(only_tile, frame, (const uint8_t *)addr, dstride);
+        maybe_capture_module_vo_frame(only_tile, frame, (const uint8_t *)addr, dstride);
         (void)MEDIA_POOL_EndCpuAccess(dbuf, DMA_BUF_SYNC_WRITE);
         munmap(addr, size);
 

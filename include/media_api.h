@@ -1252,6 +1252,19 @@ typedef struct {
     int plane_count;
 } MEDIA_VO_ATTR;
 
+typedef struct {
+    const char *device;     // DRM card，NULL 表示 /dev/dri/card0
+    int connector_id;       // writeback connector id，<=0 自动查找
+    int crtc_id;            // 被回环的 CRTC id，<=0 自动使用当前 active CRTC
+    int width;
+    int height;
+    int stride;             // bytesperline，<=0 自动
+    int fps;                // <=0 不做帧率限制
+    int format;             // MEDIA_FORMAT_NV12 / BGR888 / ARGB8888
+    int pool_id;            // 输出 pool id
+    int output_depth;       // 输出端口队列深度，<=0 默认 4
+} MEDIA_VO_WBC_ATTR;
+
 int MEDIA_VO_SetAttr(int output_id, const MEDIA_VO_ATTR *attr);
 int MEDIA_VO_GetOutput(int output_id, MEDIA_VO_INTF *intf, int *width, int *height, int *plane_count);
 int MEDIA_VO_CreateChn(int output_id, int chn, int x, int y, int width, int height, int stride, int depth,
@@ -1265,6 +1278,14 @@ int MEDIA_VO_FreezeMain(int freeze);
 int MEDIA_VO_UnfreezeMain(void);
 int MEDIA_VO_FreezePlane(int output_id, int plane_id, int freeze);
 int MEDIA_VO_HidePlane(int output_id, int plane_id, int hide);
+
+int MEDIA_VO_WBC_Probe(const char *device, int *connector_id, int *crtc_id);
+int MEDIA_VO_WBC_CreateChn(int chn, const MEDIA_VO_WBC_ATTR *attr);
+int MEDIA_VO_WBC_DestroyChn(int chn);
+int MEDIA_VO_WBC_Start(int chn);
+int MEDIA_VO_WBC_Stop(int chn);
+int MEDIA_VO_WBC_GetFrame(int chn, MEDIA_BUFFER *buf, int timeout_ms);
+int MEDIA_VO_WBC_ReleaseFrame(int chn, MEDIA_BUFFER buf);
 
 // 手动发送
 int MEDIA_SYS_SendFrame(const char *dst_mod, int dst_id, const char *dst_port,
