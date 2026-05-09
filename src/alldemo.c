@@ -195,6 +195,11 @@ static volatile sig_atomic_t g_running = 1;
 static volatile sig_atomic_t g_signal_count = 0;
 static health_status_t g_health = {0};
 static perf_status_t g_perf = {0.0f, 0.0f, 0, 0.0f, 0};
+static int g_vo_demo_state = 0;
+static int g_vo_demo_prev_state = -1;
+static int g_vo_demo_phase_frame = 0;
+static const char *g_vo_demo_api = "MEDIA_SYS_SendFrame";
+static const char *g_vo_demo_status = "NORMAL REFRESH";
 static const char *g_bind_vi_src_port = NULL;
 static const char *g_bind_rga_in_port = NULL;
 static const char *g_bind_rga_src_port = NULL;
@@ -233,6 +238,14 @@ enum {
     TILE_LOOP = 2,
     TILE_PROBED = 3,
     TILE_LIVE = 4,
+};
+
+enum {
+    VO_DEMO_NORMAL = 0,
+    VO_DEMO_FREEZE_MAIN = 1,
+    VO_DEMO_FREEZE_PLANE = 2,
+    VO_DEMO_HIDE_WARN = 3,
+    VO_DEMO_HIDE_PLANE = 4,
 };
 
 static module_tile_t g_tiles[] = {
@@ -910,6 +923,21 @@ static int render_utf8_text_mask(const char *text, int pixel_size, uint8_t *mask
     return 0;
 }
 
+static void draw_utf8_text(uint8_t *dst, int stride, int x, int y, const char *text,
+                           int pixel_size, uint8_t r, uint8_t g, uint8_t b) {
+    static uint8_t mask[1024 * 96];
+    int w = 0;
+    int h = 0;
+    if (render_utf8_text_mask(text, pixel_size, mask, 1024, 96, &w, &h) != 0) return;
+    for (int yy = 0; yy < h; ++yy) {
+        for (int xx = 0; xx < w; ++xx) {
+            if (mask[yy * 1024 + xx] > 16) {
+                fill_rect_nv12(dst, stride, x + xx, y + yy, 1, 1, r, g, b);
+            }
+        }
+    }
+}
+
 static void draw_camera_tile(uint8_t *dst, int dstride, int dx, int dy, int dw, int dh,
                              const uint8_t *src, int sw, int sh, int sstride) {
     if (!src) return;
@@ -1106,20 +1134,35 @@ static void draw_vo_showcase(uint8_t *dst, int stride, int x, int y, int w, int 
     fill_rect_nv12(dst, stride, x, y, w, h, 4, 9, 16);
     stroke_rect_nv12(dst, stride, x, y, w, h, 4, 0, 220, 180);
 
-    int margin = 44;
+    int margin = 34;
     int panel_x = x + margin;
-    int panel_y = y + 54;
+    int panel_y = y + 42;
     int panel_w = w - margin * 2;
-    int panel_h = h - 108;
+    int panel_h = h - 84;
     fill_rect_nv12(dst, stride, panel_x, panel_y, panel_w, panel_h, 7, 13, 24);
     stroke_rect_nv12(dst, stride, panel_x, panel_y, panel_w, panel_h, 3, 70, 180, 255);
 
-    draw_text(dst, stride, panel_x + 36, panel_y + 34, "VO DISPLAY OUTPUT", 4, 160, 255, 220);
-    draw_text(dst, stride, panel_x + 40, panel_y + 118, "MIPI DSI  1080X1920  NV12 PLANE", 2, 190, 230, 255);
-    draw_text(dst, stride, panel_x + 40, panel_y + 168, "VISIBLE PAGE IS SENT BY MEDIA_SYS_SEND_FRAME TO VO", 1, 255, 230, 120);
+    draw_utf8_text(dst, stride, panel_x + 34, panel_y + 28,
+                   "VO显示输出控制", 34, 160, 255, 220);
+    draw_utf8_text(dst, stride, panel_x + 36, panel_y + 86,
+                   "数据流：程序生成NV12画面 -> VO通道0 -> MIPI/DSI屏幕",
+                   22, 190, 230, 255);
+    draw_utf8_text(dst, stride, panel_x + 36, panel_y + 124,
+                   "VO是显示链路最后一站，负责冻结、隐藏和恢复显示平面。",
+                   22, 255, 230, 120);
 
-    int bar_y = panel_y + 250;
-    int bar_h = 140;
+    fill_rect_nv12(dst, stride, panel_x + 34, panel_y + 170, panel_w - 68, 112, 10, 22, 38);
+    stroke_rect_nv12(dst, stride, panel_x + 34, panel_y + 170, panel_w - 68, 112, 2, 120, 190, 255);
+    draw_text(dst, stride, panel_x + 58, panel_y + 194, "CURRENT API", 2, 160, 255, 220);
+    draw_utf8_text(dst, stride, panel_x + 58, panel_y + 232, g_vo_demo_api, 24, 190, 230, 255);
+    draw_text(dst, stride, panel_x + 520, panel_y + 194, "STATE", 2, 160, 255, 220);
+    draw_utf8_text(dst, stride, panel_x + 520, panel_y + 232, g_vo_demo_status, 24,
+                   255,
+                   g_vo_demo_state == VO_DEMO_NORMAL ? 255 : 210,
+                   g_vo_demo_state == VO_DEMO_NORMAL ? 220 : 90);
+
+    int bar_y = panel_y + 330;
+    int bar_h = 112;
     int bar_w = panel_w / 6;
     const uint8_t colors[6][3] = {
         {220, 40, 50}, {40, 170, 90}, {50, 100, 220},
@@ -1131,8 +1174,8 @@ static void draw_vo_showcase(uint8_t *dst, int stride, int x, int y, int w, int 
     }
     stroke_rect_nv12(dst, stride, panel_x, bar_y, bar_w * 6, bar_h, 3, 240, 240, 240);
 
-    int scan_area_y = bar_y + 230;
-    int scan_area_h = panel_h - (scan_area_y - panel_y) - 140;
+    int scan_area_y = bar_y + 168;
+    int scan_area_h = panel_h - (scan_area_y - panel_y) - 220;
     if (scan_area_h < 120) scan_area_h = 120;
     fill_rect_nv12(dst, stride, panel_x + 40, scan_area_y, panel_w - 80, scan_area_h, 8, 16, 30);
     stroke_rect_nv12(dst, stride, panel_x + 40, scan_area_y, panel_w - 80, scan_area_h, 2, 120, 190, 255);
@@ -1143,8 +1186,27 @@ static void draw_vo_showcase(uint8_t *dst, int stride, int x, int y, int w, int 
     int scan_y = scan_area_y + 12 + ((frame * 8) % (scan_area_h - 24));
     fill_rect_nv12(dst, stride, panel_x + 58, scan_y, panel_w - 116, 10, 0, 255, 190);
 
-    draw_text(dst, stride, panel_x + 50, panel_y + panel_h - 94, "VO CHN 0  PLANE AUTO  LIVE ON SCREEN", 2, 190, 255, 230);
-    draw_text(dst, stride, panel_x + 50, panel_y + panel_h - 48, "NO CAMERA REQUIRED", 2, 255, 230, 120);
+    int step_y = panel_y + panel_h - 178;
+    const char *steps[4] = {"NORMAL", "FREEZE MAIN", "FREEZE PLANE", "HIDE PLANE"};
+    for (int i = 0; i < 4; ++i) {
+        int sx = panel_x + 44 + i * 205;
+        int active =
+            (i == 0 && g_vo_demo_state == VO_DEMO_NORMAL) ||
+            (i == 1 && g_vo_demo_state == VO_DEMO_FREEZE_MAIN) ||
+            (i == 2 && g_vo_demo_state == VO_DEMO_FREEZE_PLANE) ||
+            (i == 3 && (g_vo_demo_state == VO_DEMO_HIDE_WARN || g_vo_demo_state == VO_DEMO_HIDE_PLANE));
+        fill_rect_nv12(dst, stride, sx, step_y, 174, 62,
+                       active ? 22 : 8, active ? 58 : 24, active ? 66 : 36);
+        stroke_rect_nv12(dst, stride, sx, step_y, 174, 62, 2,
+                         active ? 255 : 80, active ? 230 : 120, active ? 120 : 170);
+        draw_text(dst, stride, sx + 16, step_y + 22, steps[i], 1,
+                  active ? 255 : 150, active ? 245 : 180, active ? 160 : 210);
+    }
+
+    draw_utf8_text(dst, stride, panel_x + 46, panel_y + panel_h - 82,
+                   "隐藏平面只持续1秒，演示完成后会自动恢复。", 22, 255, 230, 120);
+    draw_text(dst, stride, panel_x + 50, panel_y + panel_h - 38,
+              "VO CHN0  PLANE AUTO  FRAME COUNTER", 2, 190, 255, 230);
 }
 
 static void draw_rga_panel(uint8_t *dst, int stride, int x, int y, int w, int h,
@@ -5122,6 +5184,76 @@ static void draw_solid_test(uint8_t *canvas, int stride) {
     draw_text(canvas, stride, 150, 330, "NO CAMERA  NO ASSETS  NO ANIMATION", 2, 230, 245, 255);
 }
 
+static int vo_demo_state_for_frame(int frame) {
+    int t = frame % (FPS * 18);
+    if (t < FPS * 4) return VO_DEMO_NORMAL;
+    if (t < FPS * 7) return VO_DEMO_FREEZE_MAIN;
+    if (t < FPS * 10) return VO_DEMO_NORMAL;
+    if (t < FPS * 13) return VO_DEMO_FREEZE_PLANE;
+    if (t < FPS * 16) return VO_DEMO_NORMAL;
+    if (t < FPS * 17) return VO_DEMO_HIDE_WARN;
+    return VO_DEMO_HIDE_PLANE;
+}
+
+static void vo_demo_restore_output(void) {
+    (void)MEDIA_VO_FreezeMain(0);
+    (void)MEDIA_VO_UnfreezeMain();
+    (void)MEDIA_VO_FreezePlane(0, 0, 0);
+    (void)MEDIA_VO_HidePlane(0, 0, 0);
+}
+
+static int vo_demo_prepare(int frame) {
+    int state = vo_demo_state_for_frame(frame);
+    int pending_apply = 0;
+    g_vo_demo_phase_frame = frame;
+
+    if (state != g_vo_demo_prev_state) {
+        if (g_vo_demo_prev_state == VO_DEMO_FREEZE_MAIN ||
+            g_vo_demo_prev_state == VO_DEMO_FREEZE_PLANE ||
+            g_vo_demo_prev_state == VO_DEMO_HIDE_PLANE) {
+            vo_demo_restore_output();
+        }
+        pending_apply = 1;
+        g_vo_demo_prev_state = state;
+    }
+
+    g_vo_demo_state = state;
+    switch (state) {
+    case VO_DEMO_FREEZE_MAIN:
+        g_vo_demo_api = "MEDIA_VO_FreezeMain(1)";
+        g_vo_demo_status = "FREEZE MAIN";
+        break;
+    case VO_DEMO_FREEZE_PLANE:
+        g_vo_demo_api = "MEDIA_VO_FreezePlane(0,0,1)";
+        g_vo_demo_status = "FREEZE PLANE";
+        break;
+    case VO_DEMO_HIDE_WARN:
+        g_vo_demo_api = "MEDIA_VO_HidePlane(0,0,1)";
+        g_vo_demo_status = "HIDE WARNING";
+        break;
+    case VO_DEMO_HIDE_PLANE:
+        g_vo_demo_api = "MEDIA_VO_HidePlane(0,0,1)";
+        g_vo_demo_status = "HIDE PLANE";
+        break;
+    case VO_DEMO_NORMAL:
+    default:
+        g_vo_demo_api = "MEDIA_SYS_SendFrame";
+        g_vo_demo_status = "NORMAL REFRESH";
+        break;
+    }
+    return pending_apply;
+}
+
+static void vo_demo_apply_after_send(void) {
+    if (g_vo_demo_state == VO_DEMO_FREEZE_MAIN) {
+        (void)MEDIA_VO_FreezeMain(1);
+    } else if (g_vo_demo_state == VO_DEMO_FREEZE_PLANE) {
+        (void)MEDIA_VO_FreezePlane(0, 0, 1);
+    } else if (g_vo_demo_state == VO_DEMO_HIDE_PLANE) {
+        (void)MEDIA_VO_HidePlane(0, 0, 1);
+    }
+}
+
 int main(int argc, char **argv) {
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
@@ -5314,6 +5446,12 @@ int main(int argc, char **argv) {
         return 1;
     }
     set_tile_status("VO", TILE_LIVE);
+
+    int vo_demo_enabled = !solid_test && only_tile && strcasecmp(only_tile, "VO") == 0;
+    if (vo_demo_enabled) {
+        vo_demo_restore_output();
+        g_vo_demo_prev_state = -1;
+    }
 
     int use_vmix_osd_display = !solid_test && only_tile &&
         (strcasecmp(only_tile, "VI") == 0 ||
@@ -6372,6 +6510,11 @@ int main(int argc, char **argv) {
             }
         }
 
+        int vo_demo_pending_apply = 0;
+        if (vo_demo_enabled) {
+            vo_demo_pending_apply = vo_demo_prepare(frame);
+        }
+
         MEDIA_BUFFER dbuf = {-1, -1};
         if (MEDIA_POOL_GetBuffer(DISPLAY_POOL, &dbuf) != 0) {
             usleep(1000);
@@ -6423,6 +6566,8 @@ int main(int argc, char **argv) {
 
         if (MEDIA_SYS_SendFrame("VO", 0, "input0", dbuf, 1000) != 0) {
             MEDIA_POOL_PutBuffer(dbuf);
+        } else if (vo_demo_enabled && vo_demo_pending_apply) {
+            vo_demo_apply_after_send();
         }
         frame++;
         usleep(1000000 / FPS);
@@ -6432,6 +6577,7 @@ int main(int argc, char **argv) {
     signal(SIGTERM, on_signal);
     alarm(5);
 
+    if (vo_demo_enabled) vo_demo_restore_output();
     unbind_vpss_vmix_osd_vo(vpss_bind_display_ok);
     unbind_vi_csc_cl_chain_vmix_osd_vo(csc_cl_bind_display_ok);
     unbind_vi_csc_chain_vmix_osd_vo(csc_rga_bind_display_ok);
