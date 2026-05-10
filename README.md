@@ -55,7 +55,7 @@ cmake --build build -j
 ```
 
 `--only <tile>` 会把主画面固定到指定小窗体，并且只初始化该小窗体需要的实时模块；未接入真实实时链路的 tile 会显示循环素材或合成占位，且不会强制打开摄像头。
-`TRANSFORM` 单独模式使用合成 NV12 输入和本地 LUT，不占用摄像头。
+`TRANSFORM` 单独模式使用实时摄像头输入，走 `VI -> VPSS(4路同源同尺寸NV12) -> RAW/3x TRANSFORM -> VMIX -> OSD -> VO` bind 链路，同屏展示 RAW、UNDISTORT、ROTATE ZOOM、PERSPECTIVE 四路画面；ROTATE ZOOM 路实时更新 XY LUT，VMIX 后的 OSD 层显示四路帧计数和 CPU/GPU/RGA 占用率。
 `VO` 单独模式不占用摄像头，页面直接展示 MIPI/DSI 输出、1080x1920、NV12 plane、动态扫描条和彩条。
 `VO` 单独模式会动态调用 `MEDIA_VO_FreezeMain`、`MEDIA_VO_FreezePlane` 和 `MEDIA_VO_HidePlane`，展示正常刷新、主显示冻结、plane 冻结、短暂隐藏再恢复。隐藏只持续约 1 秒，退出时会强制恢复显示。
 `OSD` 单独模式使用实时摄像头输入，走 `VI -> OSD -> VMIX -> OSD -> VO` bind 链路，页面展示动态 region 坐标、zorder 层级、alpha 透明度、enabled 告警开关和两级 OSD 帧计数。

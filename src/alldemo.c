@@ -79,6 +79,7 @@
 #define LIVE_CONV_CL_QUAD_BASE_GRP 82
 #define LIVE_CONV_CL_PRE_CSC_BASE_GRP 86
 #define LIVE_CONV_CL_CSC_BASE_GRP 90
+#define LIVE_TRANSFORM_QUAD_BASE_GRP 94
 
 #define CAM_W 640
 #define CAM_H 640
@@ -89,6 +90,7 @@
 #define VPSS_TILE_NV12_SIZE (VPSS_TILE_NV12_STRIDE * VPSS_TILE_H * 3 / 2)
 #define VPSS_TILE_RGBA_STRIDE (VPSS_TILE_W * 4)
 #define VPSS_TILE_RGBA_SIZE (VPSS_TILE_RGBA_STRIDE * VPSS_TILE_H)
+#define TRANSFORM_OUTPUT_POOL CONV_CL_OUTPUT_POOL
 #define PANO_INPUT_COUNT 6
 #define PANO_DOMAIN_W 8378
 #define PANO_DOMAIN_H 4189
@@ -210,6 +212,11 @@ typedef struct {
     int table_size;
 } conv_cl_effect_t;
 
+typedef struct {
+    const char *name;
+    const char *desc;
+} transform_effect_t;
+
 static volatile sig_atomic_t g_running = 1;
 static volatile sig_atomic_t g_signal_count = 0;
 static health_status_t g_health = {0};
@@ -258,6 +265,10 @@ static const char *g_bind_conv_cl_src_ports[VPSS_DEMO_OUTPUTS] = {NULL};
 static const char *g_bind_conv_csc_in_ports[VPSS_DEMO_OUTPUTS] = {NULL};
 static const char *g_bind_conv_csc_src_ports[VPSS_DEMO_OUTPUTS] = {NULL};
 static const char *g_bind_conv_vmix_in_ports[VPSS_DEMO_OUTPUTS] = {NULL};
+static const char *g_bind_vpss_transform_src_ports[VPSS_DEMO_OUTPUTS] = {NULL};
+static const char *g_bind_transform_in_ports[VPSS_DEMO_OUTPUTS] = {NULL};
+static const char *g_bind_transform_src_ports[VPSS_DEMO_OUTPUTS] = {NULL};
+static const char *g_bind_transform_vmix_in_ports[VPSS_DEMO_OUTPUTS] = {NULL};
 
 static const int g_conv_cl_quad_grps[VPSS_DEMO_OUTPUTS] = {
     LIVE_CONV_CL_QUAD_BASE_GRP + 0,
@@ -303,6 +314,19 @@ static const conv_cl_effect_t g_conv_cl_effects[VPSS_DEMO_OUTPUTS] = {
     {"EDGE", 3, g_conv_kernel_edge, (int)ARRAY_SIZE(g_conv_kernel_edge)},
     {"EMBOSS", 3, g_conv_kernel_emboss, (int)ARRAY_SIZE(g_conv_kernel_emboss)},
     {"BLUR", 3, g_conv_kernel_blur, (int)ARRAY_SIZE(g_conv_kernel_blur)},
+};
+
+static const int g_transform_quad_grps[VPSS_DEMO_OUTPUTS] = {
+    -1,
+    LIVE_TRANSFORM_QUAD_BASE_GRP + 0,
+    LIVE_TRANSFORM_QUAD_BASE_GRP + 1,
+    LIVE_TRANSFORM_QUAD_BASE_GRP + 2,
+};
+static const transform_effect_t g_transform_effects[VPSS_DEMO_OUTPUTS] = {
+    {"RAW", "原图直通"},
+    {"UNDISTORT", "镜头畸变矫正"},
+    {"ROTATE ZOOM", "动态旋转放大"},
+    {"PERSPECTIVE", "透视梯形矫正"},
 };
 
 static void set_tile_status(const char *name, int status);
@@ -605,12 +629,13 @@ static void maybe_capture_vo_channel_frame(const char *only_tile, int frame, int
     if (!only_tile) return;
     int is_retinex = strcasecmp(only_tile, "RETINEX") == 0;
     int is_conv_cl = strcasecmp(only_tile, "CONV_CL") == 0;
-    if (!is_retinex && !is_conv_cl) return;
+    int is_transform = strcasecmp(only_tile, "TRANSFORM") == 0;
+    if (!is_retinex && !is_conv_cl && !is_transform) return;
     if (frame <= 0) return;
     if ((frame % (FPS * VO_CAPTURE_SECONDS)) != 0) return;
 
-    const char *label = is_conv_cl ? "CONV_CL" : "RETINEX";
-    const char *prefix = is_conv_cl ? "conv_cl" : "retinex";
+    const char *label = is_conv_cl ? "CONV_CL" : (is_transform ? "TRANSFORM" : "RETINEX");
+    const char *prefix = is_conv_cl ? "conv_cl" : (is_transform ? "transform" : "retinex");
     MEDIA_BUFFER buf = {-1, -1};
     int source = 0;
     if (MEDIA_VO_GetFrame(0, 0, &buf, 20) == 0) {
@@ -3349,6 +3374,112 @@ static int update_conv_cl_quad_overlay(uint64_t vi_count,
     return 0;
 }
 
+static int update_transform_quad_overlay(uint64_t vi_count,
+                                         const uint64_t counts[VPSS_DEMO_OUTPUTS],
+                                         int frame) {
+    static uint8_t masks[40][1024 * 96];
+    char status_line[192];
+    char count_line[192];
+    char bind_line1[192];
+    char bind_line2[192];
+    char lut_line[160];
+    char gpu_text[24];
+    char rga_text[24];
+
+    snprintf(gpu_text, sizeof(gpu_text), g_perf.gpu_available ? "%.0f%%" : "N/A",
+             g_perf.gpu_percent);
+    snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
+             g_perf.rga_percent);
+    snprintf(status_line, sizeof(status_line), "VI=%llu  CPU %.0f%%  GPU %s  RGA %s  LUT UPDATE=%d",
+             (unsigned long long)vi_count, g_perf.cpu_percent, gpu_text, rga_text,
+             frame);
+    snprintf(count_line, sizeof(count_line), "OUT  %s=%llu  %s=%llu  %s=%llu  %s=%llu",
+             g_transform_effects[0].name, (unsigned long long)counts[0],
+             g_transform_effects[1].name, (unsigned long long)counts[1],
+             g_transform_effects[2].name, (unsigned long long)counts[2],
+             g_transform_effects[3].name, (unsigned long long)counts[3]);
+    snprintf(bind_line1, sizeof(bind_line1), "VI0.%s -> VPSS%d.%s; VPSS0 -> VMIX%d.input0 RAW",
+             g_bind_vi_src_port ? g_bind_vi_src_port : "output",
+             LIVE_VPSS_GRP,
+             g_bind_vpss_in_port ? g_bind_vpss_in_port : "input",
+             DISPLAY_VMIX_GRP);
+    snprintf(bind_line2, sizeof(bind_line2), "VPSS1..3 -> TRANSFORM[%d..%d] -> VMIX inputs1..3 -> OSD%d.%s -> VO0.%s",
+             g_transform_quad_grps[1], g_transform_quad_grps[VPSS_DEMO_OUTPUTS - 1],
+             DISPLAY_OSD_GRP,
+             g_bind_osd_src_port ? g_bind_osd_src_port : "output0",
+             g_bind_vo_in_port ? g_bind_vo_in_port : "input0");
+    snprintf(lut_line, sizeof(lut_line),
+             "四路VPSS同源同尺寸；RAW直通，其余三路通过XY LUT做畸变、旋转放大和透视校正。");
+
+    const int cell = VPSS_TILE_W;
+    const int gap = 40;
+    const int start_x = (SCREEN_W - cell * 2 - gap) / 2;
+    const int start_y = 300;
+    const uint8_t colors[4][3] = {
+        {70, 170, 255}, {110, 230, 170}, {255, 210, 90}, {255, 110, 120},
+    };
+    for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
+        int x = start_x + (i % 2) * (cell + gap);
+        int y = start_y + (i / 2) * (cell + gap);
+        char frames[48];
+        snprintf(frames, sizeof(frames), "OUT %llu", (unsigned long long)counts[i]);
+        if (update_osd_rect_region(4 + i, x + 18, y + 18, 250, 96,
+                                   5, 10, 18, 220) != 0) return -1;
+        if (update_osd_rect_region(8 + i, x + 18, y + 18, 250, 8,
+                                   colors[i][0], colors[i][1], colors[i][2], 235) != 0) return -1;
+        if (update_osd_text_region(12 + i, x + 34, y + 36, i == 2 ? 1 : 2,
+                                   255, 230, 120,
+                                   g_transform_effects[i].name,
+                                   masks[i], sizeof(masks[i])) != 0) return -1;
+        if (update_osd_utf8_text_region(16 + i, x + 34, y + 70, 18,
+                                        190, 230, 255,
+                                        g_transform_effects[i].desc,
+                                        masks[4 + i], sizeof(masks[4 + i]), 1024, 96) != 0) return -1;
+        if (update_osd_text_region(20 + i, x + 34, y + 96, 1, 190, 230, 255,
+                                   frames, masks[8 + i], sizeof(masks[8 + i])) != 0) return -1;
+    }
+
+    const int panel_y = 1328;
+    if (update_osd_rect_region(24, 34, panel_y, 1012, 420, 5, 10, 18, 226) != 0) return -1;
+    if (update_osd_utf8_text_region(25, 66, panel_y + 28, 32, 160, 255, 220,
+                                    "TRANSFORM：VMIX后叠加OSD，再送VO显示",
+                                    masks[12], sizeof(masks[12]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(26, 68, panel_y + 80, 23, 255, 230, 120,
+                                    lut_line,
+                                    masks[13], sizeof(masks[13]), 1024, 96) != 0) return -1;
+    if (update_osd_text_region(27, 68, panel_y + 126, 2, 170, 255, 220,
+                               status_line, masks[14], sizeof(masks[14])) != 0) return -1;
+    if (update_osd_text_region(28, 68, panel_y + 174, 1, 190, 230, 255,
+                               count_line, masks[15], sizeof(masks[15])) != 0) return -1;
+    if (update_osd_text_region(29, 68, panel_y + 214, 1, 170, 205, 235,
+                               bind_line1, masks[16], sizeof(masks[16])) != 0) return -1;
+    if (update_osd_text_region(30, 68, panel_y + 246, 1, 170, 205, 235,
+                               bind_line2, masks[17], sizeof(masks[17])) != 0) return -1;
+
+    int cpu_w = (int)(g_perf.cpu_percent * 3.0);
+    int gpu_w = g_perf.gpu_available ? (int)(g_perf.gpu_percent * 3.0) : 0;
+    if (cpu_w < 0) cpu_w = 0;
+    if (cpu_w > 300) cpu_w = 300;
+    if (gpu_w < 0) gpu_w = 0;
+    if (gpu_w > 300) gpu_w = 300;
+
+    if (update_osd_text_region(31, 82, panel_y + 306, 1, 255, 230, 120,
+                               "CPU", masks[18], sizeof(masks[18])) != 0) return -1;
+    if (update_osd_text_region(32, 82, panel_y + 352, 1, 255, 230, 120,
+                               "GPU", masks[19], sizeof(masks[19])) != 0) return -1;
+    if (update_osd_text_region(33, 532, panel_y + 306, 1, 255, 230, 120,
+                               "RGA IN STATUS", masks[20], sizeof(masks[20])) != 0) return -1;
+    if (update_osd_text_region(34, 532, panel_y + 352, 1, 255, 230, 120,
+                               "ROTATE LUT LIVE", masks[21], sizeof(masks[21])) != 0) return -1;
+    if (update_osd_rect_region(35, 148, panel_y + 304, 300, 22, 28, 48, 68, 220) != 0) return -1;
+    if (update_osd_rect_region(36, 148, panel_y + 304, cpu_w, 22, 120, 220, 255, 230) != 0) return -1;
+    if (update_osd_rect_region(37, 148, panel_y + 350, 300, 22, 28, 48, 68, 220) != 0) return -1;
+    if (update_osd_rect_region(38, 148, panel_y + 350, gpu_w, 22, 110, 230, 170, 230) != 0) return -1;
+    int packet_x = 68 + ((frame * 18) % 890);
+    if (update_osd_rect_region(39, packet_x, panel_y - 22, 52, 10, 255, 255, 255, 180) != 0) return -1;
+    return 0;
+}
+
 static int setup_display_vmix_osd(int dstride, size_t display_size, int input_count) {
     int input_pool_count = input_count >= VPSS_DEMO_OUTPUTS ? VPSS_DEMO_OUTPUTS * 4 : 3;
     if (MEDIA_POOL_Create(DISPLAY_VMIX_INPUT_POOL, CAM_FRAME_SIZE, input_pool_count) != 0) return -1;
@@ -4340,6 +4471,123 @@ fail:
     return -1;
 }
 
+static int bind_vi_vpss_transform_vmix_osd_vo(void) {
+    const char *vi_out_ports[] = {"output", "output0"};
+    const char *vpss_in_ports[] = {"input", "input0"};
+    const char *vpss_out_ports[VPSS_DEMO_OUTPUTS] = {"output0", "output1", "output2", "output3"};
+    const char *transform_in_ports[] = {"input", "input0"};
+    const char *transform_out_ports[] = {"output0", "output"};
+    const char *vmix_in_ports[VPSS_DEMO_OUTPUTS] = {"input0", "input1", "input2", "input3"};
+    const char *out_ports[] = {"output0", "output"};
+    const char *osd_in_ports[] = {"input", "input0"};
+    const char *vo_in_ports[] = {"input0", "input"};
+
+    g_bind_vi_src_port = NULL;
+    g_bind_vpss_in_port = NULL;
+    g_bind_vmix_src_port = NULL;
+    g_bind_osd_in_port = NULL;
+    g_bind_osd_src_port = NULL;
+    g_bind_vo_in_port = NULL;
+    for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
+        g_bind_vpss_transform_src_ports[i] = NULL;
+        g_bind_transform_in_ports[i] = NULL;
+        g_bind_transform_src_ports[i] = NULL;
+        g_bind_transform_vmix_in_ports[i] = NULL;
+    }
+
+    if (bind_first_match("VI", 0, vi_out_ports, (int)ARRAY_SIZE(vi_out_ports),
+                         "VPSS", LIVE_VPSS_GRP, vpss_in_ports, (int)ARRAY_SIZE(vpss_in_ports),
+                         &g_bind_vi_src_port, &g_bind_vpss_in_port) != 0) {
+        fprintf(stderr, "bind failed: VI -> VPSS for TRANSFORM quad\n");
+        return -1;
+    }
+
+    const char *raw_vpss_out[] = {vpss_out_ports[0]};
+    const char *raw_vmix_in[] = {vmix_in_ports[0]};
+    if (bind_first_match("VPSS", LIVE_VPSS_GRP, raw_vpss_out, 1,
+                         "VMIX", DISPLAY_VMIX_GRP, raw_vmix_in, 1,
+                         &g_bind_vpss_transform_src_ports[0],
+                         &g_bind_transform_vmix_in_ports[0]) != 0) {
+        fprintf(stderr, "bind failed: VPSS raw output -> VMIX input0\n");
+        goto fail;
+    }
+
+    for (int i = 1; i < VPSS_DEMO_OUTPUTS; ++i) {
+        const char *one_vpss_out[] = {vpss_out_ports[i]};
+        if (bind_first_match("VPSS", LIVE_VPSS_GRP, one_vpss_out, 1,
+                             "TRANSFORM", g_transform_quad_grps[i],
+                             transform_in_ports, (int)ARRAY_SIZE(transform_in_ports),
+                             &g_bind_vpss_transform_src_ports[i],
+                             &g_bind_transform_in_ports[i]) != 0) {
+            fprintf(stderr, "bind failed: VPSS output%d -> TRANSFORM%d\n",
+                    i, g_transform_quad_grps[i]);
+            goto fail;
+        }
+    }
+
+    for (int i = 1; i < VPSS_DEMO_OUTPUTS; ++i) {
+        const char *one_vmix_in[] = {vmix_in_ports[i]};
+        if (bind_first_match("TRANSFORM", g_transform_quad_grps[i],
+                             transform_out_ports, (int)ARRAY_SIZE(transform_out_ports),
+                             "VMIX", DISPLAY_VMIX_GRP, one_vmix_in, 1,
+                             &g_bind_transform_src_ports[i],
+                             &g_bind_transform_vmix_in_ports[i]) != 0) {
+            fprintf(stderr, "bind failed: TRANSFORM%d -> VMIX input%d\n",
+                    g_transform_quad_grps[i], i);
+            goto fail;
+        }
+    }
+
+    if (bind_first_match("VMIX", DISPLAY_VMIX_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
+                         "OSD", DISPLAY_OSD_GRP, osd_in_ports, (int)ARRAY_SIZE(osd_in_ports),
+                         &g_bind_vmix_src_port, &g_bind_osd_in_port) != 0) {
+        fprintf(stderr, "bind failed: VMIX -> OSD\n");
+        goto fail;
+    }
+    if (bind_first_match("OSD", DISPLAY_OSD_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
+                         "VO", 0, vo_in_ports, (int)ARRAY_SIZE(vo_in_ports),
+                         &g_bind_osd_src_port, &g_bind_vo_in_port) != 0) {
+        fprintf(stderr, "bind failed: OSD -> VO\n");
+        goto fail;
+    }
+    return 0;
+
+fail:
+    if (g_bind_osd_src_port && g_bind_vo_in_port) {
+        MEDIA_SYS_UnBind("OSD", DISPLAY_OSD_GRP, g_bind_osd_src_port,
+                         "VO", 0, g_bind_vo_in_port);
+    }
+    if (g_bind_vmix_src_port && g_bind_osd_in_port) {
+        MEDIA_SYS_UnBind("VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_src_port,
+                         "OSD", DISPLAY_OSD_GRP, g_bind_osd_in_port);
+    }
+    for (int i = VPSS_DEMO_OUTPUTS - 1; i >= 1; --i) {
+        if (g_bind_transform_src_ports[i] && g_bind_transform_vmix_in_ports[i]) {
+            MEDIA_SYS_UnBind("TRANSFORM", g_transform_quad_grps[i],
+                             g_bind_transform_src_ports[i],
+                             "VMIX", DISPLAY_VMIX_GRP,
+                             g_bind_transform_vmix_in_ports[i]);
+        }
+        if (g_bind_vpss_transform_src_ports[i] && g_bind_transform_in_ports[i]) {
+            MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP,
+                             g_bind_vpss_transform_src_ports[i],
+                             "TRANSFORM", g_transform_quad_grps[i],
+                             g_bind_transform_in_ports[i]);
+        }
+    }
+    if (g_bind_vpss_transform_src_ports[0] && g_bind_transform_vmix_in_ports[0]) {
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP,
+                         g_bind_vpss_transform_src_ports[0],
+                         "VMIX", DISPLAY_VMIX_GRP,
+                         g_bind_transform_vmix_in_ports[0]);
+    }
+    if (g_bind_vi_src_port && g_bind_vpss_in_port) {
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "VPSS", LIVE_VPSS_GRP, g_bind_vpss_in_port);
+    }
+    return -1;
+}
+
 static void unbind_vi_resize_vmix_osd_vo(int enabled) {
     if (!enabled) return;
     if (g_bind_osd_src_port && g_bind_vo_in_port) {
@@ -4577,6 +4825,42 @@ static void unbind_vi_vpss_conv_cl_vmix_osd_vo(int enabled) {
                              "CSC_RGA", g_conv_cl_pre_csc_grps[i],
                              g_bind_conv_pre_csc_in_ports[i]);
         }
+    }
+    if (g_bind_vi_src_port && g_bind_vpss_in_port) {
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "VPSS", LIVE_VPSS_GRP, g_bind_vpss_in_port);
+    }
+}
+
+static void unbind_vi_vpss_transform_vmix_osd_vo(int enabled) {
+    if (!enabled) return;
+    if (g_bind_osd_src_port && g_bind_vo_in_port) {
+        MEDIA_SYS_UnBind("OSD", DISPLAY_OSD_GRP, g_bind_osd_src_port,
+                         "VO", 0, g_bind_vo_in_port);
+    }
+    if (g_bind_vmix_src_port && g_bind_osd_in_port) {
+        MEDIA_SYS_UnBind("VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_src_port,
+                         "OSD", DISPLAY_OSD_GRP, g_bind_osd_in_port);
+    }
+    for (int i = VPSS_DEMO_OUTPUTS - 1; i >= 1; --i) {
+        if (g_bind_transform_src_ports[i] && g_bind_transform_vmix_in_ports[i]) {
+            MEDIA_SYS_UnBind("TRANSFORM", g_transform_quad_grps[i],
+                             g_bind_transform_src_ports[i],
+                             "VMIX", DISPLAY_VMIX_GRP,
+                             g_bind_transform_vmix_in_ports[i]);
+        }
+        if (g_bind_vpss_transform_src_ports[i] && g_bind_transform_in_ports[i]) {
+            MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP,
+                             g_bind_vpss_transform_src_ports[i],
+                             "TRANSFORM", g_transform_quad_grps[i],
+                             g_bind_transform_in_ports[i]);
+        }
+    }
+    if (g_bind_vpss_transform_src_ports[0] && g_bind_transform_vmix_in_ports[0]) {
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP,
+                         g_bind_vpss_transform_src_ports[0],
+                         "VMIX", DISPLAY_VMIX_GRP,
+                         g_bind_transform_vmix_in_ports[0]);
     }
     if (g_bind_vi_src_port && g_bind_vpss_in_port) {
         MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
@@ -5358,7 +5642,108 @@ static void cleanup_live_csc_cl_chain(int enabled) {
     MEDIA_POOL_Destroy(WORK_POOL_RGB);
 }
 
+static void fill_vpss_same_tile_initial_output_attr(MEDIA_VPSS_OUT_ATTR *out, int output_id);
+
 static float *g_transform_lut = NULL;
+static float *g_transform_quad_luts[VPSS_DEMO_OUTPUTS] = {NULL};
+
+static void free_transform_quad_luts(void) {
+    for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
+        free(g_transform_quad_luts[i]);
+        g_transform_quad_luts[i] = NULL;
+    }
+}
+
+static void clamp_transform_xy(float *sx, float *sy, int w, int h) {
+    if (*sx < 0.0f) *sx = 0.0f;
+    if (*sy < 0.0f) *sy = 0.0f;
+    if (*sx > (float)(w - 1)) *sx = (float)(w - 1);
+    if (*sy > (float)(h - 1)) *sy = (float)(h - 1);
+}
+
+static void build_transform_quad_lut(int effect_index, int frame, float *lut) {
+    const int w = VPSS_TILE_W;
+    const int h = VPSS_TILE_H;
+    const float cx = (float)(w - 1) * 0.5f;
+    const float cy = (float)(h - 1) * 0.5f;
+    if (!lut) return;
+
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            float sx = (float)x;
+            float sy = (float)y;
+            float dx = (float)x - cx;
+            float dy = (float)y - cy;
+
+            if (effect_index == 1) {
+                /*
+                 * Lens undistortion is represented as an inverse radial map:
+                 * each corrected output pixel samples farther from the source
+                 * center, which compensates a barrel-distorted camera image.
+                 */
+                float nx = dx / cx;
+                float ny = dy / cy;
+                float r2 = nx * nx + ny * ny;
+                float scale = 1.0f + 0.18f * r2 + 0.06f * r2 * r2;
+                sx = cx + dx * scale;
+                sy = cy + dy * scale;
+            } else if (effect_index == 2) {
+                float angle = (float)frame * 0.025f;
+                float zoom = 1.12f + 0.10f * sinf((float)frame * 0.035f);
+                float c = cosf(angle);
+                float s = sinf(angle);
+                float rx = dx / zoom;
+                float ry = dy / zoom;
+                sx = cx + c * rx + s * ry;
+                sy = cy - s * rx + c * ry;
+            } else if (effect_index == 3) {
+                /*
+                 * Perspective correction samples a trapezoid from the input
+                 * and maps it back to a rectangle.  It demonstrates the same
+                 * LUT mechanism used for keystone or document rectification.
+                 */
+                float u = (float)x / (float)(w - 1);
+                float v = (float)y / (float)(h - 1);
+                const float tlx = 76.0f,  tly = 34.0f;
+                const float trx = 404.0f, try_ = 68.0f;
+                const float blx = 24.0f,  bly = 454.0f;
+                const float brx = 456.0f, bry = 430.0f;
+                float top_x = tlx + (trx - tlx) * u;
+                float top_y = tly + (try_ - tly) * u;
+                float bot_x = blx + (brx - blx) * u;
+                float bot_y = bly + (bry - bly) * u;
+                sx = top_x + (bot_x - top_x) * v;
+                sy = top_y + (bot_y - top_y) * v;
+            }
+            clamp_transform_xy(&sx, &sy, w, h);
+            size_t off = ((size_t)y * w + x) * 2;
+            lut[off] = sx;
+            lut[off + 1] = sy;
+        }
+    }
+}
+
+static int alloc_transform_quad_luts(void) {
+    size_t count = (size_t)VPSS_TILE_W * VPSS_TILE_H * 2;
+    free_transform_quad_luts();
+    for (int i = 1; i < VPSS_DEMO_OUTPUTS; ++i) {
+        g_transform_quad_luts[i] = malloc(count * sizeof(float));
+        if (!g_transform_quad_luts[i]) {
+            free_transform_quad_luts();
+            return -1;
+        }
+        build_transform_quad_lut(i, 0, g_transform_quad_luts[i]);
+    }
+    return 0;
+}
+
+static int update_transform_rotate_lut(int frame) {
+    if (!g_transform_quad_luts[2]) return -1;
+    build_transform_quad_lut(2, frame, g_transform_quad_luts[2]);
+    return MEDIA_TRANSFORM_UpdateLut(g_transform_quad_grps[2],
+                                     g_transform_quad_luts[2],
+                                     (size_t)VPSS_TILE_W * VPSS_TILE_H * 2 * sizeof(float));
+}
 
 static int build_transform_lut(void) {
     size_t count = (size_t)CAM_W * CAM_H * 2;
@@ -5449,6 +5834,106 @@ static int process_live_transform(const uint8_t *src, uint8_t *dst) {
     }
     MEDIA_POOL_PutBuffer(in);
     return ret;
+}
+
+static int setup_live_transform_quad(void) {
+    /*
+     * TRANSFORM is an NV12 XY-LUT warp module, so no color-space bridge is
+     * required.  VPSS creates four identical 480x480 NV12 branches.  Branch 0
+     * is the raw reference and goes straight to VMIX.  Branches 1..3 enter
+     * independent TRANSFORM groups using different LUTs:
+     *
+     *   RAW, UNDISTORT, ROTATE ZOOM, PERSPECTIVE
+     *
+     * The rotate/zoom LUT is updated while running; the other LUTs stay fixed.
+     */
+    if (alloc_transform_quad_luts() != 0) return -1;
+    if (MEDIA_POOL_Create(VPSS_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) goto fail_lut;
+    if (MEDIA_POOL_Create(VPSS_OUTPUT_POOL, VPSS_TILE_NV12_SIZE, VPSS_DEMO_OUTPUTS * 4) != 0) {
+        MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+        goto fail_lut;
+    }
+    if (MEDIA_POOL_Create(TRANSFORM_OUTPUT_POOL, VPSS_TILE_NV12_SIZE, VPSS_DEMO_OUTPUTS * 4) != 0) {
+        MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+        MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+        goto fail_lut;
+    }
+
+    MEDIA_VPSS_ATTR vpss = {0};
+    vpss.width = CAM_W;
+    vpss.height = CAM_H;
+    vpss.input_stride = CAM_STRIDE;
+    vpss.input_depth = 4;
+    vpss.input_format = MEDIA_FORMAT_NV12;
+    vpss.output_count = VPSS_DEMO_OUTPUTS;
+    for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
+        fill_vpss_same_tile_initial_output_attr(&vpss.outputs[i], i);
+    }
+    if (MEDIA_VPSS_SetAttr(LIVE_VPSS_GRP, &vpss) != 0 ||
+        MEDIA_VPSS_Enable(LIVE_VPSS_GRP) != 0) {
+        MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
+        MEDIA_POOL_Destroy(TRANSFORM_OUTPUT_POOL);
+        MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+        MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+        goto fail_lut;
+    }
+
+    int created = 0;
+    for (int i = 1; i < VPSS_DEMO_OUTPUTS; ++i) {
+        MEDIA_TRANSFORM_ATTR attr = {0};
+        attr.out_width = VPSS_TILE_W;
+        attr.out_height = VPSS_TILE_H;
+        attr.out_stride = VPSS_TILE_NV12_STRIDE;
+        attr.format = MEDIA_FORMAT_NV12;
+        attr.input_depth = 3;
+        attr.pool_id = TRANSFORM_OUTPUT_POOL;
+        attr.in_width = VPSS_TILE_W;
+        attr.in_height = VPSS_TILE_H;
+        attr.in_stride = VPSS_TILE_NV12_STRIDE;
+        attr.lut_width = VPSS_TILE_W;
+        attr.lut_height = VPSS_TILE_H;
+        attr.lut = g_transform_quad_luts[i];
+        attr.lut_size = (size_t)VPSS_TILE_W * VPSS_TILE_H * 2 * sizeof(float);
+
+        if (MEDIA_TRANSFORM_CreateGrp(g_transform_quad_grps[i], &attr) != 0 ||
+            MEDIA_TRANSFORM_Start(g_transform_quad_grps[i]) != 0) {
+            for (int j = created; j >= 1; --j) {
+                MEDIA_TRANSFORM_Stop(g_transform_quad_grps[j]);
+                MEDIA_TRANSFORM_DestroyGrp(g_transform_quad_grps[j]);
+            }
+            MEDIA_TRANSFORM_DestroyGrp(g_transform_quad_grps[i]);
+            MEDIA_VPSS_Disable(LIVE_VPSS_GRP);
+            MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
+            MEDIA_POOL_Destroy(TRANSFORM_OUTPUT_POOL);
+            MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+            MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+            goto fail_lut;
+        }
+        created = i;
+    }
+
+    set_tile_status("VPSS", TILE_LIVE);
+    set_tile_status("TRANSFORM", TILE_LIVE);
+    set_tile_status("VMIX", TILE_LIVE);
+    return 0;
+
+fail_lut:
+    free_transform_quad_luts();
+    return -1;
+}
+
+static void cleanup_live_transform_quad(int enabled) {
+    if (!enabled) return;
+    for (int i = VPSS_DEMO_OUTPUTS - 1; i >= 1; --i) {
+        MEDIA_TRANSFORM_Stop(g_transform_quad_grps[i]);
+        MEDIA_TRANSFORM_DestroyGrp(g_transform_quad_grps[i]);
+    }
+    MEDIA_VPSS_Disable(LIVE_VPSS_GRP);
+    MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
+    MEDIA_POOL_Destroy(TRANSFORM_OUTPUT_POOL);
+    MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+    MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+    free_transform_quad_luts();
 }
 
 static int setup_live_cap_dehaze(void) {
@@ -5629,9 +6114,9 @@ static int process_live_conv_cl(const uint8_t *src, uint8_t *dst) {
     return ret;
 }
 
-static void fill_vpss_conv_output_attr(MEDIA_VPSS_OUT_ATTR *out, int output_id,
-                                       int crop_x, int crop_y, int crop_w, int crop_h,
-                                       int flip_h, int flip_v) {
+static void fill_vpss_same_tile_output_attr(MEDIA_VPSS_OUT_ATTR *out, int output_id,
+                                            int crop_x, int crop_y, int crop_w, int crop_h,
+                                            int flip_h, int flip_v) {
     memset(out, 0, sizeof(*out));
     out->output_id = output_id;
     out->out_width = VPSS_TILE_W;
@@ -5649,13 +6134,14 @@ static void fill_vpss_conv_output_attr(MEDIA_VPSS_OUT_ATTR *out, int output_id,
     out->output_format = MEDIA_FORMAT_NV12;
 }
 
-static void fill_vpss_conv_initial_output_attr(MEDIA_VPSS_OUT_ATTR *out, int output_id) {
+static void fill_vpss_same_tile_initial_output_attr(MEDIA_VPSS_OUT_ATTR *out, int output_id) {
     /*
-     * CONV_CL page compares four convolution kernels, not four VPSS transforms.
+     * Four-up comparison pages compare downstream modules, not VPSS transforms.
      * Keep every VPSS output on the same full-frame crop, size, and orientation
-     * so the only visual difference between quadrants comes from CONV_CL.
+     * so the only visual difference between quadrants comes from the target
+     * module effect.
      */
-    fill_vpss_conv_output_attr(out, output_id, 0, 0, CAM_W, CAM_H, 0, 0);
+    fill_vpss_same_tile_output_attr(out, output_id, 0, 0, CAM_W, CAM_H, 0, 0);
 }
 
 static int setup_live_conv_cl_quad(void) {
@@ -5699,7 +6185,7 @@ static int setup_live_conv_cl_quad(void) {
     vpss.input_format = MEDIA_FORMAT_NV12;
     vpss.output_count = VPSS_DEMO_OUTPUTS;
     for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
-        fill_vpss_conv_initial_output_attr(&vpss.outputs[i], i);
+        fill_vpss_same_tile_initial_output_attr(&vpss.outputs[i], i);
     }
     if (MEDIA_VPSS_SetAttr(LIVE_VPSS_GRP, &vpss) != 0 ||
         MEDIA_VPSS_Enable(LIVE_VPSS_GRP) != 0) {
@@ -6573,6 +7059,7 @@ static int tile_needs_camera(const char *name) {
            strcasecmp(name, "CAP_DEHAZE") == 0 ||
            strcasecmp(name, "DCP_FAST_DEHAZE") == 0 ||
            strcasecmp(name, "CONV_CL") == 0 ||
+           strcasecmp(name, "TRANSFORM") == 0 ||
            strcasecmp(name, "CLAHE") == 0 ||
            strcasecmp(name, "RETINEX") == 0 ||
            strcasecmp(name, "STEREO_3D") == 0;
@@ -7385,10 +7872,6 @@ int main(int argc, char **argv) {
         live_csc_rga_ok = 1;
     }
     int live_transform_ok = 0;
-    if (!solid_test && only_tile && strcasecmp(only_tile, "TRANSFORM") == 0 &&
-        setup_live_transform() == 0) {
-        live_transform_ok = 1;
-    }
     int live_cap_ok = 0;
     if (!solid_test && only_tile && strcasecmp(only_tile, "CAP_DEHAZE") == 0 &&
         setup_live_cap_dehaze() == 0) {
@@ -7509,6 +7992,7 @@ int main(int argc, char **argv) {
          strcasecmp(only_tile, "CSC_RGA") == 0 ||
          strcasecmp(only_tile, "CSC_CL") == 0 ||
          strcasecmp(only_tile, "CONV_CL") == 0 ||
+         strcasecmp(only_tile, "TRANSFORM") == 0 ||
          strcasecmp(only_tile, "CLAHE") == 0);
     int use_vi_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "VI") == 0;
     int use_vpss_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "VPSS") == 0;
@@ -7520,6 +8004,7 @@ int main(int argc, char **argv) {
     int use_csc_rga_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "CSC_RGA") == 0;
     int use_csc_cl_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "CSC_CL") == 0;
     int use_conv_cl_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "CONV_CL") == 0;
+    int use_transform_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "TRANSFORM") == 0;
     int vi_bind_display_ok = 0;
     int vpss_bind_display_ok = 0;
     int osd_bind_display_ok = 0;
@@ -7530,6 +8015,7 @@ int main(int argc, char **argv) {
     int csc_rga_bind_display_ok = 0;
     int csc_cl_bind_display_ok = 0;
     int conv_cl_bind_display_ok = 0;
+    int transform_bind_display_ok = 0;
     int live_resize_bind_ok = 0;
     int live_osd_bind_ok = 0;
     int live_clahe_bind_ok = 0;
@@ -7537,8 +8023,9 @@ int main(int argc, char **argv) {
     int live_csc_rga_chain_ok = 0;
     int live_csc_cl_chain_ok = 0;
     int live_conv_cl_quad_ok = 0;
+    int live_transform_quad_ok = 0;
     int display_vmix_osd_ok = 0;
-    int display_vmix_inputs = (use_vpss_bind_display || use_conv_cl_bind_display) ? VPSS_DEMO_OUTPUTS :
+    int display_vmix_inputs = (use_vpss_bind_display || use_conv_cl_bind_display || use_transform_bind_display) ? VPSS_DEMO_OUTPUTS :
         ((use_clahe_bind_display || use_retinex_bind_display) ? 2 : 1);
     if (use_vmix_osd_display && setup_display_vmix_osd(dstride, display_size, display_vmix_inputs) == 0) {
         display_vmix_osd_ok = 1;
@@ -7551,6 +8038,10 @@ int main(int argc, char **argv) {
     if (use_conv_cl_bind_display && display_vmix_osd_ok &&
         setup_live_conv_cl_quad() == 0) {
         live_conv_cl_quad_ok = 1;
+    }
+    if (use_transform_bind_display && display_vmix_osd_ok &&
+        setup_live_transform_quad() == 0) {
+        live_transform_quad_ok = 1;
     }
     if (use_osd_bind_display && display_vmix_osd_ok && setup_live_osd_bind() == 0) {
         live_osd_bind_ok = 1;
@@ -7959,6 +8450,43 @@ int main(int argc, char **argv) {
         uint64_t zero_counts[VPSS_DEMO_OUTPUTS] = {0};
         (void)update_conv_cl_quad_overlay(0, zero_counts, -1.0, -1.0, 0);
     }
+    if (use_transform_bind_display) {
+        if (!camera_ok || !live_transform_quad_ok || !display_vmix_osd_ok ||
+            bind_vi_vpss_transform_vmix_osd_vo() != 0) {
+            fprintf(stderr, "TRANSFORM quad bind display setup failed; CPU copy fallback is disabled for --only TRANSFORM\n");
+            if (camera_ok) MEDIA_VI_Disable(0);
+            cleanup_live_transform_quad(live_transform_quad_ok);
+            cleanup_display_vmix_osd(display_vmix_osd_ok);
+            MEDIA_VO_Stop(0, 0);
+            MEDIA_VO_DestroyChn(0, 0);
+            MEDIA_POOL_Destroy(DISPLAY_POOL);
+            cleanup_live_stereo(live_stereo_ok);
+            cleanup_live_pano(live_pano_ok);
+            cleanup_live_dualview(live_dualview_ok);
+            cleanup_live_edof(live_edof_ok);
+            cleanup_live_retinex(live_retinex_ok);
+            cleanup_live_clahe(live_clahe_ok);
+            cleanup_live_conv_cl(live_conv_ok);
+            cleanup_live_dcp_dehaze(live_dcp_ok);
+            cleanup_live_cap_dehaze(live_cap_ok);
+            cleanup_live_transform(live_transform_ok);
+            cleanup_live_csc_rga(live_csc_rga_ok);
+            cleanup_live_rga(live_rga_ok);
+            cleanup_live_vpss(live_vpss_ok);
+            cleanup_live_resize(live_resize_ok);
+            cleanup_live_osd(live_osd_ok);
+            if (need_camera) MEDIA_POOL_Destroy(CAMERA_POOL);
+            unload_pano_sample();
+            unload_edof_pairs();
+            unload_loop_assets();
+            MEDIA_SYS_Exit();
+            return 1;
+        }
+        transform_bind_display_ok = 1;
+        (void)update_display_osd_text("TRANSFORM  VPSS 4X LUT", "RAW UNDISTORT ROTATE PERSPECTIVE");
+        uint64_t zero_counts[VPSS_DEMO_OUTPUTS] = {0};
+        (void)update_transform_quad_overlay(0, zero_counts, 0);
+    }
 
     printf("alldemo running on DSI 1080x1920%s%s%s%s. Ctrl+C to stop.\n",
            solid_test ? " solid-test" : "",
@@ -8036,7 +8564,8 @@ int main(int argc, char **argv) {
             !retinex_bind_display_ok &&
             !rga_bind_display_ok && !resize_bind_display_ok &&
             !csc_rga_bind_display_ok && !csc_cl_bind_display_ok &&
-            !conv_cl_bind_display_ok) {
+            !conv_cl_bind_display_ok &&
+            !transform_bind_display_ok) {
             MEDIA_BUFFER cbuf = {-1, -1};
             if (MEDIA_VI_GetFrame(0, &cbuf, 1) == 0) {
                 void *addr = NULL;
@@ -8696,6 +9225,58 @@ int main(int argc, char **argv) {
             usleep(1000000 / FPS);
             continue;
         }
+        if (transform_bind_display_ok) {
+            if ((frame % 3) == 0 &&
+                update_transform_rotate_lut(frame) != 0 && (frame % FPS) == 0) {
+                fprintf(stderr, "warning: TRANSFORM rotate LUT update rejected\n");
+            }
+            if ((frame % 15) == 0) {
+                uint64_t vi_count = 0;
+                uint64_t vpss_count = 0;
+                uint64_t transform_counts[VPSS_DEMO_OUTPUTS] = {0};
+                char perf[180];
+                char gpu_text[24];
+                char rga_text[24];
+                update_perf_status();
+                if (MEDIA_SYS_GetModuleFrameCount("VI", 0, &vi_count) == 0) {
+                    g_health.camera_frames = (int)vi_count;
+                }
+                if (MEDIA_SYS_GetModuleFrameCount("VPSS", LIVE_VPSS_GRP, &vpss_count) == 0) {
+                    transform_counts[0] = vpss_count;
+                } else {
+                    transform_counts[0] = vi_count;
+                }
+                for (int i = 1; i < VPSS_DEMO_OUTPUTS; ++i) {
+                    (void)MEDIA_SYS_GetModuleFrameCount("TRANSFORM", g_transform_quad_grps[i],
+                                                        &transform_counts[i]);
+                }
+                snprintf(gpu_text, sizeof(gpu_text), g_perf.gpu_available ? "%.0f%%" : "N/A",
+                         g_perf.gpu_percent);
+                snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
+                         g_perf.rga_percent);
+                snprintf(perf, sizeof(perf), "PAGE %02d/%02d TRANSFORM CPU %.0f%% GPU %s RGA %s LUT %d",
+                         module_page_number("TRANSFORM"), (int)ARRAY_SIZE(g_module_pages),
+                         g_perf.cpu_percent, gpu_text, rga_text, frame);
+                (void)update_display_osd_text("TRANSFORM  VMIX OSD VO", perf);
+                (void)update_transform_quad_overlay(vi_count, transform_counts, frame);
+                if ((frame % FPS) == 0) {
+                    printf("TRANSFORM vi_frames=%llu %s=%llu %s=%llu %s=%llu %s=%llu cpu=%.0f%% gpu=%s rga=%s lut=%d\n",
+                           (unsigned long long)vi_count,
+                           g_transform_effects[0].name, (unsigned long long)transform_counts[0],
+                           g_transform_effects[1].name, (unsigned long long)transform_counts[1],
+                           g_transform_effects[2].name, (unsigned long long)transform_counts[2],
+                           g_transform_effects[3].name, (unsigned long long)transform_counts[3],
+                           g_perf.cpu_percent,
+                           gpu_text,
+                           rga_text,
+                           frame);
+                }
+            }
+            maybe_capture_vo_channel_frame(only_tile, frame, dstride);
+            frame++;
+            usleep(1000000 / FPS);
+            continue;
+        }
 
         if (use_vmix_osd_display) {
             const uint8_t *display_src = NULL;
@@ -8782,6 +9363,7 @@ int main(int argc, char **argv) {
     alarm(5);
 
     if (vo_demo_enabled) vo_demo_restore_output();
+    unbind_vi_vpss_transform_vmix_osd_vo(transform_bind_display_ok);
     unbind_vi_vpss_conv_cl_vmix_osd_vo(conv_cl_bind_display_ok);
     unbind_vpss_vmix_osd_vo(vpss_bind_display_ok);
     unbind_vi_csc_cl_chain_vmix_osd_vo(csc_cl_bind_display_ok);
@@ -8793,6 +9375,7 @@ int main(int argc, char **argv) {
     unbind_vi_live_osd_vmix_osd_vo(osd_bind_display_ok);
     unbind_vi_vmix_osd_vo(vi_bind_display_ok);
     if (camera_ok) MEDIA_VI_Disable(0);
+    cleanup_live_transform_quad(live_transform_quad_ok);
     cleanup_live_conv_cl_quad(live_conv_cl_quad_ok);
     cleanup_live_csc_cl_chain(live_csc_cl_chain_ok);
     cleanup_live_csc_rga_chain(live_csc_rga_chain_ok);
