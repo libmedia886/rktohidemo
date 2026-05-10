@@ -45,6 +45,8 @@
 #define STEREO_OUTPUT_POOL 12
 #define VPSS_INPUT_POOL 13
 #define VPSS_OUTPUT_POOL 14
+#define CONV_CL_OUTPUT_POOL 15
+#define CONV_CL_INPUT_POOL WORK_POOL_OUT
 #define VPSS_DEMO_OUTPUTS 4
 #define DISPLAY_VMIX_INPUT_POOL 6
 #define DISPLAY_VMIX_OUTPUT_POOL 7
@@ -74,12 +76,19 @@
 #define LIVE_CSC_CL_BACK_GRP 77
 #define DISPLAY_VMIX_GRP 80
 #define DISPLAY_OSD_GRP 81
+#define LIVE_CONV_CL_QUAD_BASE_GRP 82
+#define LIVE_CONV_CL_PRE_CSC_BASE_GRP 86
+#define LIVE_CONV_CL_CSC_BASE_GRP 90
 
 #define CAM_W 640
 #define CAM_H 640
 #define CAM_STRIDE 640
 #define VPSS_TILE_W 480
 #define VPSS_TILE_H 480
+#define VPSS_TILE_NV12_STRIDE CAM_STRIDE
+#define VPSS_TILE_NV12_SIZE (VPSS_TILE_NV12_STRIDE * VPSS_TILE_H * 3 / 2)
+#define VPSS_TILE_RGBA_STRIDE (VPSS_TILE_W * 4)
+#define VPSS_TILE_RGBA_SIZE (VPSS_TILE_RGBA_STRIDE * VPSS_TILE_H)
 #define PANO_INPUT_COUNT 6
 #define PANO_DOMAIN_W 8378
 #define PANO_DOMAIN_H 4189
@@ -194,6 +203,13 @@ typedef struct {
     const uint8_t *dual_lbl;
 } display_refs_t;
 
+typedef struct {
+    const char *name;
+    int kernel_size;
+    const float *table;
+    int table_size;
+} conv_cl_effect_t;
+
 static volatile sig_atomic_t g_running = 1;
 static volatile sig_atomic_t g_signal_count = 0;
 static health_status_t g_health = {0};
@@ -234,6 +250,60 @@ static const char *g_bind_vo_in_port = NULL;
 static const char *g_bind_vpss_in_port = NULL;
 static const char *g_bind_vpss_src_ports[VPSS_DEMO_OUTPUTS] = {NULL};
 static const char *g_bind_vmix_in_ports[VPSS_DEMO_OUTPUTS] = {NULL};
+static const char *g_bind_vpss_conv_src_ports[VPSS_DEMO_OUTPUTS] = {NULL};
+static const char *g_bind_conv_pre_csc_in_ports[VPSS_DEMO_OUTPUTS] = {NULL};
+static const char *g_bind_conv_pre_csc_src_ports[VPSS_DEMO_OUTPUTS] = {NULL};
+static const char *g_bind_conv_cl_in_ports[VPSS_DEMO_OUTPUTS] = {NULL};
+static const char *g_bind_conv_cl_src_ports[VPSS_DEMO_OUTPUTS] = {NULL};
+static const char *g_bind_conv_csc_in_ports[VPSS_DEMO_OUTPUTS] = {NULL};
+static const char *g_bind_conv_csc_src_ports[VPSS_DEMO_OUTPUTS] = {NULL};
+static const char *g_bind_conv_vmix_in_ports[VPSS_DEMO_OUTPUTS] = {NULL};
+
+static const int g_conv_cl_quad_grps[VPSS_DEMO_OUTPUTS] = {
+    LIVE_CONV_CL_QUAD_BASE_GRP + 0,
+    LIVE_CONV_CL_QUAD_BASE_GRP + 1,
+    LIVE_CONV_CL_QUAD_BASE_GRP + 2,
+    LIVE_CONV_CL_QUAD_BASE_GRP + 3,
+};
+static const int g_conv_cl_pre_csc_grps[VPSS_DEMO_OUTPUTS] = {
+    LIVE_CONV_CL_PRE_CSC_BASE_GRP + 0,
+    LIVE_CONV_CL_PRE_CSC_BASE_GRP + 1,
+    LIVE_CONV_CL_PRE_CSC_BASE_GRP + 2,
+    LIVE_CONV_CL_PRE_CSC_BASE_GRP + 3,
+};
+static const int g_conv_cl_csc_grps[VPSS_DEMO_OUTPUTS] = {
+    LIVE_CONV_CL_CSC_BASE_GRP + 0,
+    LIVE_CONV_CL_CSC_BASE_GRP + 1,
+    LIVE_CONV_CL_CSC_BASE_GRP + 2,
+    LIVE_CONV_CL_CSC_BASE_GRP + 3,
+};
+
+static const float g_conv_kernel_sharpen[9] = {
+     0.0f, -1.0f,  0.0f,
+    -1.0f,  5.0f, -1.0f,
+     0.0f, -1.0f,  0.0f,
+};
+static const float g_conv_kernel_edge[9] = {
+    -1.0f, -1.0f, -1.0f,
+    -1.0f,  8.0f, -1.0f,
+    -1.0f, -1.0f, -1.0f,
+};
+static const float g_conv_kernel_emboss[9] = {
+    -2.0f, -1.0f,  0.0f,
+    -1.0f,  1.0f,  1.0f,
+     0.0f,  1.0f,  2.0f,
+};
+static const float g_conv_kernel_blur[9] = {
+    1.0f / 9.0f, 1.0f / 9.0f, 1.0f / 9.0f,
+    1.0f / 9.0f, 1.0f / 9.0f, 1.0f / 9.0f,
+    1.0f / 9.0f, 1.0f / 9.0f, 1.0f / 9.0f,
+};
+static const conv_cl_effect_t g_conv_cl_effects[VPSS_DEMO_OUTPUTS] = {
+    {"SHARPEN", 3, g_conv_kernel_sharpen, (int)ARRAY_SIZE(g_conv_kernel_sharpen)},
+    {"EDGE", 3, g_conv_kernel_edge, (int)ARRAY_SIZE(g_conv_kernel_edge)},
+    {"EMBOSS", 3, g_conv_kernel_emboss, (int)ARRAY_SIZE(g_conv_kernel_emboss)},
+    {"BLUR", 3, g_conv_kernel_blur, (int)ARRAY_SIZE(g_conv_kernel_blur)},
+};
 
 static void set_tile_status(const char *name, int status);
 static int find_tile_index(const char *name);
@@ -532,19 +602,25 @@ static void maybe_capture_module_vo_frame(const char *only_tile, int frame,
 }
 
 static void maybe_capture_vo_channel_frame(const char *only_tile, int frame, int stride) {
-    if (!only_tile || strcasecmp(only_tile, "RETINEX") != 0) return;
+    if (!only_tile) return;
+    int is_retinex = strcasecmp(only_tile, "RETINEX") == 0;
+    int is_conv_cl = strcasecmp(only_tile, "CONV_CL") == 0;
+    if (!is_retinex && !is_conv_cl) return;
+    if (frame <= 0) return;
     if ((frame % (FPS * VO_CAPTURE_SECONDS)) != 0) return;
 
+    const char *label = is_conv_cl ? "CONV_CL" : "RETINEX";
+    const char *prefix = is_conv_cl ? "conv_cl" : "retinex";
     MEDIA_BUFFER buf = {-1, -1};
     int source = 0;
-    if (MEDIA_VO_GetFrame(0, 0, &buf, 1) == 0) {
+    if (MEDIA_VO_GetFrame(0, 0, &buf, 20) == 0) {
         source = 1;
-    } else if (MEDIA_OSD_GetFrame(DISPLAY_OSD_GRP, &buf, 1) == 0) {
+    } else if (MEDIA_OSD_GetFrame(DISPLAY_OSD_GRP, &buf, 20) == 0) {
         source = 2;
-    } else if (MEDIA_VMIX_GetFrame(DISPLAY_VMIX_GRP, &buf, 1) == 0) {
+    } else if (MEDIA_VMIX_GetFrame(DISPLAY_VMIX_GRP, &buf, 20) == 0) {
         source = 3;
     } else {
-        fprintf(stderr, "RETINEX VO capture no output frame at %d\n", frame);
+        fprintf(stderr, "%s VO capture no output frame at %d\n", label, frame);
         return;
     }
 
@@ -558,16 +634,16 @@ static void maybe_capture_vo_channel_frame(const char *only_tile, int frame, int
         const char *dir = "/userdata/alldemo/vo_captures";
         if (mkdir(dir, 0755) == 0 || errno == EEXIST) {
             char path[256];
-            snprintf(path, sizeof(path), "%s/retinex_vo_%06d.bmp", dir, frame);
+            snprintf(path, sizeof(path), "%s/%s_vo_%06d.bmp", dir, prefix, frame);
             if (size >= (size_t)stride * SCREEN_H * 3 / 2 &&
                 write_nv12_bmp(path, (const uint8_t *)addr, SCREEN_W, SCREEN_H, stride) == 0) {
-                printf("RETINEX VO capture: %s source=%s\n", path,
+                printf("%s VO capture: %s source=%s\n", label, path,
                        source == 1 ? "VO" : (source == 2 ? "OSD" : "VMIX"));
             } else {
-                fprintf(stderr, "RETINEX VO capture failed: %s\n", path);
+                fprintf(stderr, "%s VO capture failed: %s\n", label, path);
             }
         } else {
-            fprintf(stderr, "RETINEX VO capture mkdir failed: %s\n", strerror(errno));
+            fprintf(stderr, "%s VO capture mkdir failed: %s\n", label, strerror(errno));
         }
         munmap(addr, size);
     }
@@ -3153,8 +3229,129 @@ static int update_csc_cl_bind_flow_overlay(uint64_t front_count, uint64_t back_c
     return 0;
 }
 
+static int update_conv_cl_quad_overlay(uint64_t vi_count,
+                                       const uint64_t counts[VPSS_DEMO_OUTPUTS],
+                                       double kernel_ms, double queue_ms, int frame) {
+    static uint8_t masks[40][1024 * 96];
+    char count_line[192];
+    char status_line[192];
+    char usage_line[192];
+    char bind_line1[192];
+    char bind_line2[192];
+    char gpu_text[24];
+    char rga_text[24];
+    char cl_text[48];
+
+    snprintf(gpu_text, sizeof(gpu_text), g_perf.gpu_available ? "%.0f%%" : "N/A",
+             g_perf.gpu_percent);
+    snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
+             g_perf.rga_percent);
+    if (kernel_ms >= 0.0) {
+        snprintf(cl_text, sizeof(cl_text), "%.2f/%.2fms",
+                 kernel_ms, queue_ms >= 0.0 ? queue_ms : 0.0);
+    } else {
+        snprintf(cl_text, sizeof(cl_text), "N/A");
+    }
+
+    snprintf(count_line, sizeof(count_line), "CONV OUT  %s=%llu  %s=%llu  %s=%llu  %s=%llu",
+             g_conv_cl_effects[0].name, (unsigned long long)counts[0],
+             g_conv_cl_effects[1].name, (unsigned long long)counts[1],
+             g_conv_cl_effects[2].name, (unsigned long long)counts[2],
+             g_conv_cl_effects[3].name, (unsigned long long)counts[3]);
+    snprintf(status_line, sizeof(status_line), "VI=%llu  CPU %.0f%%  GPU %s  RGA %s  CL %s",
+             (unsigned long long)vi_count, g_perf.cpu_percent, gpu_text, rga_text, cl_text);
+    snprintf(usage_line, sizeof(usage_line), "VPSS四路同源同尺寸；画面差异只来自四个CONV_CL卷积核。");
+    snprintf(bind_line1, sizeof(bind_line1), "VI0.%s -> VPSS%d.%s -> CSC_RGA[%d..%d] -> CONV_CL[%d..%d]",
+             g_bind_vi_src_port ? g_bind_vi_src_port : "output",
+             LIVE_VPSS_GRP,
+             g_bind_vpss_in_port ? g_bind_vpss_in_port : "input",
+             g_conv_cl_pre_csc_grps[0], g_conv_cl_pre_csc_grps[VPSS_DEMO_OUTPUTS - 1],
+             g_conv_cl_quad_grps[0], g_conv_cl_quad_grps[VPSS_DEMO_OUTPUTS - 1]);
+    snprintf(bind_line2, sizeof(bind_line2), "CONV_CL -> CSC_RGA[%d..%d] -> VMIX%d inputs0..3 -> OSD%d.%s -> VO0.%s",
+             g_conv_cl_csc_grps[0], g_conv_cl_csc_grps[VPSS_DEMO_OUTPUTS - 1],
+             DISPLAY_VMIX_GRP,
+             DISPLAY_OSD_GRP,
+             g_bind_osd_src_port ? g_bind_osd_src_port : "output0",
+             g_bind_vo_in_port ? g_bind_vo_in_port : "input0");
+
+    const int cell = VPSS_TILE_W;
+    const int gap = 40;
+    const int start_x = (SCREEN_W - cell * 2 - gap) / 2;
+    const int start_y = 300;
+    const uint8_t colors[4][3] = {
+        {70, 170, 255}, {255, 110, 120}, {255, 210, 90}, {110, 230, 170},
+    };
+    for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
+        int x = start_x + (i % 2) * (cell + gap);
+        int y = start_y + (i / 2) * (cell + gap);
+        char frames[48];
+        snprintf(frames, sizeof(frames), "OUT %llu", (unsigned long long)counts[i]);
+        if (update_osd_rect_region(4 + i, x + 18, y + 18, 220, 78,
+                                   5, 10, 18, 220) != 0) return -1;
+        if (update_osd_rect_region(8 + i, x + 18, y + 18, 220, 8,
+                                   colors[i][0], colors[i][1], colors[i][2], 235) != 0) return -1;
+        if (update_osd_text_region(12 + i, x + 34, y + 36, 2, 255, 230, 120,
+                                   g_conv_cl_effects[i].name,
+                                   masks[i], sizeof(masks[i])) != 0) return -1;
+        if (update_osd_text_region(16 + i, x + 34, y + 72, 1, 190, 230, 255,
+                                   frames, masks[4 + i], sizeof(masks[4 + i])) != 0) return -1;
+    }
+
+    const int panel_y = 1328;
+    if (update_osd_rect_region(20, 34, panel_y, 1012, 420, 5, 10, 18, 226) != 0) return -1;
+    if (update_osd_utf8_text_region(21, 66, panel_y + 28, 32, 160, 255, 220,
+                                    "CONV_CL：VMIX后叠加OSD，再送VO显示",
+                                    masks[8], sizeof(masks[8]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(22, 68, panel_y + 80, 23, 255, 230, 120,
+                                    usage_line,
+                                    masks[9], sizeof(masks[9]), 1024, 96) != 0) return -1;
+    if (update_osd_text_region(23, 68, panel_y + 126, 2, 170, 255, 220,
+                               status_line, masks[10], sizeof(masks[10])) != 0) return -1;
+    if (update_osd_text_region(24, 68, panel_y + 174, 1, 190, 230, 255,
+                               count_line, masks[11], sizeof(masks[11])) != 0) return -1;
+    if (update_osd_text_region(25, 68, panel_y + 214, 1, 170, 205, 235,
+                               bind_line1, masks[12], sizeof(masks[12])) != 0) return -1;
+    if (update_osd_text_region(26, 68, panel_y + 246, 1, 170, 205, 235,
+                               bind_line2, masks[13], sizeof(masks[13])) != 0) return -1;
+
+    int cpu_w = (int)(g_perf.cpu_percent * 3.0);
+    int gpu_w = g_perf.gpu_available ? (int)(g_perf.gpu_percent * 3.0) : 0;
+    int rga_w = g_perf.rga_available ? (int)(g_perf.rga_percent * 3.0) : 0;
+    int cl_w = kernel_ms >= 0.0 ? (int)(kernel_ms * 34.0) : 0;
+    if (cpu_w < 0) cpu_w = 0;
+    if (cpu_w > 300) cpu_w = 300;
+    if (gpu_w < 0) gpu_w = 0;
+    if (gpu_w > 300) gpu_w = 300;
+    if (rga_w < 0) rga_w = 0;
+    if (rga_w > 300) rga_w = 300;
+    if (cl_w < 0) cl_w = 0;
+    if (cl_w > 300) cl_w = 300;
+
+    if (update_osd_text_region(27, 82, panel_y + 306, 1, 255, 230, 120,
+                               "CPU", masks[14], sizeof(masks[14])) != 0) return -1;
+    if (update_osd_text_region(28, 82, panel_y + 352, 1, 255, 230, 120,
+                               "GPU", masks[15], sizeof(masks[15])) != 0) return -1;
+    if (update_osd_text_region(29, 532, panel_y + 306, 1, 255, 230, 120,
+                               "RGA", masks[16], sizeof(masks[16])) != 0) return -1;
+    if (update_osd_text_region(30, 532, panel_y + 352, 1, 255, 230, 120,
+                               "CL", masks[17], sizeof(masks[17])) != 0) return -1;
+    if (update_osd_rect_region(31, 148, panel_y + 304, 300, 22, 28, 48, 68, 220) != 0) return -1;
+    if (update_osd_rect_region(32, 148, panel_y + 304, cpu_w, 22, 120, 220, 255, 230) != 0) return -1;
+    if (update_osd_rect_region(33, 148, panel_y + 350, 300, 22, 28, 48, 68, 220) != 0) return -1;
+    if (update_osd_rect_region(34, 148, panel_y + 350, gpu_w, 22, 110, 230, 170, 230) != 0) return -1;
+    if (update_osd_rect_region(35, 598, panel_y + 304, 300, 22, 28, 48, 68, 220) != 0) return -1;
+    if (update_osd_rect_region(36, 598, panel_y + 304, rga_w, 22, 255, 210, 90, 230) != 0) return -1;
+    if (update_osd_rect_region(37, 598, panel_y + 350, 300, 22, 28, 48, 68, 220) != 0) return -1;
+    if (update_osd_rect_region(38, 598, panel_y + 350, cl_w, 22, 255, 110, 120, 230) != 0) return -1;
+
+    int packet_x = 68 + ((frame * 18) % 890);
+    if (update_osd_rect_region(39, packet_x, panel_y - 22, 52, 10, 255, 255, 255, 180) != 0) return -1;
+    return 0;
+}
+
 static int setup_display_vmix_osd(int dstride, size_t display_size, int input_count) {
-    if (MEDIA_POOL_Create(DISPLAY_VMIX_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
+    int input_pool_count = input_count >= VPSS_DEMO_OUTPUTS ? VPSS_DEMO_OUTPUTS * 4 : 3;
+    if (MEDIA_POOL_Create(DISPLAY_VMIX_INPUT_POOL, CAM_FRAME_SIZE, input_pool_count) != 0) return -1;
     if (MEDIA_POOL_Create(DISPLAY_VMIX_OUTPUT_POOL, display_size, 4) != 0) goto fail_input;
     if (MEDIA_POOL_Create(DISPLAY_OSD_OUTPUT_POOL, display_size, 4) != 0) goto fail_vmix_pool;
 
@@ -3992,6 +4189,157 @@ static int bind_vpss_vmix_osd_vo(void) {
     return 0;
 }
 
+static int bind_vi_vpss_conv_cl_vmix_osd_vo(void) {
+    /*
+     * Keep each branch explicit instead of relying on auto-selected ports:
+     * output0 maps to input0, output1 maps to input1, and so on.  That makes
+     * the 2x2 VMIX layout stable and keeps each CONV_CL effect in a known
+     * quadrant even with the extra CSC_RGA format-bridge stages.
+     */
+    const char *vi_out_ports[] = {"output", "output0"};
+    const char *vpss_in_ports[] = {"input", "input0"};
+    const char *vpss_out_ports[VPSS_DEMO_OUTPUTS] = {"output0", "output1", "output2", "output3"};
+    const char *conv_in_ports[] = {"input", "input0"};
+    const char *conv_out_ports[] = {"output0", "output"};
+    const char *csc_in_ports[] = {"input", "input0"};
+    const char *csc_out_ports[] = {"output0", "output"};
+    const char *vmix_in_ports[VPSS_DEMO_OUTPUTS] = {"input0", "input1", "input2", "input3"};
+    const char *out_ports[] = {"output0", "output"};
+    const char *osd_in_ports[] = {"input", "input0"};
+    const char *vo_in_ports[] = {"input0", "input"};
+
+    g_bind_vi_src_port = NULL;
+    g_bind_vpss_in_port = NULL;
+    g_bind_vmix_src_port = NULL;
+    g_bind_osd_in_port = NULL;
+    g_bind_osd_src_port = NULL;
+    g_bind_vo_in_port = NULL;
+    for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
+        g_bind_vpss_conv_src_ports[i] = NULL;
+        g_bind_conv_pre_csc_in_ports[i] = NULL;
+        g_bind_conv_pre_csc_src_ports[i] = NULL;
+        g_bind_conv_cl_in_ports[i] = NULL;
+        g_bind_conv_cl_src_ports[i] = NULL;
+        g_bind_conv_csc_in_ports[i] = NULL;
+        g_bind_conv_csc_src_ports[i] = NULL;
+        g_bind_conv_vmix_in_ports[i] = NULL;
+    }
+
+    if (bind_first_match("VI", 0, vi_out_ports, (int)ARRAY_SIZE(vi_out_ports),
+                         "VPSS", LIVE_VPSS_GRP, vpss_in_ports, (int)ARRAY_SIZE(vpss_in_ports),
+                         &g_bind_vi_src_port, &g_bind_vpss_in_port) != 0) {
+        fprintf(stderr, "bind failed: VI -> VPSS for CONV_CL quad\n");
+        return -1;
+    }
+
+    for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
+        const char *one_vpss_out[] = {vpss_out_ports[i]};
+        if (bind_first_match("VPSS", LIVE_VPSS_GRP, one_vpss_out, 1,
+                             "CSC_RGA", g_conv_cl_pre_csc_grps[i],
+                             csc_in_ports, (int)ARRAY_SIZE(csc_in_ports),
+                             &g_bind_vpss_conv_src_ports[i],
+                             &g_bind_conv_pre_csc_in_ports[i]) != 0) {
+            fprintf(stderr, "bind failed: VPSS output%d -> CSC_RGA%d\n",
+                    i, g_conv_cl_pre_csc_grps[i]);
+            goto fail;
+        }
+    }
+
+    for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
+        if (bind_first_match("CSC_RGA", g_conv_cl_pre_csc_grps[i],
+                             csc_out_ports, (int)ARRAY_SIZE(csc_out_ports),
+                             "CONV_CL", g_conv_cl_quad_grps[i],
+                             conv_in_ports, (int)ARRAY_SIZE(conv_in_ports),
+                             &g_bind_conv_pre_csc_src_ports[i],
+                             &g_bind_conv_cl_in_ports[i]) != 0) {
+            fprintf(stderr, "bind failed: CSC_RGA%d -> CONV_CL%d\n",
+                    g_conv_cl_pre_csc_grps[i], g_conv_cl_quad_grps[i]);
+            goto fail;
+        }
+    }
+
+    for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
+        if (bind_first_match("CONV_CL", g_conv_cl_quad_grps[i],
+                             conv_out_ports, (int)ARRAY_SIZE(conv_out_ports),
+                             "CSC_RGA", g_conv_cl_csc_grps[i],
+                             csc_in_ports, (int)ARRAY_SIZE(csc_in_ports),
+                             &g_bind_conv_cl_src_ports[i],
+                             &g_bind_conv_csc_in_ports[i]) != 0) {
+            fprintf(stderr, "bind failed: CONV_CL%d -> CSC_RGA%d\n",
+                    g_conv_cl_quad_grps[i], g_conv_cl_csc_grps[i]);
+            goto fail;
+        }
+    }
+
+    for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
+        const char *one_vmix_in[] = {vmix_in_ports[i]};
+        if (bind_first_match("CSC_RGA", g_conv_cl_csc_grps[i],
+                             csc_out_ports, (int)ARRAY_SIZE(csc_out_ports),
+                             "VMIX", DISPLAY_VMIX_GRP, one_vmix_in, 1,
+                             &g_bind_conv_csc_src_ports[i],
+                             &g_bind_conv_vmix_in_ports[i]) != 0) {
+            fprintf(stderr, "bind failed: CSC_RGA%d -> VMIX input%d\n",
+                    g_conv_cl_csc_grps[i], i);
+            goto fail;
+        }
+    }
+
+    if (bind_first_match("VMIX", DISPLAY_VMIX_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
+                         "OSD", DISPLAY_OSD_GRP, osd_in_ports, (int)ARRAY_SIZE(osd_in_ports),
+                         &g_bind_vmix_src_port, &g_bind_osd_in_port) != 0) {
+        fprintf(stderr, "bind failed: VMIX -> OSD\n");
+        goto fail;
+    }
+    if (bind_first_match("OSD", DISPLAY_OSD_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
+                         "VO", 0, vo_in_ports, (int)ARRAY_SIZE(vo_in_ports),
+                         &g_bind_osd_src_port, &g_bind_vo_in_port) != 0) {
+        fprintf(stderr, "bind failed: OSD -> VO\n");
+        goto fail;
+    }
+    return 0;
+
+fail:
+    if (g_bind_osd_src_port && g_bind_vo_in_port) {
+        MEDIA_SYS_UnBind("OSD", DISPLAY_OSD_GRP, g_bind_osd_src_port,
+                         "VO", 0, g_bind_vo_in_port);
+    }
+    if (g_bind_vmix_src_port && g_bind_osd_in_port) {
+        MEDIA_SYS_UnBind("VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_src_port,
+                         "OSD", DISPLAY_OSD_GRP, g_bind_osd_in_port);
+    }
+    for (int i = VPSS_DEMO_OUTPUTS - 1; i >= 0; --i) {
+        if (g_bind_conv_csc_src_ports[i] && g_bind_conv_vmix_in_ports[i]) {
+            MEDIA_SYS_UnBind("CSC_RGA", g_conv_cl_csc_grps[i],
+                             g_bind_conv_csc_src_ports[i],
+                             "VMIX", DISPLAY_VMIX_GRP,
+                             g_bind_conv_vmix_in_ports[i]);
+        }
+        if (g_bind_conv_cl_src_ports[i] && g_bind_conv_csc_in_ports[i]) {
+            MEDIA_SYS_UnBind("CONV_CL", g_conv_cl_quad_grps[i],
+                             g_bind_conv_cl_src_ports[i],
+                             "CSC_RGA", g_conv_cl_csc_grps[i],
+                             g_bind_conv_csc_in_ports[i]);
+        }
+        if (g_bind_conv_pre_csc_src_ports[i] && g_bind_conv_cl_in_ports[i]) {
+            MEDIA_SYS_UnBind("CSC_RGA", g_conv_cl_pre_csc_grps[i],
+                             g_bind_conv_pre_csc_src_ports[i],
+                             "CONV_CL", g_conv_cl_quad_grps[i],
+                             g_bind_conv_cl_in_ports[i]);
+        }
+        if (g_bind_vpss_conv_src_ports[i] && g_bind_conv_pre_csc_in_ports[i]) {
+            MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP,
+                             g_bind_vpss_conv_src_ports[i],
+                             "CSC_RGA", g_conv_cl_pre_csc_grps[i],
+                             g_bind_conv_pre_csc_in_ports[i]);
+        }
+    }
+    if (g_bind_vi_src_port && g_bind_vpss_in_port) {
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "VPSS", LIVE_VPSS_GRP, g_bind_vpss_in_port);
+    }
+    return -1;
+}
+
 static void unbind_vi_resize_vmix_osd_vo(int enabled) {
     if (!enabled) return;
     if (g_bind_osd_src_port && g_bind_vo_in_port) {
@@ -4186,6 +4534,48 @@ static void unbind_vpss_vmix_osd_vo(int enabled) {
         if (g_bind_vpss_src_ports[i] && g_bind_vmix_in_ports[i]) {
             MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP, g_bind_vpss_src_ports[i],
                              "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_in_ports[i]);
+        }
+    }
+    if (g_bind_vi_src_port && g_bind_vpss_in_port) {
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "VPSS", LIVE_VPSS_GRP, g_bind_vpss_in_port);
+    }
+}
+
+static void unbind_vi_vpss_conv_cl_vmix_osd_vo(int enabled) {
+    if (!enabled) return;
+    if (g_bind_osd_src_port && g_bind_vo_in_port) {
+        MEDIA_SYS_UnBind("OSD", DISPLAY_OSD_GRP, g_bind_osd_src_port,
+                         "VO", 0, g_bind_vo_in_port);
+    }
+    if (g_bind_vmix_src_port && g_bind_osd_in_port) {
+        MEDIA_SYS_UnBind("VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_src_port,
+                         "OSD", DISPLAY_OSD_GRP, g_bind_osd_in_port);
+    }
+    for (int i = VPSS_DEMO_OUTPUTS - 1; i >= 0; --i) {
+        if (g_bind_conv_csc_src_ports[i] && g_bind_conv_vmix_in_ports[i]) {
+            MEDIA_SYS_UnBind("CSC_RGA", g_conv_cl_csc_grps[i],
+                             g_bind_conv_csc_src_ports[i],
+                             "VMIX", DISPLAY_VMIX_GRP,
+                             g_bind_conv_vmix_in_ports[i]);
+        }
+        if (g_bind_conv_cl_src_ports[i] && g_bind_conv_csc_in_ports[i]) {
+            MEDIA_SYS_UnBind("CONV_CL", g_conv_cl_quad_grps[i],
+                             g_bind_conv_cl_src_ports[i],
+                             "CSC_RGA", g_conv_cl_csc_grps[i],
+                             g_bind_conv_csc_in_ports[i]);
+        }
+        if (g_bind_conv_pre_csc_src_ports[i] && g_bind_conv_cl_in_ports[i]) {
+            MEDIA_SYS_UnBind("CSC_RGA", g_conv_cl_pre_csc_grps[i],
+                             g_bind_conv_pre_csc_src_ports[i],
+                             "CONV_CL", g_conv_cl_quad_grps[i],
+                             g_bind_conv_cl_in_ports[i]);
+        }
+        if (g_bind_vpss_conv_src_ports[i] && g_bind_conv_pre_csc_in_ports[i]) {
+            MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP,
+                             g_bind_vpss_conv_src_ports[i],
+                             "CSC_RGA", g_conv_cl_pre_csc_grps[i],
+                             g_bind_conv_pre_csc_in_ports[i]);
         }
     }
     if (g_bind_vi_src_port && g_bind_vpss_in_port) {
@@ -5239,6 +5629,234 @@ static int process_live_conv_cl(const uint8_t *src, uint8_t *dst) {
     return ret;
 }
 
+static void fill_vpss_conv_output_attr(MEDIA_VPSS_OUT_ATTR *out, int output_id,
+                                       int crop_x, int crop_y, int crop_w, int crop_h,
+                                       int flip_h, int flip_v) {
+    memset(out, 0, sizeof(*out));
+    out->output_id = output_id;
+    out->out_width = VPSS_TILE_W;
+    out->out_height = VPSS_TILE_H;
+    out->out_stride = VPSS_TILE_NV12_STRIDE;
+    out->pool_id = VPSS_OUTPUT_POOL;
+    out->crop_x = crop_x;
+    out->crop_y = crop_y;
+    out->crop_w = crop_w;
+    out->crop_h = crop_h;
+    out->in_fps = -1;
+    out->out_fps = -1;
+    out->flip_h = flip_h;
+    out->flip_v = flip_v;
+    out->output_format = MEDIA_FORMAT_NV12;
+}
+
+static void fill_vpss_conv_initial_output_attr(MEDIA_VPSS_OUT_ATTR *out, int output_id) {
+    /*
+     * CONV_CL page compares four convolution kernels, not four VPSS transforms.
+     * Keep every VPSS output on the same full-frame crop, size, and orientation
+     * so the only visual difference between quadrants comes from CONV_CL.
+     */
+    fill_vpss_conv_output_attr(out, output_id, 0, 0, CAM_W, CAM_H, 0, 0);
+}
+
+static int setup_live_conv_cl_quad(void) {
+    /*
+     * VI, VPSS, VMIX, OSD and VO stay on NV12 for the realtime display path.
+     * CONV_CL itself accepts RGB-family frames, and RGB888 dma-buf import is not
+     * reliable on this EGL/OpenCL stack, so each branch uses RGBA8888 as the
+     * GPU-facing bridge format:
+     *
+     *   VI(NV12) -> VPSS(4x NV12)
+     *     -> 4x CSC_RGA(NV12->RGBA8888)
+     *     -> 4x CONV_CL(RGBA8888)
+     *     -> 4x CSC_RGA(RGBA8888->NV12) -> VMIX -> OSD -> VO
+     *
+     * Each CONV_CL group owns one branch and applies a different 3x3 kernel.
+     * The explicit pre/post CSC_RGA stages make the format transitions visible
+     * in logs and keep the branch binding one-to-one with the VMIX quadrants.
+     */
+    if (MEDIA_POOL_Create(VPSS_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
+    if (MEDIA_POOL_Create(VPSS_OUTPUT_POOL, VPSS_TILE_NV12_SIZE, VPSS_DEMO_OUTPUTS * 4) != 0) {
+        MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+        return -1;
+    }
+    if (MEDIA_POOL_Create(CONV_CL_INPUT_POOL, VPSS_TILE_RGBA_SIZE, VPSS_DEMO_OUTPUTS * 4) != 0) {
+        MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+        MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+        return -1;
+    }
+    if (MEDIA_POOL_Create(CONV_CL_OUTPUT_POOL, VPSS_TILE_RGBA_SIZE, VPSS_DEMO_OUTPUTS * 4) != 0) {
+        MEDIA_POOL_Destroy(CONV_CL_INPUT_POOL);
+        MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+        MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+        return -1;
+    }
+
+    MEDIA_VPSS_ATTR vpss = {0};
+    vpss.width = CAM_W;
+    vpss.height = CAM_H;
+    vpss.input_stride = CAM_STRIDE;
+    vpss.input_depth = 4;
+    vpss.input_format = MEDIA_FORMAT_NV12;
+    vpss.output_count = VPSS_DEMO_OUTPUTS;
+    for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
+        fill_vpss_conv_initial_output_attr(&vpss.outputs[i], i);
+    }
+    if (MEDIA_VPSS_SetAttr(LIVE_VPSS_GRP, &vpss) != 0 ||
+        MEDIA_VPSS_Enable(LIVE_VPSS_GRP) != 0) {
+        MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
+        MEDIA_POOL_Destroy(CONV_CL_OUTPUT_POOL);
+        MEDIA_POOL_Destroy(CONV_CL_INPUT_POOL);
+        MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+        MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+        return -1;
+    }
+
+    int pre_csc_created = 0;
+    for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
+        MEDIA_CSC_RGA_ATTR attr = {0};
+        attr.input_width = VPSS_TILE_W;
+        attr.input_height = VPSS_TILE_H;
+        attr.input_format = MEDIA_FORMAT_NV12;
+        attr.output_format = MEDIA_FORMAT_RGBA8888;
+        attr.input_depth = 3;
+        attr.output_pool_id = CONV_CL_INPUT_POOL;
+        attr.input_stride = VPSS_TILE_NV12_STRIDE;
+        attr.output_stride = VPSS_TILE_RGBA_STRIDE;
+        attr.csc_mode = 0;
+
+        int grp = g_conv_cl_pre_csc_grps[i];
+        if (MEDIA_CSC_RGA_CreateGrp(grp, &attr) != 0 ||
+            MEDIA_CSC_RGA_Start(grp) != 0 ||
+            MEDIA_CSC_RGA_Enable(grp) != 0) {
+            for (int j = pre_csc_created - 1; j >= 0; --j) {
+                MEDIA_CSC_RGA_Disable(g_conv_cl_pre_csc_grps[j]);
+                MEDIA_CSC_RGA_Stop(g_conv_cl_pre_csc_grps[j]);
+                MEDIA_CSC_RGA_DestroyGrp(g_conv_cl_pre_csc_grps[j]);
+            }
+            MEDIA_CSC_RGA_DestroyGrp(grp);
+            MEDIA_VPSS_Disable(LIVE_VPSS_GRP);
+            MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
+            MEDIA_POOL_Destroy(CONV_CL_OUTPUT_POOL);
+            MEDIA_POOL_Destroy(CONV_CL_INPUT_POOL);
+            MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+            MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+            return -1;
+        }
+        pre_csc_created++;
+    }
+
+    int conv_created = 0;
+    for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
+        MEDIA_CONV_CL_ATTR attr = {0};
+        attr.width = VPSS_TILE_W;
+        attr.height = VPSS_TILE_H;
+        attr.format = MEDIA_FORMAT_RGBA8888;
+        attr.kernel_size = g_conv_cl_effects[i].kernel_size;
+        attr.input_depth = 3;
+        attr.output_pool_id = CONV_CL_OUTPUT_POOL;
+        attr.input_stride = VPSS_TILE_RGBA_STRIDE;
+        attr.output_stride = VPSS_TILE_RGBA_STRIDE;
+
+        int grp = g_conv_cl_quad_grps[i];
+        if (MEDIA_CONV_CL_CreateGrp(grp, &attr) != 0 ||
+            MEDIA_CONV_CL_SetTable(grp, g_conv_cl_effects[i].table,
+                                   g_conv_cl_effects[i].table_size) != 0 ||
+            MEDIA_CONV_CL_Start(grp) != 0) {
+            for (int j = conv_created - 1; j >= 0; --j) {
+                MEDIA_CONV_CL_Stop(g_conv_cl_quad_grps[j]);
+                MEDIA_CONV_CL_DestroyGrp(g_conv_cl_quad_grps[j]);
+            }
+            MEDIA_CONV_CL_DestroyGrp(grp);
+            for (int j = pre_csc_created - 1; j >= 0; --j) {
+                MEDIA_CSC_RGA_Disable(g_conv_cl_pre_csc_grps[j]);
+                MEDIA_CSC_RGA_Stop(g_conv_cl_pre_csc_grps[j]);
+                MEDIA_CSC_RGA_DestroyGrp(g_conv_cl_pre_csc_grps[j]);
+            }
+            MEDIA_VPSS_Disable(LIVE_VPSS_GRP);
+            MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
+            MEDIA_POOL_Destroy(CONV_CL_OUTPUT_POOL);
+            MEDIA_POOL_Destroy(CONV_CL_INPUT_POOL);
+            MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+            MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+            return -1;
+        }
+        conv_created++;
+    }
+
+    int csc_created = 0;
+    for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
+        MEDIA_CSC_RGA_ATTR attr = {0};
+        attr.input_width = VPSS_TILE_W;
+        attr.input_height = VPSS_TILE_H;
+        attr.input_format = MEDIA_FORMAT_RGBA8888;
+        attr.output_format = MEDIA_FORMAT_NV12;
+        attr.input_depth = 3;
+        attr.output_pool_id = DISPLAY_VMIX_INPUT_POOL;
+        attr.input_stride = VPSS_TILE_RGBA_STRIDE;
+        attr.output_stride = VPSS_TILE_NV12_STRIDE;
+        attr.csc_mode = 0;
+
+        int grp = g_conv_cl_csc_grps[i];
+        if (MEDIA_CSC_RGA_CreateGrp(grp, &attr) != 0 ||
+            MEDIA_CSC_RGA_Start(grp) != 0 ||
+            MEDIA_CSC_RGA_Enable(grp) != 0) {
+            for (int j = csc_created - 1; j >= 0; --j) {
+                MEDIA_CSC_RGA_Disable(g_conv_cl_csc_grps[j]);
+                MEDIA_CSC_RGA_Stop(g_conv_cl_csc_grps[j]);
+                MEDIA_CSC_RGA_DestroyGrp(g_conv_cl_csc_grps[j]);
+            }
+            MEDIA_CSC_RGA_DestroyGrp(grp);
+            for (int j = conv_created - 1; j >= 0; --j) {
+                MEDIA_CONV_CL_Stop(g_conv_cl_quad_grps[j]);
+                MEDIA_CONV_CL_DestroyGrp(g_conv_cl_quad_grps[j]);
+            }
+            for (int j = pre_csc_created - 1; j >= 0; --j) {
+                MEDIA_CSC_RGA_Disable(g_conv_cl_pre_csc_grps[j]);
+                MEDIA_CSC_RGA_Stop(g_conv_cl_pre_csc_grps[j]);
+                MEDIA_CSC_RGA_DestroyGrp(g_conv_cl_pre_csc_grps[j]);
+            }
+            MEDIA_VPSS_Disable(LIVE_VPSS_GRP);
+            MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
+            MEDIA_POOL_Destroy(CONV_CL_OUTPUT_POOL);
+            MEDIA_POOL_Destroy(CONV_CL_INPUT_POOL);
+            MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+            MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+            return -1;
+        }
+        csc_created++;
+    }
+
+    set_tile_status("VPSS", TILE_LIVE);
+    set_tile_status("CONV_CL", TILE_LIVE);
+    set_tile_status("CSC_RGA", TILE_LIVE);
+    set_tile_status("VMIX", TILE_LIVE);
+    return 0;
+}
+
+static void cleanup_live_conv_cl_quad(int enabled) {
+    if (!enabled) return;
+    for (int i = VPSS_DEMO_OUTPUTS - 1; i >= 0; --i) {
+        MEDIA_CSC_RGA_Disable(g_conv_cl_csc_grps[i]);
+        MEDIA_CSC_RGA_Stop(g_conv_cl_csc_grps[i]);
+        MEDIA_CSC_RGA_DestroyGrp(g_conv_cl_csc_grps[i]);
+    }
+    for (int i = VPSS_DEMO_OUTPUTS - 1; i >= 0; --i) {
+        MEDIA_CONV_CL_Stop(g_conv_cl_quad_grps[i]);
+        MEDIA_CONV_CL_DestroyGrp(g_conv_cl_quad_grps[i]);
+    }
+    for (int i = VPSS_DEMO_OUTPUTS - 1; i >= 0; --i) {
+        MEDIA_CSC_RGA_Disable(g_conv_cl_pre_csc_grps[i]);
+        MEDIA_CSC_RGA_Stop(g_conv_cl_pre_csc_grps[i]);
+        MEDIA_CSC_RGA_DestroyGrp(g_conv_cl_pre_csc_grps[i]);
+    }
+    MEDIA_VPSS_Disable(LIVE_VPSS_GRP);
+    MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
+    MEDIA_POOL_Destroy(CONV_CL_OUTPUT_POOL);
+    MEDIA_POOL_Destroy(CONV_CL_INPUT_POOL);
+    MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+    MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+}
+
 static int setup_live_clahe(void) {
     if (MEDIA_POOL_Create(OSD_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
     if (MEDIA_POOL_Create(OSD_OUTPUT_POOL, CAM_FRAME_SIZE, 3) != 0) {
@@ -5954,6 +6572,7 @@ static int tile_needs_camera(const char *name) {
            strcasecmp(name, "CSC_CL") == 0 ||
            strcasecmp(name, "CAP_DEHAZE") == 0 ||
            strcasecmp(name, "DCP_FAST_DEHAZE") == 0 ||
+           strcasecmp(name, "CONV_CL") == 0 ||
            strcasecmp(name, "CLAHE") == 0 ||
            strcasecmp(name, "RETINEX") == 0 ||
            strcasecmp(name, "STEREO_3D") == 0;
@@ -6781,10 +7400,6 @@ int main(int argc, char **argv) {
         live_dcp_ok = 1;
     }
     int live_conv_ok = 0;
-    if (!solid_test && only_tile && strcasecmp(only_tile, "CONV_CL") == 0 &&
-        setup_live_conv_cl() == 0) {
-        live_conv_ok = 1;
-    }
     int live_clahe_ok = 0;
     if (!solid_test && !only_tile &&
         setup_live_clahe() == 0) {
@@ -6893,6 +7508,7 @@ int main(int argc, char **argv) {
          strcasecmp(only_tile, "RESIZE_RGA") == 0 ||
          strcasecmp(only_tile, "CSC_RGA") == 0 ||
          strcasecmp(only_tile, "CSC_CL") == 0 ||
+         strcasecmp(only_tile, "CONV_CL") == 0 ||
          strcasecmp(only_tile, "CLAHE") == 0);
     int use_vi_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "VI") == 0;
     int use_vpss_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "VPSS") == 0;
@@ -6903,6 +7519,7 @@ int main(int argc, char **argv) {
     int use_resize_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "RESIZE_RGA") == 0;
     int use_csc_rga_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "CSC_RGA") == 0;
     int use_csc_cl_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "CSC_CL") == 0;
+    int use_conv_cl_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "CONV_CL") == 0;
     int vi_bind_display_ok = 0;
     int vpss_bind_display_ok = 0;
     int osd_bind_display_ok = 0;
@@ -6912,14 +7529,16 @@ int main(int argc, char **argv) {
     int resize_bind_display_ok = 0;
     int csc_rga_bind_display_ok = 0;
     int csc_cl_bind_display_ok = 0;
+    int conv_cl_bind_display_ok = 0;
     int live_resize_bind_ok = 0;
     int live_osd_bind_ok = 0;
     int live_clahe_bind_ok = 0;
     int live_retinex_bind_ok = 0;
     int live_csc_rga_chain_ok = 0;
     int live_csc_cl_chain_ok = 0;
+    int live_conv_cl_quad_ok = 0;
     int display_vmix_osd_ok = 0;
-    int display_vmix_inputs = use_vpss_bind_display ? VPSS_DEMO_OUTPUTS :
+    int display_vmix_inputs = (use_vpss_bind_display || use_conv_cl_bind_display) ? VPSS_DEMO_OUTPUTS :
         ((use_clahe_bind_display || use_retinex_bind_display) ? 2 : 1);
     if (use_vmix_osd_display && setup_display_vmix_osd(dstride, display_size, display_vmix_inputs) == 0) {
         display_vmix_osd_ok = 1;
@@ -6928,6 +7547,10 @@ int main(int argc, char **argv) {
     }
     if (use_rga_bind_display && display_vmix_osd_ok && setup_live_rga() == 0) {
         live_rga_ok = 1;
+    }
+    if (use_conv_cl_bind_display && display_vmix_osd_ok &&
+        setup_live_conv_cl_quad() == 0) {
+        live_conv_cl_quad_ok = 1;
     }
     if (use_osd_bind_display && display_vmix_osd_ok && setup_live_osd_bind() == 0) {
         live_osd_bind_ok = 1;
@@ -7299,6 +7922,43 @@ int main(int argc, char **argv) {
         (void)update_display_osd_text("CSC_CL  DOUBLE CL CSC", "NV12 TO ARGB8888 TO NV12");
         (void)update_csc_cl_bind_flow_overlay(0, 0, -1.0, -1.0, 0);
     }
+    if (use_conv_cl_bind_display) {
+        if (!camera_ok || !live_conv_cl_quad_ok || !display_vmix_osd_ok ||
+            bind_vi_vpss_conv_cl_vmix_osd_vo() != 0) {
+            fprintf(stderr, "CONV_CL quad bind display setup failed; CPU copy fallback is disabled for --only CONV_CL\n");
+            if (camera_ok) MEDIA_VI_Disable(0);
+            cleanup_live_conv_cl_quad(live_conv_cl_quad_ok);
+            cleanup_display_vmix_osd(display_vmix_osd_ok);
+            MEDIA_VO_Stop(0, 0);
+            MEDIA_VO_DestroyChn(0, 0);
+            MEDIA_POOL_Destroy(DISPLAY_POOL);
+            cleanup_live_stereo(live_stereo_ok);
+            cleanup_live_pano(live_pano_ok);
+            cleanup_live_dualview(live_dualview_ok);
+            cleanup_live_edof(live_edof_ok);
+            cleanup_live_retinex(live_retinex_ok);
+            cleanup_live_clahe(live_clahe_ok);
+            cleanup_live_conv_cl(live_conv_ok);
+            cleanup_live_dcp_dehaze(live_dcp_ok);
+            cleanup_live_cap_dehaze(live_cap_ok);
+            cleanup_live_transform(live_transform_ok);
+            cleanup_live_csc_rga(live_csc_rga_ok);
+            cleanup_live_rga(live_rga_ok);
+            cleanup_live_vpss(live_vpss_ok);
+            cleanup_live_resize(live_resize_ok);
+            cleanup_live_osd(live_osd_ok);
+            if (need_camera) MEDIA_POOL_Destroy(CAMERA_POOL);
+            unload_pano_sample();
+            unload_edof_pairs();
+            unload_loop_assets();
+            MEDIA_SYS_Exit();
+            return 1;
+        }
+        conv_cl_bind_display_ok = 1;
+        (void)update_display_osd_text("CONV_CL  VPSS 4X GPU CONV", "SHARPEN EDGE EMBOSS BLUR");
+        uint64_t zero_counts[VPSS_DEMO_OUTPUTS] = {0};
+        (void)update_conv_cl_quad_overlay(0, zero_counts, -1.0, -1.0, 0);
+    }
 
     printf("alldemo running on DSI 1080x1920%s%s%s%s. Ctrl+C to stop.\n",
            solid_test ? " solid-test" : "",
@@ -7375,7 +8035,8 @@ int main(int argc, char **argv) {
             !clahe_bind_display_ok &&
             !retinex_bind_display_ok &&
             !rga_bind_display_ok && !resize_bind_display_ok &&
-            !csc_rga_bind_display_ok && !csc_cl_bind_display_ok) {
+            !csc_rga_bind_display_ok && !csc_cl_bind_display_ok &&
+            !conv_cl_bind_display_ok) {
             MEDIA_BUFFER cbuf = {-1, -1};
             if (MEDIA_VI_GetFrame(0, &cbuf, 1) == 0) {
                 void *addr = NULL;
@@ -7606,6 +8267,7 @@ int main(int argc, char **argv) {
                            rga_text);
                 }
             }
+            maybe_capture_vo_channel_frame(only_tile, frame, dstride);
             frame++;
             usleep(1000000 / FPS);
             continue;
@@ -7663,6 +8325,7 @@ int main(int argc, char **argv) {
                            rga_text);
                 }
             }
+            maybe_capture_vo_channel_frame(only_tile, frame, dstride);
             frame++;
             usleep(1000000 / FPS);
             continue;
@@ -7969,6 +8632,70 @@ int main(int argc, char **argv) {
             usleep(1000000 / FPS);
             continue;
         }
+        if (conv_cl_bind_display_ok) {
+            if ((frame % 15) == 0) {
+                uint64_t vi_count = 0;
+                uint64_t conv_counts[VPSS_DEMO_OUTPUTS] = {0};
+                double kernel_ms = 0.0;
+                double queue_ms = 0.0;
+                int perf_ok = 1;
+                char perf[180];
+                char gpu_text[24];
+                char rga_text[24];
+                char cl_text[48];
+                update_perf_status();
+                if (MEDIA_SYS_GetModuleFrameCount("VI", 0, &vi_count) == 0) {
+                    g_health.camera_frames = (int)vi_count;
+                }
+                for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
+                    MEDIA_CONV_CL_PERF cl_perf = {0};
+                    (void)MEDIA_SYS_GetModuleFrameCount("CONV_CL", g_conv_cl_quad_grps[i],
+                                                        &conv_counts[i]);
+                    if (MEDIA_CONV_CL_GetLastPerf(g_conv_cl_quad_grps[i], &cl_perf) == 0 &&
+                        cl_perf.gpu_kernel_total_ms >= 0.0 &&
+                        cl_perf.gpu_queue_total_ms >= 0.0) {
+                        kernel_ms += cl_perf.gpu_kernel_total_ms;
+                        queue_ms += cl_perf.gpu_queue_total_ms;
+                    } else {
+                        perf_ok = 0;
+                    }
+                }
+                if (!perf_ok) {
+                    kernel_ms = -1.0;
+                    queue_ms = -1.0;
+                }
+                snprintf(gpu_text, sizeof(gpu_text), g_perf.gpu_available ? "%.0f%%" : "N/A",
+                         g_perf.gpu_percent);
+                snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
+                         g_perf.rga_percent);
+                if (kernel_ms >= 0.0) {
+                    snprintf(cl_text, sizeof(cl_text), "%.2f/%.2fms", kernel_ms, queue_ms);
+                } else {
+                    snprintf(cl_text, sizeof(cl_text), "N/A");
+                }
+                snprintf(perf, sizeof(perf), "PAGE %02d/%02d CONV_CL CPU %.0f%% GPU %s RGA %s CL %s",
+                         module_page_number("CONV_CL"), (int)ARRAY_SIZE(g_module_pages),
+                         g_perf.cpu_percent, gpu_text, rga_text, cl_text);
+                (void)update_display_osd_text("CONV_CL  VMIX OSD VO", perf);
+                (void)update_conv_cl_quad_overlay(vi_count, conv_counts, kernel_ms, queue_ms, frame);
+                if ((frame % FPS) == 0) {
+                    printf("CONV_CL vi_frames=%llu %s=%llu %s=%llu %s=%llu %s=%llu cpu=%.0f%% gpu=%s rga=%s cl=%s\n",
+                           (unsigned long long)vi_count,
+                           g_conv_cl_effects[0].name, (unsigned long long)conv_counts[0],
+                           g_conv_cl_effects[1].name, (unsigned long long)conv_counts[1],
+                           g_conv_cl_effects[2].name, (unsigned long long)conv_counts[2],
+                           g_conv_cl_effects[3].name, (unsigned long long)conv_counts[3],
+                           g_perf.cpu_percent,
+                           gpu_text,
+                           rga_text,
+                           cl_text);
+                }
+            }
+            maybe_capture_vo_channel_frame(only_tile, frame, dstride);
+            frame++;
+            usleep(1000000 / FPS);
+            continue;
+        }
 
         if (use_vmix_osd_display) {
             const uint8_t *display_src = NULL;
@@ -8055,6 +8782,7 @@ int main(int argc, char **argv) {
     alarm(5);
 
     if (vo_demo_enabled) vo_demo_restore_output();
+    unbind_vi_vpss_conv_cl_vmix_osd_vo(conv_cl_bind_display_ok);
     unbind_vpss_vmix_osd_vo(vpss_bind_display_ok);
     unbind_vi_csc_cl_chain_vmix_osd_vo(csc_cl_bind_display_ok);
     unbind_vi_csc_chain_vmix_osd_vo(csc_rga_bind_display_ok);
@@ -8065,6 +8793,7 @@ int main(int argc, char **argv) {
     unbind_vi_live_osd_vmix_osd_vo(osd_bind_display_ok);
     unbind_vi_vmix_osd_vo(vi_bind_display_ok);
     if (camera_ok) MEDIA_VI_Disable(0);
+    cleanup_live_conv_cl_quad(live_conv_cl_quad_ok);
     cleanup_live_csc_cl_chain(live_csc_cl_chain_ok);
     cleanup_live_csc_rga_chain(live_csc_rga_chain_ok);
     cleanup_live_resize_bind(live_resize_bind_ok);

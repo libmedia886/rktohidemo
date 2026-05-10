@@ -66,7 +66,7 @@ cmake --build build -j
 `CAP_DEHAZE` 单独模式使用实时摄像头输入，程序把 VI 的 NV12 帧转换为 RGB 后送入 CAP_DEHAZE，主画面左右对比原始 VI 输入和去雾输出。
 `DCP_FAST_DEHAZE` 单独模式使用实时摄像头输入，程序把 VI 的 NV12 帧转换为 RGB 后送入 DCP_FAST_DEHAZE，主画面左右对比原始 VI 输入和暗通道先验去雾输出。
 `THERMAL` 单独模式使用 `/userdata/rktohi/demo/thermal/1.png` 和 `2.png` 原始 demo 图，一屏展示 16 种热成像伪彩模式，同一张输入图按不同色表映射，便于直接比较 RAINBOW、BLACK HOT、WHITE HOT、IRON、SEPIA 等模式差异；源图每 3 秒自动切换。
-`CONV_CL` 单独模式使用合成 RGBA 输入，不占用摄像头。
+`CONV_CL` 单独模式使用实时摄像头输入，走 `VI -> VPSS(4路同源同尺寸NV12) -> 4x CSC_RGA(NV12->RGBA8888) -> 4x CONV_CL -> 4x CSC_RGA(RGBA8888->NV12) -> VMIX -> OSD -> VO` bind 链路，同屏展示 SHARPEN、EDGE、EMBOSS、BLUR 四种卷积效果，并在 VMIX 后的 OSD 层显示四路帧计数、CPU/GPU/RGA 占用率和 OpenCL kernel/queue 耗时。
 `VPSS` 单独模式使用实时摄像头输入，并在同屏展示 VPSS 多输出能力：全幅缩放、动态裁剪后缩放、水平/垂直翻转切换、中心缩放变化。
 `CLAHE` 单独模式使用实时摄像头输入，走 `VI -> VPSS` 分成两路：`VPSS(output0) -> VMIX(input0)` 显示原始输入，`VPSS(output1) -> CLAHE -> VMIX(input1) -> OSD -> VO` 显示增强输出，并动态展示 clip limit 和帧计数。
 `RETINEX` 单独模式使用实时摄像头输入，走 `VI -> VPSS` 分成两路：`VPSS(output0) -> VMIX(input0)` 显示原始输入，`VPSS(output1) -> RETINEX -> VMIX(input1) -> OSD -> VO` 显示光照校正输出，并展示 gain、threshold、帧计数和 bind 链路。
