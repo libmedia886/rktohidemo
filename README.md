@@ -52,6 +52,7 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --only DUALVIEW
 /userdata/alldemo/scripts/run_alldemo.sh --only STEREO_3D
 /userdata/alldemo/scripts/run_alldemo.sh --only PANO
+/userdata/alldemo/scripts/run_alldemo.sh --only NPU
 ```
 
 `--only <tile>` 会把主画面固定到指定小窗体，并且只初始化该小窗体需要的实时模块；未接入真实实时链路的 tile 会显示循环素材或合成占位，且不会强制打开摄像头。
@@ -72,8 +73,9 @@ cmake --build build -j
 `RETINEX` 单独模式使用实时摄像头输入，走 `VI -> VPSS` 分成两路：`VPSS(output0) -> VMIX(input0)` 显示原始输入，`VPSS(output1) -> RETINEX -> VMIX(input1) -> OSD -> VO` 显示光照校正输出，并展示 gain、threshold、帧计数和 bind 链路。
 `EDOF_CL` 单独模式使用 `assets/loop/edof/mfi_whu` 的 `a.jpg/b.jpg/fused.png` 样张做三栏对比，每 3 秒切换一组。
 `DUALVIEW` 单独模式参考 `/userdata/rktohi/demo/dualview` 示例生成两路 RGB888 输入：input0 纯红、input1 纯蓝，主画面同时显示 input0、input1、side-by-side 输出和 line-by-line 输出，不占用摄像头。
-`STEREO_3D` 单独模式使用摄像头输入。
+`STEREO_3D` 单独模式使用实时摄像头输入，走 `VI -> VPSS(4路同源NV12) -> 4x OSD(两组蓝/红 tint) -> 2x STEREO_3D(LINE_BY_LINE/SIDE_BY_SIDE) -> VMIX -> OSD -> VO` bind 链路。4 路 VPSS 输出大小、裁剪和位置完全一致，只是因为一个 OSD 输出不能同时绑定到两个 STEREO_3D 组，所以复制成两组蓝/红输入；上下展示逐行交错和左右并排两种 3D 输出，并显示帧计数和 CPU/GPU/RGA 占用率。
 `PANO` 单独模式使用 `assets/loop/pano/sample2` 的六张图片和 PTO 标定文件，主画面显示六路输入图和 panorama 输出，不占用摄像头。
+`NPU` 单独模式使用 `assets/loop/npu/bus_640x640.h264`，走 `H264文件 -> VDEC -> RGA(NV12转RGB) -> NPU(YOLOv5) -> RGA(RGB转NV12) -> VMIX -> OSD -> VO` 链路，不占用摄像头；屏幕上显示中文数据流说明、检测框、检测数量、模块帧计数以及 CPU/GPU/RGA 占用信息。
 
 ## 快速自检
 

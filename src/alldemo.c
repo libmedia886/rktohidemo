@@ -76,10 +76,16 @@
 #define LIVE_CSC_CL_BACK_GRP 77
 #define DISPLAY_VMIX_GRP 80
 #define DISPLAY_OSD_GRP 81
+#define LIVE_STEREO_SBS_GRP 98
+#define LIVE_STEREO_TINT_BASE_GRP 99
 #define LIVE_CONV_CL_QUAD_BASE_GRP 82
 #define LIVE_CONV_CL_PRE_CSC_BASE_GRP 86
 #define LIVE_CONV_CL_CSC_BASE_GRP 90
 #define LIVE_TRANSFORM_QUAD_BASE_GRP 94
+#define NPU_DEMO_VDEC_CHN 110
+#define NPU_DEMO_PRE_RGA_GRP 111
+#define NPU_DEMO_NPU_GRP 112
+#define NPU_DEMO_POST_RGA_GRP 113
 
 #define CAM_W 640
 #define CAM_H 640
@@ -91,6 +97,17 @@
 #define VPSS_TILE_RGBA_STRIDE (VPSS_TILE_W * 4)
 #define VPSS_TILE_RGBA_SIZE (VPSS_TILE_RGBA_STRIDE * VPSS_TILE_H)
 #define TRANSFORM_OUTPUT_POOL CONV_CL_OUTPUT_POOL
+#define STEREO_TINT_OUTPUT_POOL STEREO_INPUT0_POOL
+#define STEREO_MODE_COUNT 2
+#define STEREO_COLOR_INPUT_COUNT 2
+#define STEREO_TINT_COUNT (STEREO_MODE_COUNT * STEREO_COLOR_INPUT_COUNT)
+#define NPU_DEMO_VDEC_POOL WORK_POOL_NV12
+#define NPU_DEMO_RGB_POOL WORK_POOL_RGB
+#define NPU_DEMO_VDEC_FRAME_SIZE (CAM_STRIDE * 768 * 3 / 2)
+#define NPU_DEMO_H264_PATH "assets/loop/npu/bus_640x640.h264"
+#define NPU_DEMO_MODEL_PATH "assets/npu/yolov5s-640-640.rknn"
+#define NPU_DEMO_LABEL_PATH "assets/npu/coco_80_labels_list.txt"
+#define NPU_DEMO_MAX_DRAW_OBJECTS 5
 #define PANO_INPUT_COUNT 6
 #define PANO_DOMAIN_W 8378
 #define PANO_DOMAIN_H 4189
@@ -136,6 +153,31 @@ typedef struct {
     image_asset_t images[4];
     int loaded_count;
 } loop_asset_t;
+
+typedef struct {
+    float x;
+    float y;
+    float w;
+    float h;
+    float score;
+    int class_id;
+    char label[64];
+} npu_demo_object_t;
+
+typedef struct {
+    int object_count;
+    uint64_t frame_id;
+    npu_demo_object_t objects[NPU_DEMO_MAX_DRAW_OBJECTS];
+} npu_demo_result_t;
+
+typedef struct {
+    uint8_t *data;
+    size_t size;
+    int *nal_offsets;
+    int nal_count;
+    int nal_index;
+    uint64_t pts;
+} h264_stream_t;
 
 typedef struct {
     const char *left_path;
@@ -269,6 +311,19 @@ static const char *g_bind_vpss_transform_src_ports[VPSS_DEMO_OUTPUTS] = {NULL};
 static const char *g_bind_transform_in_ports[VPSS_DEMO_OUTPUTS] = {NULL};
 static const char *g_bind_transform_src_ports[VPSS_DEMO_OUTPUTS] = {NULL};
 static const char *g_bind_transform_vmix_in_ports[VPSS_DEMO_OUTPUTS] = {NULL};
+static const char *g_bind_vpss_stereo_src_ports[VPSS_DEMO_OUTPUTS] = {NULL};
+static const char *g_bind_stereo_tint_in_ports[VPSS_DEMO_OUTPUTS] = {NULL};
+static const char *g_bind_stereo_tint_src_ports[VPSS_DEMO_OUTPUTS] = {NULL};
+static const char *g_bind_stereo_in_ports[VPSS_DEMO_OUTPUTS] = {NULL};
+static const char *g_bind_stereo_src_ports[2] = {NULL};
+static const char *g_bind_stereo_vmix_in_ports[2] = {NULL};
+static const char *g_bind_vdec_src_port = NULL;
+static const char *g_bind_npu_pre_rga_in_port = NULL;
+static const char *g_bind_npu_pre_rga_src_port = NULL;
+static const char *g_bind_npu_in_port = NULL;
+static const char *g_bind_npu_src_port = NULL;
+static const char *g_bind_npu_post_rga_in_port = NULL;
+static const char *g_bind_npu_post_rga_src_port = NULL;
 
 static const int g_conv_cl_quad_grps[VPSS_DEMO_OUTPUTS] = {
     LIVE_CONV_CL_QUAD_BASE_GRP + 0,
@@ -327,6 +382,12 @@ static const transform_effect_t g_transform_effects[VPSS_DEMO_OUTPUTS] = {
     {"UNDISTORT", "镜头畸变矫正"},
     {"ROTATE ZOOM", "动态旋转放大"},
     {"PERSPECTIVE", "透视梯形矫正"},
+};
+static const int g_stereo_tint_grps[STEREO_TINT_COUNT] = {
+    LIVE_STEREO_TINT_BASE_GRP + 0,
+    LIVE_STEREO_TINT_BASE_GRP + 1,
+    LIVE_STEREO_TINT_BASE_GRP + 2,
+    LIVE_STEREO_TINT_BASE_GRP + 3,
 };
 
 static void set_tile_status(const char *name, int status);
@@ -630,12 +691,15 @@ static void maybe_capture_vo_channel_frame(const char *only_tile, int frame, int
     int is_retinex = strcasecmp(only_tile, "RETINEX") == 0;
     int is_conv_cl = strcasecmp(only_tile, "CONV_CL") == 0;
     int is_transform = strcasecmp(only_tile, "TRANSFORM") == 0;
-    if (!is_retinex && !is_conv_cl && !is_transform) return;
+    int is_stereo = strcasecmp(only_tile, "STEREO_3D") == 0;
+    if (!is_retinex && !is_conv_cl && !is_transform && !is_stereo) return;
     if (frame <= 0) return;
     if ((frame % (FPS * VO_CAPTURE_SECONDS)) != 0) return;
 
-    const char *label = is_conv_cl ? "CONV_CL" : (is_transform ? "TRANSFORM" : "RETINEX");
-    const char *prefix = is_conv_cl ? "conv_cl" : (is_transform ? "transform" : "retinex");
+    const char *label = is_conv_cl ? "CONV_CL" :
+        (is_transform ? "TRANSFORM" : (is_stereo ? "STEREO_3D" : "RETINEX"));
+    const char *prefix = is_conv_cl ? "conv_cl" :
+        (is_transform ? "transform" : (is_stereo ? "stereo_3d" : "retinex"));
     MEDIA_BUFFER buf = {-1, -1};
     int source = 0;
     if (MEDIA_VO_GetFrame(0, 0, &buf, 20) == 0) {
@@ -2661,8 +2725,12 @@ static int update_osd_utf8_text_region(int region_id, int x, int y, int pixel_si
     return 0;
 }
 
+static int disable_osd_region(int region_id);
+
 static int update_osd_rect_region(int region_id, int x, int y, int w, int h,
                                   uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    if (w <= 0 || h <= 0) return disable_osd_region(region_id);
+
     MEDIA_OSD_REGION_ATTR attr = {0};
     attr.enabled = 1;
     attr.x = x;
@@ -2674,6 +2742,41 @@ static int update_osd_rect_region(int region_id, int x, int y, int w, int h,
 
     MEDIA_OSD_RECT_DESC rect = {0};
     rect.filled = 1;
+    rect.color.r = r;
+    rect.color.g = g;
+    rect.color.b = b;
+    rect.color.a = a;
+
+    if (MEDIA_OSD_UpdateRegion(DISPLAY_OSD_GRP, region_id, &attr) != 0 ||
+        MEDIA_OSD_SetRegionRect(DISPLAY_OSD_GRP, region_id, &rect) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int disable_osd_region(int region_id) {
+    MEDIA_OSD_REGION_ATTR attr = {0};
+    attr.enabled = 0;
+    return MEDIA_OSD_UpdateRegion(DISPLAY_OSD_GRP, region_id, &attr);
+}
+
+static int update_osd_outline_region(int region_id, int x, int y, int w, int h,
+                                     int line_width,
+                                     uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    if (w <= 0 || h <= 0) return disable_osd_region(region_id);
+
+    MEDIA_OSD_REGION_ATTR attr = {0};
+    attr.enabled = 1;
+    attr.x = x;
+    attr.y = y;
+    attr.width = w;
+    attr.height = h;
+    attr.zorder = 4;
+    attr.global_alpha = a;
+
+    MEDIA_OSD_RECT_DESC rect = {0};
+    rect.filled = 0;
+    rect.line_width = line_width > 0 ? line_width : 3;
     rect.color.r = r;
     rect.color.g = g;
     rect.color.b = b;
@@ -3480,6 +3583,223 @@ static int update_transform_quad_overlay(uint64_t vi_count,
     return 0;
 }
 
+static int update_stereo_3d_overlay(uint64_t vi_count, uint64_t lbl_count,
+                                    uint64_t sbs_count, int frame) {
+    static uint8_t masks[32][1024 * 96];
+    const int view_x = (SCREEN_W - CAM_W) / 2;
+    const int top_y = 164;
+    const int bottom_y = 840;
+    const int panel_y = 1504;
+    char status_line[192];
+    char count_line[160];
+    char bind_line1[192];
+    char bind_line2[192];
+    char gpu_text[24];
+    char rga_text[24];
+
+    snprintf(gpu_text, sizeof(gpu_text), g_perf.gpu_available ? "%.0f%%" : "N/A",
+             g_perf.gpu_percent);
+    snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
+             g_perf.rga_percent);
+    snprintf(status_line, sizeof(status_line),
+             "VI=%llu  CPU %.0f%%  GPU %s  RGA %s  RED/BLUE INPUTS",
+             (unsigned long long)vi_count, g_perf.cpu_percent, gpu_text, rga_text);
+    snprintf(count_line, sizeof(count_line), "OUT  LINE_BY_LINE=%llu  SIDE_BY_SIDE=%llu",
+             (unsigned long long)lbl_count, (unsigned long long)sbs_count);
+    snprintf(bind_line1, sizeof(bind_line1),
+             "VI0.%s -> VPSS%d.%s -> 2 pairs OSD tint(blue/red) -> STEREO_3D%d/%d",
+             g_bind_vi_src_port ? g_bind_vi_src_port : "output",
+             LIVE_VPSS_GRP,
+             g_bind_vpss_in_port ? g_bind_vpss_in_port : "input",
+             LIVE_STEREO_GRP, LIVE_STEREO_SBS_GRP);
+    snprintf(bind_line2, sizeof(bind_line2),
+             "STEREO outputs -> VMIX%d inputs0..1 -> OSD%d.%s -> VO0.%s",
+             DISPLAY_VMIX_GRP,
+             DISPLAY_OSD_GRP,
+             g_bind_osd_src_port ? g_bind_osd_src_port : "output0",
+             g_bind_vo_in_port ? g_bind_vo_in_port : "input0");
+
+    if (update_osd_rect_region(4, view_x + 18, top_y + 18, 330, 86, 5, 10, 18, 220) != 0) return -1;
+    if (update_osd_rect_region(5, view_x + 18, top_y + 18, 330, 8, 80, 170, 255, 235) != 0) return -1;
+    if (update_osd_text_region(6, view_x + 34, top_y + 38, 2, 255, 230, 120,
+                               "LINE BY LINE", masks[0], sizeof(masks[0])) != 0) return -1;
+    if (update_osd_utf8_text_region(7, view_x + 34, top_y + 72, 18, 190, 230, 255,
+                                    "蓝/红输入逐行交错输出",
+                                    masks[1], sizeof(masks[1]), 1024, 96) != 0) return -1;
+
+    if (update_osd_rect_region(8, view_x + 18, bottom_y + 18, 330, 86, 5, 10, 18, 220) != 0) return -1;
+    if (update_osd_rect_region(9, view_x + 18, bottom_y + 18, 330, 8, 255, 110, 120, 235) != 0) return -1;
+    if (update_osd_text_region(10, view_x + 34, bottom_y + 38, 2, 255, 230, 120,
+                               "SIDE BY SIDE", masks[2], sizeof(masks[2])) != 0) return -1;
+    if (update_osd_utf8_text_region(11, view_x + 34, bottom_y + 72, 18, 190, 230, 255,
+                                    "蓝/红输入左右并排输出",
+                                    masks[3], sizeof(masks[3]), 1024, 96) != 0) return -1;
+
+    if (update_osd_rect_region(12, 34, panel_y, 1012, 252, 5, 10, 18, 226) != 0) return -1;
+    if (update_osd_utf8_text_region(13, 66, panel_y + 24, 30, 160, 255, 220,
+                                    "STEREO_3D：红蓝双输入，VMIX后叠加OSD，再送VO显示",
+                                    masks[4], sizeof(masks[4]), 1024, 96) != 0) return -1;
+    if (update_osd_text_region(14, 68, panel_y + 78, 2, 170, 255, 220,
+                               status_line, masks[5], sizeof(masks[5])) != 0) return -1;
+    if (update_osd_text_region(15, 68, panel_y + 124, 1, 190, 230, 255,
+                               count_line, masks[6], sizeof(masks[6])) != 0) return -1;
+    if (update_osd_text_region(16, 68, panel_y + 164, 1, 170, 205, 235,
+                               bind_line1, masks[7], sizeof(masks[7])) != 0) return -1;
+    if (update_osd_text_region(17, 68, panel_y + 196, 1, 170, 205, 235,
+                               bind_line2, masks[8], sizeof(masks[8])) != 0) return -1;
+
+    int cpu_w = (int)(g_perf.cpu_percent * 3.0);
+    int gpu_w = g_perf.gpu_available ? (int)(g_perf.gpu_percent * 3.0) : 0;
+    if (cpu_w < 0) cpu_w = 0;
+    if (cpu_w > 300) cpu_w = 300;
+    if (gpu_w < 0) gpu_w = 0;
+    if (gpu_w > 300) gpu_w = 300;
+    if (update_osd_text_region(18, 736, panel_y + 80, 1, 255, 230, 120,
+                               "CPU", masks[9], sizeof(masks[9])) != 0) return -1;
+    if (update_osd_text_region(19, 736, panel_y + 132, 1, 255, 230, 120,
+                               "GPU", masks[10], sizeof(masks[10])) != 0) return -1;
+    if (update_osd_rect_region(20, 806, panel_y + 78, 180, 20, 28, 48, 68, 220) != 0) return -1;
+    if (update_osd_rect_region(21, 806, panel_y + 78, cpu_w > 180 ? 180 : cpu_w, 20,
+                               120, 220, 255, 230) != 0) return -1;
+    if (update_osd_rect_region(22, 806, panel_y + 130, 180, 20, 28, 48, 68, 220) != 0) return -1;
+    if (update_osd_rect_region(23, 806, panel_y + 130, gpu_w > 180 ? 180 : gpu_w, 20,
+                               110, 230, 170, 230) != 0) return -1;
+
+    int packet_x = 68 + ((frame * 18) % 890);
+    if (update_osd_rect_region(24, packet_x, panel_y - 22, 52, 10, 255, 255, 255, 180) != 0) return -1;
+    return 0;
+}
+
+static int update_npu_vdec_overlay(const npu_demo_result_t *det,
+                                   uint64_t vdec_count,
+                                   uint64_t pre_rga_count,
+                                   uint64_t npu_count,
+                                   uint64_t post_rga_count,
+                                   uint64_t vmix_count,
+                                   const char *stream_path,
+                                   int frame) {
+    static uint8_t masks[24][1024 * 96];
+    const int view_x = (SCREEN_W - CAM_W) / 2;
+    const int view_y = 360;
+    const int panel_y = 1118;
+    char title[192];
+    char flow1[224];
+    char flow2[224];
+    char count_line[192];
+    char resource_line[160];
+    char cpu_text[24];
+    char gpu_text[24];
+    char rga_text[24];
+    int object_count = det ? det->object_count : 0;
+
+    if (object_count < 0) object_count = 0;
+    if (object_count > NPU_DEMO_MAX_DRAW_OBJECTS) object_count = NPU_DEMO_MAX_DRAW_OBJECTS;
+
+    snprintf(cpu_text, sizeof(cpu_text), "%.0f%%", g_perf.cpu_percent);
+    snprintf(gpu_text, sizeof(gpu_text), g_perf.gpu_available ? "%.0f%%" : "N/A",
+             g_perf.gpu_percent);
+    snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
+             g_perf.rga_percent);
+    snprintf(title, sizeof(title), "NPU：H264视频检测，OSD实时画框");
+    snprintf(flow1, sizeof(flow1),
+             "数据流：H264文件 -> VDEC解码NV12 -> RGA转640x640 RGB -> NPU(YOLOv5)");
+    snprintf(flow2, sizeof(flow2),
+             "为什么这样做：模型吃RGB，显示链路吃NV12；VMIX摆画面，OSD只叠加框和说明。");
+    snprintf(count_line, sizeof(count_line),
+             "帧计数  VDEC=%llu  RGA前=%llu  NPU=%llu  RGA后=%llu  VMIX=%llu  DET=%d",
+             (unsigned long long)vdec_count,
+             (unsigned long long)pre_rga_count,
+             (unsigned long long)npu_count,
+             (unsigned long long)post_rga_count,
+             (unsigned long long)vmix_count,
+             object_count);
+    snprintf(resource_line, sizeof(resource_line),
+             "CPU %s  GPU %s  RGA %s  SRC %s",
+             cpu_text, gpu_text, rga_text,
+             stream_path ? stream_path : "h264");
+
+    if (update_osd_rect_region(4, 34, panel_y, 1012, 340, 5, 10, 18, 226) != 0) return -1;
+    if (update_osd_utf8_text_region(5, 66, panel_y + 24, 30, 160, 255, 220,
+                                    title, masks[0], sizeof(masks[0]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(6, 68, panel_y + 76, 22, 190, 230, 255,
+                                    flow1, masks[1], sizeof(masks[1]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(7, 68, panel_y + 118, 22, 190, 230, 255,
+                                    flow2, masks[2], sizeof(masks[2]), 1024, 96) != 0) return -1;
+    if (update_osd_text_region(8, 68, panel_y + 166, 1, 255, 230, 120,
+                               count_line, masks[3], sizeof(masks[3])) != 0) return -1;
+    if (update_osd_text_region(9, 68, panel_y + 204, 1, 170, 205, 235,
+                               resource_line, masks[4], sizeof(masks[4])) != 0) return -1;
+
+    int cpu_w = (int)(g_perf.cpu_percent * 2.2f);
+    int gpu_w = g_perf.gpu_available ? (int)(g_perf.gpu_percent * 2.2f) : 0;
+    int rga_w = g_perf.rga_available ? (int)(g_perf.rga_percent * 2.2f) : 0;
+    if (cpu_w < 0) cpu_w = 0;
+    if (gpu_w < 0) gpu_w = 0;
+    if (rga_w < 0) rga_w = 0;
+    if (cpu_w > 220) cpu_w = 220;
+    if (gpu_w > 220) gpu_w = 220;
+    if (rga_w > 220) rga_w = 220;
+    if (update_osd_text_region(10, 68, panel_y + 258, 1, 255, 230, 120,
+                               "CPU", masks[5], sizeof(masks[5])) != 0) return -1;
+    if (update_osd_text_region(11, 372, panel_y + 258, 1, 255, 230, 120,
+                               "GPU", masks[6], sizeof(masks[6])) != 0) return -1;
+    if (update_osd_text_region(12, 676, panel_y + 258, 1, 255, 230, 120,
+                               "RGA", masks[7], sizeof(masks[7])) != 0) return -1;
+    if (update_osd_rect_region(13, 126, panel_y + 258, 220, 20, 28, 48, 68, 220) != 0) return -1;
+    if (update_osd_rect_region(14, 126, panel_y + 258, cpu_w, 20, 120, 220, 255, 230) != 0) return -1;
+    if (update_osd_rect_region(15, 430, panel_y + 258, 220, 20, 28, 48, 68, 220) != 0) return -1;
+    if (update_osd_rect_region(16, 430, panel_y + 258, gpu_w, 20, 110, 230, 170, 230) != 0) return -1;
+    if (update_osd_rect_region(17, 734, panel_y + 258, 220, 20, 28, 48, 68, 220) != 0) return -1;
+    if (update_osd_rect_region(18, 734, panel_y + 258, rga_w, 20, 255, 170, 100, 230) != 0) return -1;
+
+    int packet_x = 68 + ((frame * 18) % 890);
+    if (update_osd_rect_region(19, packet_x, panel_y - 24, 52, 10, 255, 255, 255, 180) != 0) return -1;
+
+    static const uint8_t colors[NPU_DEMO_MAX_DRAW_OBJECTS][3] = {
+        {80, 220, 255}, {255, 190, 90}, {140, 255, 160}, {255, 120, 170}, {190, 170, 255},
+    };
+    for (int i = 0; i < NPU_DEMO_MAX_DRAW_OBJECTS; ++i) {
+        int box_region = 20 + i * 2;
+        int label_region = box_region + 1;
+        if (!det || i >= object_count) {
+            (void)disable_osd_region(box_region);
+            (void)disable_osd_region(label_region);
+            continue;
+        }
+
+        const npu_demo_object_t *obj = &det->objects[i];
+        int x = (int)(obj->x + 0.5f);
+        int y = (int)(obj->y + 0.5f);
+        int w = (int)(obj->w + 0.5f);
+        int h = (int)(obj->h + 0.5f);
+        if (x < 0) { w += x; x = 0; }
+        if (y < 0) { h += y; y = 0; }
+        if (x + w > CAM_W) w = CAM_W - x;
+        if (y + h > CAM_H) h = CAM_H - y;
+        if (w < 8 || h < 8) {
+            (void)disable_osd_region(box_region);
+            (void)disable_osd_region(label_region);
+            continue;
+        }
+
+        uint8_t r = colors[i][0];
+        uint8_t g = colors[i][1];
+        uint8_t b = colors[i][2];
+        if (update_osd_outline_region(box_region, view_x + x, view_y + y, w, h,
+                                      4, r, g, b, 255) != 0) return -1;
+
+        char label[96];
+        const char *name = obj->label[0] ? obj->label : "object";
+        snprintf(label, sizeof(label), "%s %.2f", name, obj->score);
+        int label_y = view_y + y - 30;
+        if (label_y < 110) label_y = view_y + y + 8;
+        if (update_osd_text_region(label_region, view_x + x, label_y, 1, r, g, b,
+                                   label, masks[8 + i], sizeof(masks[8 + i])) != 0) return -1;
+    }
+
+    return 0;
+}
+
 static int setup_display_vmix_osd(int dstride, size_t display_size, int input_count) {
     int input_pool_count = input_count >= VPSS_DEMO_OUTPUTS ? VPSS_DEMO_OUTPUTS * 4 : 3;
     if (MEDIA_POOL_Create(DISPLAY_VMIX_INPUT_POOL, CAM_FRAME_SIZE, input_pool_count) != 0) return -1;
@@ -3733,6 +4053,350 @@ static int bind_first_match(const char *src_mod, int src_id, const char **src_po
         }
     }
     return -1;
+}
+
+static int h264_start_code_len(const uint8_t *data, size_t size, size_t pos) {
+    if (!data || pos + 3 > size) return 0;
+    if (data[pos] == 0x00 && data[pos + 1] == 0x00 && data[pos + 2] == 0x01) return 3;
+    if (pos + 4 <= size && data[pos] == 0x00 && data[pos + 1] == 0x00 &&
+        data[pos + 2] == 0x00 && data[pos + 3] == 0x01) return 4;
+    return 0;
+}
+
+static void unload_h264_stream(h264_stream_t *stream) {
+    if (!stream) return;
+    free(stream->data);
+    free(stream->nal_offsets);
+    memset(stream, 0, sizeof(*stream));
+}
+
+static int load_h264_stream(const char *path, h264_stream_t *stream) {
+    FILE *fp = NULL;
+    long file_size = 0;
+    int capacity = 256;
+    if (!path || !stream) return -1;
+    memset(stream, 0, sizeof(*stream));
+
+    fp = fopen(path, "rb");
+    if (!fp) {
+        fprintf(stderr, "NPU demo: open H264 failed: %s\n", path);
+        return -1;
+    }
+    if (fseek(fp, 0, SEEK_END) != 0 || (file_size = ftell(fp)) <= 0 ||
+        fseek(fp, 0, SEEK_SET) != 0) {
+        fclose(fp);
+        return -1;
+    }
+    stream->data = (uint8_t *)malloc((size_t)file_size);
+    stream->nal_offsets = (int *)malloc((size_t)capacity * sizeof(int));
+    if (!stream->data || !stream->nal_offsets) {
+        fclose(fp);
+        unload_h264_stream(stream);
+        return -1;
+    }
+    if (fread(stream->data, 1, (size_t)file_size, fp) != (size_t)file_size) {
+        fclose(fp);
+        unload_h264_stream(stream);
+        return -1;
+    }
+    fclose(fp);
+    stream->size = (size_t)file_size;
+
+    for (size_t i = 0; i + 3 < stream->size;) {
+        int sc_len = h264_start_code_len(stream->data, stream->size, i);
+        if (sc_len > 0) {
+            if (stream->nal_count >= capacity) {
+                capacity *= 2;
+                int *tmp = (int *)realloc(stream->nal_offsets, (size_t)capacity * sizeof(int));
+                if (!tmp) {
+                    unload_h264_stream(stream);
+                    return -1;
+                }
+                stream->nal_offsets = tmp;
+            }
+            stream->nal_offsets[stream->nal_count++] = (int)i;
+            i += (size_t)sc_len;
+            continue;
+        }
+        ++i;
+    }
+    if (stream->nal_count == 0) {
+        stream->nal_offsets[stream->nal_count++] = 0;
+    }
+    stream->nal_index = 0;
+    stream->pts = 0;
+    return 0;
+}
+
+static int feed_h264_stream_packet(int vdec_chn, h264_stream_t *stream, int *is_vcl) {
+    if (!stream || !stream->data || stream->size == 0 || stream->nal_count <= 0) return -1;
+    if (is_vcl) *is_vcl = 0;
+    if (stream->nal_index >= stream->nal_count) {
+        stream->nal_index = 0;
+    }
+
+    int idx = stream->nal_index++;
+    int start = stream->nal_offsets[idx];
+    int end = (idx + 1 < stream->nal_count) ? stream->nal_offsets[idx + 1] : (int)stream->size;
+    if (start < 0 || end <= start || (size_t)end > stream->size) return -1;
+
+    int sc_len = h264_start_code_len(stream->data, stream->size, (size_t)start);
+    int nal_start = start + sc_len;
+    int vcl = 0;
+    if (nal_start < end) {
+        int nal_type = stream->data[nal_start] & 0x1f;
+        vcl = (nal_type == 1 || nal_type == 5);
+    }
+    if (MEDIA_VDEC_SendPacket(vdec_chn, stream->data + start,
+                              (size_t)(end - start), stream->pts) != 0) {
+        return -1;
+    }
+    if (vcl) stream->pts += 33;
+    if (is_vcl) *is_vcl = vcl;
+    return 0;
+}
+
+static void copy_npu_detect_result(const MEDIA_NPU_RESULT *src, npu_demo_result_t *dst) {
+    if (!dst) return;
+    if (!src || src->type != MEDIA_NPU_RESULT_DETECT) {
+        return;
+    }
+    memset(dst, 0, sizeof(*dst));
+    dst->frame_id = src->frame_id;
+    int count = src->u.detect.object_count;
+    if (count > NPU_DEMO_MAX_DRAW_OBJECTS) count = NPU_DEMO_MAX_DRAW_OBJECTS;
+    if (count < 0) count = 0;
+    dst->object_count = count;
+    for (int i = 0; i < count; ++i) {
+        const MEDIA_NPU_OBJECT *obj = &src->u.detect.objects[i];
+        npu_demo_object_t *out = &dst->objects[i];
+        out->x = obj->x;
+        out->y = obj->y;
+        out->w = obj->w;
+        out->h = obj->h;
+        out->score = obj->score;
+        out->class_id = obj->class_id;
+        snprintf(out->label, sizeof(out->label), "%s",
+                 obj->label ? obj->label : "object");
+    }
+}
+
+static int setup_npu_vdec_chain(void) {
+    int vdec_pool_ok = 0;
+    int rgb_pool_ok = 0;
+    int vdec_created = 0;
+    int pre_rga_created = 0;
+    int npu_created = 0;
+    int post_rga_created = 0;
+    int pre_rga_started = 0;
+    int npu_started = 0;
+    int post_rga_started = 0;
+
+    if (MEDIA_POOL_Create(NPU_DEMO_VDEC_POOL, NPU_DEMO_VDEC_FRAME_SIZE, 6) != 0) goto fail;
+    vdec_pool_ok = 1;
+    if (MEDIA_POOL_Create(NPU_DEMO_RGB_POOL, RGB_FRAME_SIZE, 4) != 0) goto fail;
+    rgb_pool_ok = 1;
+
+    MEDIA_VDEC_ATTR vdec = {0};
+    vdec.width = CAM_W;
+    vdec.height = CAM_H;
+    vdec.stride = CAM_STRIDE;
+    vdec.buf_cnt = 4;
+    vdec.video_type = MEDIA_VIDEO_H264;
+    vdec.pool_id = NPU_DEMO_VDEC_POOL;
+    vdec.has_input_port = 0;
+    vdec.input_depth = 0;
+    if (MEDIA_VDEC_CreateChn(NPU_DEMO_VDEC_CHN, &vdec) != 0) goto fail;
+    vdec_created = 1;
+
+    MEDIA_RGA_GRP_ATTR pre = {0};
+    pre.algo = MEDIA_RGA_ALG_CSC;
+    pre.input_count = 1;
+    pre.output_count = 1;
+    pre.input_depth = 4;
+    pre.output_depth = 4;
+    pre.inputs[0].width = CAM_W;
+    pre.inputs[0].height = CAM_H;
+    pre.inputs[0].stride = CAM_STRIDE;
+    pre.inputs[0].format = MEDIA_FORMAT_NV12;
+    pre.outputs[0].width = CAM_W;
+    pre.outputs[0].height = CAM_H;
+    pre.outputs[0].stride = CAM_W * 3;
+    pre.outputs[0].format = MEDIA_FORMAT_RGB888;
+    pre.outputs[0].pool_id = NPU_DEMO_RGB_POOL;
+    if (MEDIA_RGA_CreateGrp(NPU_DEMO_PRE_RGA_GRP, &pre) != 0) goto fail;
+    pre_rga_created = 1;
+
+    MEDIA_NPU_ATTR npu = {0};
+    npu.model_path = NPU_DEMO_MODEL_PATH;
+    npu.label_path = path_readable(NPU_DEMO_LABEL_PATH) ? NPU_DEMO_LABEL_PATH : NULL;
+    npu.adapter_name = "yolov5";
+    npu.backend = MEDIA_NPU_BACKEND_RKNN;
+    npu.task = MEDIA_NPU_TASK_DETECT;
+    npu.input_width = CAM_W;
+    npu.input_height = CAM_H;
+    npu.input_format = MEDIA_FORMAT_RGB888;
+    npu.input_layout = MEDIA_NPU_LAYOUT_NHWC;
+    npu.input_depth = 4;
+    npu.passthrough = 1;
+    npu.score_thresh = 0.25f;
+    npu.nms_thresh = 0.45f;
+    if (MEDIA_NPU_CreateGrp(NPU_DEMO_NPU_GRP, &npu) != 0) goto fail;
+    npu_created = 1;
+
+    MEDIA_RGA_GRP_ATTR post = {0};
+    post.algo = MEDIA_RGA_ALG_CSC;
+    post.input_count = 1;
+    post.output_count = 1;
+    post.input_depth = 4;
+    post.output_depth = 4;
+    post.inputs[0].width = CAM_W;
+    post.inputs[0].height = CAM_H;
+    post.inputs[0].stride = CAM_W * 3;
+    post.inputs[0].format = MEDIA_FORMAT_RGB888;
+    post.outputs[0].width = CAM_W;
+    post.outputs[0].height = CAM_H;
+    post.outputs[0].stride = CAM_STRIDE;
+    post.outputs[0].format = MEDIA_FORMAT_NV12;
+    post.outputs[0].pool_id = DISPLAY_VMIX_INPUT_POOL;
+    if (MEDIA_RGA_CreateGrp(NPU_DEMO_POST_RGA_GRP, &post) != 0) goto fail;
+    post_rga_created = 1;
+
+    if (MEDIA_RGA_Start(NPU_DEMO_PRE_RGA_GRP) != 0) goto fail;
+    pre_rga_started = 1;
+    if (MEDIA_NPU_Start(NPU_DEMO_NPU_GRP) != 0) goto fail;
+    npu_started = 1;
+    if (MEDIA_RGA_Start(NPU_DEMO_POST_RGA_GRP) != 0) goto fail;
+    post_rga_started = 1;
+
+    set_tile_status("RGA", TILE_LIVE);
+    set_tile_status("NPU", TILE_LIVE);
+    return 0;
+
+fail:
+    if (post_rga_started) MEDIA_RGA_Stop(NPU_DEMO_POST_RGA_GRP);
+    if (npu_started) MEDIA_NPU_Stop(NPU_DEMO_NPU_GRP);
+    if (pre_rga_started) MEDIA_RGA_Stop(NPU_DEMO_PRE_RGA_GRP);
+    if (post_rga_created) MEDIA_RGA_DestroyChn(NPU_DEMO_POST_RGA_GRP);
+    if (npu_created) MEDIA_NPU_DestroyGrp(NPU_DEMO_NPU_GRP);
+    if (pre_rga_created) MEDIA_RGA_DestroyChn(NPU_DEMO_PRE_RGA_GRP);
+    if (vdec_created) MEDIA_VDEC_DestroyChn(NPU_DEMO_VDEC_CHN);
+    if (rgb_pool_ok) MEDIA_POOL_Destroy(NPU_DEMO_RGB_POOL);
+    if (vdec_pool_ok) MEDIA_POOL_Destroy(NPU_DEMO_VDEC_POOL);
+    return -1;
+}
+
+static void cleanup_npu_vdec_chain(int enabled) {
+    if (!enabled) return;
+    MEDIA_RGA_Stop(NPU_DEMO_POST_RGA_GRP);
+    MEDIA_NPU_Stop(NPU_DEMO_NPU_GRP);
+    MEDIA_RGA_Stop(NPU_DEMO_PRE_RGA_GRP);
+    MEDIA_RGA_DestroyChn(NPU_DEMO_POST_RGA_GRP);
+    MEDIA_NPU_DestroyGrp(NPU_DEMO_NPU_GRP);
+    MEDIA_RGA_DestroyChn(NPU_DEMO_PRE_RGA_GRP);
+    MEDIA_VDEC_DestroyChn(NPU_DEMO_VDEC_CHN);
+    MEDIA_POOL_Destroy(NPU_DEMO_RGB_POOL);
+    MEDIA_POOL_Destroy(NPU_DEMO_VDEC_POOL);
+}
+
+static int start_npu_vdec_decoder(void) {
+    if (MEDIA_VDEC_Start(NPU_DEMO_VDEC_CHN) != 0) {
+        return -1;
+    }
+    set_tile_status("VDEC", TILE_LIVE);
+    return 0;
+}
+
+static int bind_npu_vdec_vmix_osd_vo(void) {
+    const char *vdec_out_ports[] = {"output", "output0"};
+    const char *rga_in_ports[] = {"input0", "input"};
+    const char *rga_out_ports[] = {"output0", "output"};
+    const char *npu_in_ports[] = {"input", "input0"};
+    const char *npu_out_ports[] = {"output0", "output"};
+    const char *vmix_in_ports[] = {"input0", "input"};
+    const char *vmix_out_ports[] = {"output0", "output"};
+    const char *osd_in_ports[] = {"input", "input0"};
+    const char *osd_out_ports[] = {"output0", "output"};
+    const char *vo_in_ports[] = {"input0", "input"};
+
+    g_bind_vdec_src_port = NULL;
+    g_bind_npu_pre_rga_in_port = NULL;
+    g_bind_npu_pre_rga_src_port = NULL;
+    g_bind_npu_in_port = NULL;
+    g_bind_npu_src_port = NULL;
+    g_bind_npu_post_rga_in_port = NULL;
+    g_bind_npu_post_rga_src_port = NULL;
+    g_bind_vmix_in_port = NULL;
+    g_bind_vmix_src_port = NULL;
+    g_bind_osd_in_port = NULL;
+    g_bind_osd_src_port = NULL;
+    g_bind_vo_in_port = NULL;
+
+    if (bind_first_match("VDEC", NPU_DEMO_VDEC_CHN, vdec_out_ports, (int)ARRAY_SIZE(vdec_out_ports),
+                         "RGA", NPU_DEMO_PRE_RGA_GRP, rga_in_ports, (int)ARRAY_SIZE(rga_in_ports),
+                         &g_bind_vdec_src_port, &g_bind_npu_pre_rga_in_port) != 0) {
+        fprintf(stderr, "bind failed: VDEC -> RGA(pre)\n");
+        return -1;
+    }
+    if (bind_first_match("RGA", NPU_DEMO_PRE_RGA_GRP, rga_out_ports, (int)ARRAY_SIZE(rga_out_ports),
+                         "NPU", NPU_DEMO_NPU_GRP, npu_in_ports, (int)ARRAY_SIZE(npu_in_ports),
+                         &g_bind_npu_pre_rga_src_port, &g_bind_npu_in_port) != 0) {
+        fprintf(stderr, "bind failed: RGA(pre) -> NPU\n");
+        return -1;
+    }
+    if (bind_first_match("NPU", NPU_DEMO_NPU_GRP, npu_out_ports, (int)ARRAY_SIZE(npu_out_ports),
+                         "RGA", NPU_DEMO_POST_RGA_GRP, rga_in_ports, (int)ARRAY_SIZE(rga_in_ports),
+                         &g_bind_npu_src_port, &g_bind_npu_post_rga_in_port) != 0) {
+        fprintf(stderr, "bind failed: NPU -> RGA(post)\n");
+        return -1;
+    }
+    if (bind_first_match("RGA", NPU_DEMO_POST_RGA_GRP, rga_out_ports, (int)ARRAY_SIZE(rga_out_ports),
+                         "VMIX", DISPLAY_VMIX_GRP, vmix_in_ports, (int)ARRAY_SIZE(vmix_in_ports),
+                         &g_bind_npu_post_rga_src_port, &g_bind_vmix_in_port) != 0) {
+        fprintf(stderr, "bind failed: RGA(post) -> VMIX\n");
+        return -1;
+    }
+    if (bind_first_match("VMIX", DISPLAY_VMIX_GRP, vmix_out_ports, (int)ARRAY_SIZE(vmix_out_ports),
+                         "OSD", DISPLAY_OSD_GRP, osd_in_ports, (int)ARRAY_SIZE(osd_in_ports),
+                         &g_bind_vmix_src_port, &g_bind_osd_in_port) != 0) {
+        fprintf(stderr, "bind failed: VMIX -> OSD\n");
+        return -1;
+    }
+    if (bind_first_match("OSD", DISPLAY_OSD_GRP, osd_out_ports, (int)ARRAY_SIZE(osd_out_ports),
+                         "VO", 0, vo_in_ports, (int)ARRAY_SIZE(vo_in_ports),
+                         &g_bind_osd_src_port, &g_bind_vo_in_port) != 0) {
+        fprintf(stderr, "bind failed: OSD -> VO\n");
+        return -1;
+    }
+    return 0;
+}
+
+static void unbind_npu_vdec_vmix_osd_vo(int enabled) {
+    if (!enabled) return;
+    if (g_bind_osd_src_port && g_bind_vo_in_port) {
+        MEDIA_SYS_UnBind("OSD", DISPLAY_OSD_GRP, g_bind_osd_src_port,
+                         "VO", 0, g_bind_vo_in_port);
+    }
+    if (g_bind_vmix_src_port && g_bind_osd_in_port) {
+        MEDIA_SYS_UnBind("VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_src_port,
+                         "OSD", DISPLAY_OSD_GRP, g_bind_osd_in_port);
+    }
+    if (g_bind_npu_post_rga_src_port && g_bind_vmix_in_port) {
+        MEDIA_SYS_UnBind("RGA", NPU_DEMO_POST_RGA_GRP, g_bind_npu_post_rga_src_port,
+                         "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_in_port);
+    }
+    if (g_bind_npu_src_port && g_bind_npu_post_rga_in_port) {
+        MEDIA_SYS_UnBind("NPU", NPU_DEMO_NPU_GRP, g_bind_npu_src_port,
+                         "RGA", NPU_DEMO_POST_RGA_GRP, g_bind_npu_post_rga_in_port);
+    }
+    if (g_bind_npu_pre_rga_src_port && g_bind_npu_in_port) {
+        MEDIA_SYS_UnBind("RGA", NPU_DEMO_PRE_RGA_GRP, g_bind_npu_pre_rga_src_port,
+                         "NPU", NPU_DEMO_NPU_GRP, g_bind_npu_in_port);
+    }
+    if (g_bind_vdec_src_port && g_bind_npu_pre_rga_in_port) {
+        MEDIA_SYS_UnBind("VDEC", NPU_DEMO_VDEC_CHN, g_bind_vdec_src_port,
+                         "RGA", NPU_DEMO_PRE_RGA_GRP, g_bind_npu_pre_rga_in_port);
+    }
 }
 
 static int bind_vi_vmix_osd_vo(void) {
@@ -4588,6 +5252,147 @@ fail:
     return -1;
 }
 
+static int bind_vi_vpss_stereo_vmix_osd_vo(void) {
+    const char *vi_out_ports[] = {"output", "output0"};
+    const char *vpss_in_ports[] = {"input", "input0"};
+    const char *vpss_out_ports[STEREO_TINT_COUNT] = {
+        "output0", "output1", "output2", "output3",
+    };
+    const char *osd_in_ports[] = {"input", "input0"};
+    const char *osd_out_ports[] = {"output0", "output"};
+    const char *stereo_in_ports[VPSS_DEMO_OUTPUTS] = {"input0", "input1", "input0", "input1"};
+    const int stereo_grps[VPSS_DEMO_OUTPUTS] = {
+        LIVE_STEREO_GRP, LIVE_STEREO_GRP, LIVE_STEREO_SBS_GRP, LIVE_STEREO_SBS_GRP,
+    };
+    const int tint_index[VPSS_DEMO_OUTPUTS] = {0, 1, 2, 3};
+    const char *stereo_out_ports[] = {"output0", "output"};
+    const char *vmix_in_ports[2] = {"input0", "input1"};
+    const char *out_ports[] = {"output0", "output"};
+    const char *display_osd_in_ports[] = {"input", "input0"};
+    const char *vo_in_ports[] = {"input0", "input"};
+
+    g_bind_vi_src_port = NULL;
+    g_bind_vpss_in_port = NULL;
+    g_bind_vmix_src_port = NULL;
+    g_bind_osd_in_port = NULL;
+    g_bind_osd_src_port = NULL;
+    g_bind_vo_in_port = NULL;
+    for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
+        g_bind_vpss_stereo_src_ports[i] = NULL;
+        g_bind_stereo_tint_in_ports[i] = NULL;
+        g_bind_stereo_tint_src_ports[i] = NULL;
+        g_bind_stereo_in_ports[i] = NULL;
+    }
+    for (int i = 0; i < 2; ++i) {
+        g_bind_stereo_src_ports[i] = NULL;
+        g_bind_stereo_vmix_in_ports[i] = NULL;
+    }
+
+    if (bind_first_match("VI", 0, vi_out_ports, (int)ARRAY_SIZE(vi_out_ports),
+                         "VPSS", LIVE_VPSS_GRP, vpss_in_ports, (int)ARRAY_SIZE(vpss_in_ports),
+                         &g_bind_vi_src_port, &g_bind_vpss_in_port) != 0) {
+        fprintf(stderr, "bind failed: VI -> VPSS for STEREO_3D\n");
+        return -1;
+    }
+
+    for (int i = 0; i < STEREO_TINT_COUNT; ++i) {
+        const char *one_vpss_out[] = {vpss_out_ports[i]};
+        if (bind_first_match("VPSS", LIVE_VPSS_GRP, one_vpss_out, 1,
+                             "OSD", g_stereo_tint_grps[i],
+                             osd_in_ports, (int)ARRAY_SIZE(osd_in_ports),
+                             &g_bind_vpss_stereo_src_ports[i],
+                             &g_bind_stereo_tint_in_ports[i]) != 0) {
+            fprintf(stderr, "bind failed: VPSS output%d -> tint OSD%d\n",
+                    i, g_stereo_tint_grps[i]);
+            goto fail;
+        }
+    }
+
+    for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
+        const char *one_stereo_in[] = {stereo_in_ports[i]};
+        int tint = tint_index[i];
+        if (bind_first_match("OSD", g_stereo_tint_grps[tint],
+                             osd_out_ports, (int)ARRAY_SIZE(osd_out_ports),
+                             "STEREO_3D", stereo_grps[i], one_stereo_in, 1,
+                             &g_bind_stereo_tint_src_ports[i],
+                             &g_bind_stereo_in_ports[i]) != 0) {
+            fprintf(stderr, "bind failed: tint OSD%d -> STEREO_3D%d.%s\n",
+                    g_stereo_tint_grps[tint], stereo_grps[i], stereo_in_ports[i]);
+            goto fail;
+        }
+    }
+
+    const int output_grps[2] = {LIVE_STEREO_GRP, LIVE_STEREO_SBS_GRP};
+    for (int i = 0; i < 2; ++i) {
+        const char *one_vmix_in[] = {vmix_in_ports[i]};
+        if (bind_first_match("STEREO_3D", output_grps[i],
+                             stereo_out_ports, (int)ARRAY_SIZE(stereo_out_ports),
+                             "VMIX", DISPLAY_VMIX_GRP, one_vmix_in, 1,
+                             &g_bind_stereo_src_ports[i],
+                             &g_bind_stereo_vmix_in_ports[i]) != 0) {
+            fprintf(stderr, "bind failed: STEREO_3D%d -> VMIX input%d\n",
+                    output_grps[i], i);
+            goto fail;
+        }
+    }
+
+    if (bind_first_match("VMIX", DISPLAY_VMIX_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
+                         "OSD", DISPLAY_OSD_GRP,
+                         display_osd_in_ports, (int)ARRAY_SIZE(display_osd_in_ports),
+                         &g_bind_vmix_src_port, &g_bind_osd_in_port) != 0) {
+        fprintf(stderr, "bind failed: VMIX -> OSD\n");
+        goto fail;
+    }
+    if (bind_first_match("OSD", DISPLAY_OSD_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
+                         "VO", 0, vo_in_ports, (int)ARRAY_SIZE(vo_in_ports),
+                         &g_bind_osd_src_port, &g_bind_vo_in_port) != 0) {
+        fprintf(stderr, "bind failed: OSD -> VO\n");
+        goto fail;
+    }
+    return 0;
+
+fail:
+    if (g_bind_osd_src_port && g_bind_vo_in_port) {
+        MEDIA_SYS_UnBind("OSD", DISPLAY_OSD_GRP, g_bind_osd_src_port,
+                         "VO", 0, g_bind_vo_in_port);
+    }
+    if (g_bind_vmix_src_port && g_bind_osd_in_port) {
+        MEDIA_SYS_UnBind("VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_src_port,
+                         "OSD", DISPLAY_OSD_GRP, g_bind_osd_in_port);
+    }
+    const int output_grps_unbind[2] = {LIVE_STEREO_GRP, LIVE_STEREO_SBS_GRP};
+    for (int i = 1; i >= 0; --i) {
+        if (g_bind_stereo_src_ports[i] && g_bind_stereo_vmix_in_ports[i]) {
+            MEDIA_SYS_UnBind("STEREO_3D", output_grps_unbind[i],
+                             g_bind_stereo_src_ports[i],
+                             "VMIX", DISPLAY_VMIX_GRP,
+                             g_bind_stereo_vmix_in_ports[i]);
+        }
+    }
+    for (int i = VPSS_DEMO_OUTPUTS - 1; i >= 0; --i) {
+        int tint = tint_index[i];
+        if (g_bind_stereo_tint_src_ports[i] && g_bind_stereo_in_ports[i]) {
+            MEDIA_SYS_UnBind("OSD", g_stereo_tint_grps[tint],
+                             g_bind_stereo_tint_src_ports[i],
+                             "STEREO_3D", stereo_grps[i],
+                             g_bind_stereo_in_ports[i]);
+        }
+    }
+    for (int i = STEREO_TINT_COUNT - 1; i >= 0; --i) {
+        if (g_bind_vpss_stereo_src_ports[i] && g_bind_stereo_tint_in_ports[i]) {
+            MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP,
+                             g_bind_vpss_stereo_src_ports[i],
+                             "OSD", g_stereo_tint_grps[i],
+                             g_bind_stereo_tint_in_ports[i]);
+        }
+    }
+    if (g_bind_vi_src_port && g_bind_vpss_in_port) {
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "VPSS", LIVE_VPSS_GRP, g_bind_vpss_in_port);
+    }
+    return -1;
+}
+
 static void unbind_vi_resize_vmix_osd_vo(int enabled) {
     if (!enabled) return;
     if (g_bind_osd_src_port && g_bind_vo_in_port) {
@@ -4866,6 +5671,225 @@ static void unbind_vi_vpss_transform_vmix_osd_vo(int enabled) {
         MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
                          "VPSS", LIVE_VPSS_GRP, g_bind_vpss_in_port);
     }
+}
+
+static void unbind_vi_vpss_stereo_vmix_osd_vo(int enabled) {
+    if (!enabled) return;
+    if (g_bind_osd_src_port && g_bind_vo_in_port) {
+        MEDIA_SYS_UnBind("OSD", DISPLAY_OSD_GRP, g_bind_osd_src_port,
+                         "VO", 0, g_bind_vo_in_port);
+    }
+    if (g_bind_vmix_src_port && g_bind_osd_in_port) {
+        MEDIA_SYS_UnBind("VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_src_port,
+                         "OSD", DISPLAY_OSD_GRP, g_bind_osd_in_port);
+    }
+    const int output_grps[2] = {LIVE_STEREO_GRP, LIVE_STEREO_SBS_GRP};
+    for (int i = 1; i >= 0; --i) {
+        if (g_bind_stereo_src_ports[i] && g_bind_stereo_vmix_in_ports[i]) {
+            MEDIA_SYS_UnBind("STEREO_3D", output_grps[i],
+                             g_bind_stereo_src_ports[i],
+                             "VMIX", DISPLAY_VMIX_GRP,
+                             g_bind_stereo_vmix_in_ports[i]);
+        }
+    }
+    const int stereo_grps[VPSS_DEMO_OUTPUTS] = {
+        LIVE_STEREO_GRP, LIVE_STEREO_GRP, LIVE_STEREO_SBS_GRP, LIVE_STEREO_SBS_GRP,
+    };
+    const int tint_index[VPSS_DEMO_OUTPUTS] = {0, 1, 2, 3};
+    for (int i = VPSS_DEMO_OUTPUTS - 1; i >= 0; --i) {
+        int tint = tint_index[i];
+        if (g_bind_stereo_tint_src_ports[i] && g_bind_stereo_in_ports[i]) {
+            MEDIA_SYS_UnBind("OSD", g_stereo_tint_grps[tint],
+                             g_bind_stereo_tint_src_ports[i],
+                             "STEREO_3D", stereo_grps[i],
+                             g_bind_stereo_in_ports[i]);
+        }
+    }
+    for (int i = STEREO_TINT_COUNT - 1; i >= 0; --i) {
+        if (g_bind_vpss_stereo_src_ports[i] && g_bind_stereo_tint_in_ports[i]) {
+            MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP,
+                             g_bind_vpss_stereo_src_ports[i],
+                             "OSD", g_stereo_tint_grps[i],
+                             g_bind_stereo_tint_in_ports[i]);
+        }
+    }
+    if (g_bind_vi_src_port && g_bind_vpss_in_port) {
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "VPSS", LIVE_VPSS_GRP, g_bind_vpss_in_port);
+    }
+}
+
+static int run_only_npu_vdec_demo(int dstride, size_t display_size) {
+    h264_stream_t stream;
+    memset(&stream, 0, sizeof(stream));
+    int vo_ok = 0;
+    int display_ok = 0;
+    int chain_ok = 0;
+    int bind_ok = 0;
+    int vdec_started = 0;
+    int ret = 1;
+    npu_demo_result_t last_det;
+    memset(&last_det, 0, sizeof(last_det));
+
+    if (!path_readable(NPU_DEMO_H264_PATH)) {
+        fprintf(stderr, "NPU demo H264 missing: %s\n", NPU_DEMO_H264_PATH);
+        return 1;
+    }
+    if (!path_readable(NPU_DEMO_MODEL_PATH)) {
+        fprintf(stderr, "NPU demo model missing: %s\n", NPU_DEMO_MODEL_PATH);
+        return 1;
+    }
+    if (load_h264_stream(NPU_DEMO_H264_PATH, &stream) != 0) {
+        fprintf(stderr, "NPU demo: failed to load H264 stream\n");
+        return 1;
+    }
+
+    MEDIA_VO_ATTR vo = {0};
+    vo.intf = MEDIA_VO_INTF_MIPI;
+    vo.width = SCREEN_W;
+    vo.height = SCREEN_H;
+    vo.plane_count = 1;
+    if (MEDIA_VO_SetAttr(0, &vo) != 0 ||
+        MEDIA_VO_CreateChn(0, 0, 0, 0, SCREEN_W, SCREEN_H, dstride, 4,
+                           MEDIA_VO_PLANE_TYPE_AUTO, MEDIA_FORMAT_NV12) != 0 ||
+        MEDIA_VO_Start(0, 0) != 0) {
+        fprintf(stderr, "NPU demo VO setup failed\n");
+        goto done;
+    }
+    vo_ok = 1;
+    set_tile_status("VO", TILE_LIVE);
+
+    if (setup_display_vmix_osd(dstride, display_size, 1) != 0) {
+        fprintf(stderr, "NPU demo VMIX/OSD setup failed\n");
+        goto done;
+    }
+    display_ok = 1;
+    set_tile_status("VMIX", TILE_LIVE);
+    set_tile_status("OSD", TILE_LIVE);
+
+    if (setup_npu_vdec_chain() != 0) {
+        fprintf(stderr, "NPU demo VDEC/RGA/NPU setup failed\n");
+        goto done;
+    }
+    chain_ok = 1;
+
+    if (bind_npu_vdec_vmix_osd_vo() != 0) {
+        fprintf(stderr, "NPU demo bind setup failed\n");
+        goto done;
+    }
+    bind_ok = 1;
+
+    if (start_npu_vdec_decoder() != 0) {
+        fprintf(stderr, "NPU demo VDEC start failed\n");
+        goto done;
+    }
+    vdec_started = 1;
+
+    (void)update_display_osd_text("NPU  VDEC RGA YOLO VMIX OSD",
+                                  "H264 -> VDEC -> RGB PREPROCESS -> NPU -> VMIX -> OSD");
+    (void)update_npu_vdec_overlay(&last_det, 0, 0, 0, 0, 0, NPU_DEMO_H264_PATH, 0);
+
+    printf("NPU VDEC flow: H264(%s) -> VDEC%d.%s -> RGA%d.%s -> NPU%d.%s -> RGA%d.%s -> VMIX%d.%s -> OSD%d.%s -> VO0.%s\n",
+           NPU_DEMO_H264_PATH,
+           NPU_DEMO_VDEC_CHN,
+           g_bind_vdec_src_port ? g_bind_vdec_src_port : "output",
+           NPU_DEMO_PRE_RGA_GRP,
+           g_bind_npu_pre_rga_src_port ? g_bind_npu_pre_rga_src_port : "output0",
+           NPU_DEMO_NPU_GRP,
+           g_bind_npu_src_port ? g_bind_npu_src_port : "output0",
+           NPU_DEMO_POST_RGA_GRP,
+           g_bind_npu_post_rga_src_port ? g_bind_npu_post_rga_src_port : "output0",
+           DISPLAY_VMIX_GRP,
+           g_bind_vmix_src_port ? g_bind_vmix_src_port : "output0",
+           DISPLAY_OSD_GRP,
+           g_bind_osd_src_port ? g_bind_osd_src_port : "output0",
+           g_bind_vo_in_port ? g_bind_vo_in_port : "input0");
+
+    int frame = 0;
+    while (g_running) {
+        int is_vcl = 0;
+        if (feed_h264_stream_packet(NPU_DEMO_VDEC_CHN, &stream, &is_vcl) != 0) {
+            fprintf(stderr, "NPU demo: MEDIA_VDEC_SendPacket failed\n");
+            usleep(1000000 / FPS);
+            continue;
+        }
+
+        for (int i = 0; i < 8; ++i) {
+            MEDIA_NPU_RESULT result;
+            memset(&result, 0, sizeof(result));
+            if (MEDIA_NPU_GetResult(NPU_DEMO_NPU_GRP, &result, 0) != 0) {
+                break;
+            }
+            copy_npu_detect_result(&result, &last_det);
+            MEDIA_NPU_ReleaseResult(NPU_DEMO_NPU_GRP, &result);
+        }
+
+        if (is_vcl && (frame % 15) == 0) {
+            uint64_t vdec_count = 0;
+            uint64_t pre_rga_count = 0;
+            uint64_t npu_count = 0;
+            uint64_t post_rga_count = 0;
+            uint64_t vmix_count = 0;
+            char perf[180];
+            char gpu_text[24];
+            char rga_text[24];
+            update_perf_status();
+            (void)MEDIA_SYS_GetModuleFrameCount("VDEC", NPU_DEMO_VDEC_CHN, &vdec_count);
+            (void)MEDIA_SYS_GetModuleFrameCount("RGA", NPU_DEMO_PRE_RGA_GRP, &pre_rga_count);
+            (void)MEDIA_SYS_GetModuleFrameCount("NPU", NPU_DEMO_NPU_GRP, &npu_count);
+            (void)MEDIA_SYS_GetModuleFrameCount("RGA", NPU_DEMO_POST_RGA_GRP, &post_rga_count);
+            (void)MEDIA_SYS_GetModuleFrameCount("VMIX", DISPLAY_VMIX_GRP, &vmix_count);
+            snprintf(gpu_text, sizeof(gpu_text), g_perf.gpu_available ? "%.0f%%" : "N/A",
+                     g_perf.gpu_percent);
+            snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
+                     g_perf.rga_percent);
+            snprintf(perf, sizeof(perf), "PAGE %02d/%02d DET %d VDEC %llu NPU %llu CPU %.0f%% GPU %s RGA %s",
+                     module_page_number("NPU"), (int)ARRAY_SIZE(g_module_pages),
+                     last_det.object_count,
+                     (unsigned long long)vdec_count,
+                     (unsigned long long)npu_count,
+                     g_perf.cpu_percent, gpu_text, rga_text);
+            (void)update_display_osd_text("NPU  VDEC RGA YOLO VMIX OSD", perf);
+            (void)update_npu_vdec_overlay(&last_det, vdec_count, pre_rga_count,
+                                          npu_count, post_rga_count, vmix_count,
+                                          NPU_DEMO_H264_PATH, frame);
+            if ((frame % FPS) == 0) {
+                printf("NPU vdec=%llu pre_rga=%llu npu=%llu post_rga=%llu vmix=%llu det=%d cpu=%.0f%% gpu=%s rga=%s\n",
+                       (unsigned long long)vdec_count,
+                       (unsigned long long)pre_rga_count,
+                       (unsigned long long)npu_count,
+                       (unsigned long long)post_rga_count,
+                       (unsigned long long)vmix_count,
+                       last_det.object_count,
+                       g_perf.cpu_percent, gpu_text, rga_text);
+            }
+        }
+
+        if (is_vcl) {
+            frame++;
+            usleep(1000000 / FPS);
+        } else {
+            usleep(1000);
+        }
+    }
+    ret = 0;
+
+done:
+    signal(SIGINT, on_signal);
+    signal(SIGTERM, on_signal);
+    alarm(5);
+    if (vdec_started) {
+        MEDIA_VDEC_Stop(NPU_DEMO_VDEC_CHN);
+    }
+    unbind_npu_vdec_vmix_osd_vo(bind_ok);
+    cleanup_npu_vdec_chain(chain_ok);
+    cleanup_display_vmix_osd(display_ok);
+    if (vo_ok) {
+        MEDIA_VO_Stop(0, 0);
+        MEDIA_VO_DestroyChn(0, 0);
+    }
+    unload_h264_stream(&stream);
+    return ret;
 }
 
 static int setup_live_osd(void) {
@@ -7020,6 +8044,189 @@ static int process_live_stereo(const uint8_t *src, uint8_t *dst) {
     return ret;
 }
 
+static void fill_vpss_stereo_output_attr(MEDIA_VPSS_OUT_ATTR *out, int output_id) {
+    memset(out, 0, sizeof(*out));
+    out->output_id = output_id;
+    out->out_width = CAM_W;
+    out->out_height = CAM_H;
+    out->out_stride = CAM_STRIDE;
+    out->pool_id = VPSS_OUTPUT_POOL;
+    out->crop_x = 0;
+    out->crop_y = 0;
+    out->crop_w = CAM_W;
+    out->crop_h = CAM_H;
+    out->in_fps = -1;
+    out->out_fps = -1;
+    out->output_format = MEDIA_FORMAT_NV12;
+}
+
+static int setup_stereo_tint_osd(int grp, int is_red) {
+    MEDIA_OSD_ATTR attr = {0};
+    attr.input_width = CAM_W;
+    attr.input_height = CAM_H;
+    attr.format = MEDIA_FORMAT_NV12;
+    attr.input_depth = 3;
+    attr.output_pool_id = STEREO_TINT_OUTPUT_POOL;
+    attr.input_stride = CAM_STRIDE;
+    attr.output_stride = CAM_STRIDE;
+    attr.max_regions = 1;
+    if (MEDIA_OSD_CreateGrp(grp, &attr) != 0) return -1;
+
+    MEDIA_OSD_REGION_ATTR region = {0};
+    region.enabled = 1;
+    region.x = 0;
+    region.y = 0;
+    region.width = CAM_W;
+    region.height = CAM_H;
+    region.zorder = 0;
+    region.global_alpha = 95;
+
+    MEDIA_OSD_RECT_DESC rect = {0};
+    rect.filled = 1;
+    rect.color.r = is_red ? 255 : 40;
+    rect.color.g = is_red ? 45 : 110;
+    rect.color.b = is_red ? 45 : 255;
+    rect.color.a = 255;
+
+    if (MEDIA_OSD_UpdateRegion(grp, 0, &region) != 0 ||
+        MEDIA_OSD_SetRegionRect(grp, 0, &rect) != 0 ||
+        MEDIA_OSD_Start(grp) != 0) {
+        MEDIA_OSD_DestroyGrp(grp);
+        return -1;
+    }
+    return 0;
+}
+
+static int create_stereo_group(int grp, int mode) {
+    MEDIA_STEREO_3D_ATTR attr = {0};
+    attr.width = CAM_W;
+    attr.height = CAM_H;
+    attr.format = MEDIA_FORMAT_NV12;
+    attr.input_depth = 4;
+    attr.output_pool_id = STEREO_OUTPUT_POOL;
+    attr.input_stride = CAM_STRIDE;
+    attr.output_stride = CAM_STRIDE;
+    attr.mode = mode;
+    if (MEDIA_STEREO_3D_CreateGrp(grp, &attr) != 0 ||
+        MEDIA_STEREO_3D_Enable(grp) != 0) {
+        MEDIA_STEREO_3D_DestroyGrp(grp);
+        return -1;
+    }
+    return 0;
+}
+
+static int setup_live_stereo_bind(void) {
+    /*
+     * The realtime STEREO_3D page shows two generated stereo layouts from
+     * one camera source:
+     *
+     *   VI -> VPSS(4x same NV12)
+     *      -> two OSD blue/red tint pairs
+     *      -> STEREO_3D line-by-line and side-by-side
+     *      -> VMIX -> OSD -> VO
+     *
+     * VPSS output0..3 have identical size, crop and position.  They are only
+     * duplicated because one OSD output cannot fan out to both STEREO_3D
+     * groups in this pipeline framework.  Outputs 0/1 feed the line-by-line
+     * group; outputs 2/3 feed the side-by-side group.  In each pair, the first
+     * OSD applies a blue tint and the second applies a red tint so the two
+     * stereo inputs are easy to tell apart.  The geometry on screen is changed
+     * only by the STEREO_3D mode.
+     */
+    if (MEDIA_POOL_Create(VPSS_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
+    if (MEDIA_POOL_Create(VPSS_OUTPUT_POOL, CAM_FRAME_SIZE, STEREO_TINT_COUNT * 4) != 0) {
+        MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+        return -1;
+    }
+    if (MEDIA_POOL_Create(STEREO_TINT_OUTPUT_POOL, CAM_FRAME_SIZE, STEREO_TINT_COUNT * 4) != 0) {
+        MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+        MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+        return -1;
+    }
+    if (MEDIA_POOL_Create(STEREO_OUTPUT_POOL, CAM_FRAME_SIZE, 8) != 0) {
+        MEDIA_POOL_Destroy(STEREO_TINT_OUTPUT_POOL);
+        MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+        MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+        return -1;
+    }
+
+    MEDIA_VPSS_ATTR vpss = {0};
+    vpss.width = CAM_W;
+    vpss.height = CAM_H;
+    vpss.input_stride = CAM_STRIDE;
+    vpss.input_depth = 4;
+    vpss.input_format = MEDIA_FORMAT_NV12;
+    vpss.output_count = STEREO_TINT_COUNT;
+    for (int i = 0; i < STEREO_TINT_COUNT; ++i) {
+        fill_vpss_stereo_output_attr(&vpss.outputs[i], i);
+    }
+    if (MEDIA_VPSS_SetAttr(LIVE_VPSS_GRP, &vpss) != 0 ||
+        MEDIA_VPSS_Enable(LIVE_VPSS_GRP) != 0) {
+        MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
+        goto fail_pools;
+    }
+
+    int osd_created = 0;
+    for (int i = 0; i < STEREO_TINT_COUNT; ++i) {
+        int is_red = (i & 1) != 0;
+        if (setup_stereo_tint_osd(g_stereo_tint_grps[i], is_red) != 0) {
+            for (int j = osd_created - 1; j >= 0; --j) {
+                MEDIA_OSD_Stop(g_stereo_tint_grps[j]);
+                MEDIA_OSD_DestroyGrp(g_stereo_tint_grps[j]);
+            }
+            MEDIA_VPSS_Disable(LIVE_VPSS_GRP);
+            MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
+            goto fail_pools;
+        }
+        osd_created++;
+    }
+
+    if (create_stereo_group(LIVE_STEREO_GRP, MEDIA_STEREO_3D_MODE_LINE_BY_LINE) != 0 ||
+        create_stereo_group(LIVE_STEREO_SBS_GRP, MEDIA_STEREO_3D_MODE_SIDE_BY_SIDE) != 0) {
+        MEDIA_STEREO_3D_Disable(LIVE_STEREO_GRP);
+        MEDIA_STEREO_3D_DestroyGrp(LIVE_STEREO_GRP);
+        MEDIA_STEREO_3D_DestroyGrp(LIVE_STEREO_SBS_GRP);
+        for (int i = osd_created - 1; i >= 0; --i) {
+            MEDIA_OSD_Stop(g_stereo_tint_grps[i]);
+            MEDIA_OSD_DestroyGrp(g_stereo_tint_grps[i]);
+        }
+        MEDIA_VPSS_Disable(LIVE_VPSS_GRP);
+        MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
+        goto fail_pools;
+    }
+
+    set_tile_status("VPSS", TILE_LIVE);
+    set_tile_status("OSD", TILE_LIVE);
+    set_tile_status("STEREO_3D", TILE_LIVE);
+    set_tile_status("VMIX", TILE_LIVE);
+    return 0;
+
+fail_pools:
+    MEDIA_POOL_Destroy(STEREO_OUTPUT_POOL);
+    MEDIA_POOL_Destroy(STEREO_TINT_OUTPUT_POOL);
+    MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+    MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+    return -1;
+}
+
+static void cleanup_live_stereo_bind(int enabled) {
+    if (!enabled) return;
+    MEDIA_STEREO_3D_Disable(LIVE_STEREO_SBS_GRP);
+    MEDIA_STEREO_3D_DestroyGrp(LIVE_STEREO_SBS_GRP);
+    MEDIA_STEREO_3D_Disable(LIVE_STEREO_GRP);
+    MEDIA_STEREO_3D_DestroyGrp(LIVE_STEREO_GRP);
+    for (int i = STEREO_TINT_COUNT - 1; i >= 0; --i) {
+        MEDIA_OSD_Stop(g_stereo_tint_grps[i]);
+        MEDIA_OSD_DestroyGrp(g_stereo_tint_grps[i]);
+    }
+    MEDIA_VPSS_Disable(LIVE_VPSS_GRP);
+    MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
+    MEDIA_POOL_Destroy(STEREO_OUTPUT_POOL);
+    MEDIA_POOL_Destroy(STEREO_TINT_OUTPUT_POOL);
+    MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+    MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+}
+
 static void mark(const char *name, int active) {
     for (size_t i = 0; i < sizeof(g_tiles) / sizeof(g_tiles[0]); ++i) {
         if (strcmp(g_tiles[i].name, name) == 0) {
@@ -7851,6 +9058,15 @@ int main(int argc, char **argv) {
         probe_modules();
     }
 
+    if (!solid_test && only_tile && strcasecmp(only_tile, "NPU") == 0) {
+        int npu_ret = run_only_npu_vdec_demo(dstride, display_size);
+        unload_pano_sample();
+        unload_edof_pairs();
+        unload_loop_assets();
+        MEDIA_SYS_Exit();
+        return npu_ret;
+    }
+
     int live_osd_ok = 0;
     if (!solid_test && !only_tile &&
         setup_live_osd() == 0) {
@@ -7913,10 +9129,6 @@ int main(int argc, char **argv) {
         set_tile_status("PANO", TILE_LOOP);
     }
     int live_stereo_ok = 0;
-    if (!solid_test && only_tile && strcasecmp(only_tile, "STEREO_3D") == 0 &&
-        setup_live_stereo() == 0) {
-        live_stereo_ok = 1;
-    }
     int live_rga_ok = 0;
 
     if (MEDIA_POOL_Create(DISPLAY_POOL, display_size, 4) != 0) {
@@ -7993,6 +9205,7 @@ int main(int argc, char **argv) {
          strcasecmp(only_tile, "CSC_CL") == 0 ||
          strcasecmp(only_tile, "CONV_CL") == 0 ||
          strcasecmp(only_tile, "TRANSFORM") == 0 ||
+         strcasecmp(only_tile, "STEREO_3D") == 0 ||
          strcasecmp(only_tile, "CLAHE") == 0);
     int use_vi_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "VI") == 0;
     int use_vpss_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "VPSS") == 0;
@@ -8005,6 +9218,7 @@ int main(int argc, char **argv) {
     int use_csc_cl_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "CSC_CL") == 0;
     int use_conv_cl_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "CONV_CL") == 0;
     int use_transform_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "TRANSFORM") == 0;
+    int use_stereo_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "STEREO_3D") == 0;
     int vi_bind_display_ok = 0;
     int vpss_bind_display_ok = 0;
     int osd_bind_display_ok = 0;
@@ -8016,6 +9230,7 @@ int main(int argc, char **argv) {
     int csc_cl_bind_display_ok = 0;
     int conv_cl_bind_display_ok = 0;
     int transform_bind_display_ok = 0;
+    int stereo_bind_display_ok = 0;
     int live_resize_bind_ok = 0;
     int live_osd_bind_ok = 0;
     int live_clahe_bind_ok = 0;
@@ -8024,9 +9239,10 @@ int main(int argc, char **argv) {
     int live_csc_cl_chain_ok = 0;
     int live_conv_cl_quad_ok = 0;
     int live_transform_quad_ok = 0;
+    int live_stereo_bind_ok = 0;
     int display_vmix_osd_ok = 0;
     int display_vmix_inputs = (use_vpss_bind_display || use_conv_cl_bind_display || use_transform_bind_display) ? VPSS_DEMO_OUTPUTS :
-        ((use_clahe_bind_display || use_retinex_bind_display) ? 2 : 1);
+        ((use_clahe_bind_display || use_retinex_bind_display || use_stereo_bind_display) ? 2 : 1);
     if (use_vmix_osd_display && setup_display_vmix_osd(dstride, display_size, display_vmix_inputs) == 0) {
         display_vmix_osd_ok = 1;
     } else {
@@ -8042,6 +9258,10 @@ int main(int argc, char **argv) {
     if (use_transform_bind_display && display_vmix_osd_ok &&
         setup_live_transform_quad() == 0) {
         live_transform_quad_ok = 1;
+    }
+    if (use_stereo_bind_display && display_vmix_osd_ok &&
+        setup_live_stereo_bind() == 0) {
+        live_stereo_bind_ok = 1;
     }
     if (use_osd_bind_display && display_vmix_osd_ok && setup_live_osd_bind() == 0) {
         live_osd_bind_ok = 1;
@@ -8487,6 +9707,42 @@ int main(int argc, char **argv) {
         uint64_t zero_counts[VPSS_DEMO_OUTPUTS] = {0};
         (void)update_transform_quad_overlay(0, zero_counts, 0);
     }
+    if (use_stereo_bind_display) {
+        if (!camera_ok || !live_stereo_bind_ok || !display_vmix_osd_ok ||
+            bind_vi_vpss_stereo_vmix_osd_vo() != 0) {
+            fprintf(stderr, "STEREO_3D bind display setup failed; CPU copy fallback is disabled for --only STEREO_3D\n");
+            if (camera_ok) MEDIA_VI_Disable(0);
+            cleanup_live_stereo_bind(live_stereo_bind_ok);
+            cleanup_display_vmix_osd(display_vmix_osd_ok);
+            MEDIA_VO_Stop(0, 0);
+            MEDIA_VO_DestroyChn(0, 0);
+            MEDIA_POOL_Destroy(DISPLAY_POOL);
+            cleanup_live_stereo(live_stereo_ok);
+            cleanup_live_pano(live_pano_ok);
+            cleanup_live_dualview(live_dualview_ok);
+            cleanup_live_edof(live_edof_ok);
+            cleanup_live_retinex(live_retinex_ok);
+            cleanup_live_clahe(live_clahe_ok);
+            cleanup_live_conv_cl(live_conv_ok);
+            cleanup_live_dcp_dehaze(live_dcp_ok);
+            cleanup_live_cap_dehaze(live_cap_ok);
+            cleanup_live_transform(live_transform_ok);
+            cleanup_live_csc_rga(live_csc_rga_ok);
+            cleanup_live_rga(live_rga_ok);
+            cleanup_live_vpss(live_vpss_ok);
+            cleanup_live_resize(live_resize_ok);
+            cleanup_live_osd(live_osd_ok);
+            if (need_camera) MEDIA_POOL_Destroy(CAMERA_POOL);
+            unload_pano_sample();
+            unload_edof_pairs();
+            unload_loop_assets();
+            MEDIA_SYS_Exit();
+            return 1;
+        }
+        stereo_bind_display_ok = 1;
+        (void)update_display_osd_text("STEREO_3D  RED BLUE", "LINE BY LINE + SIDE BY SIDE");
+        (void)update_stereo_3d_overlay(0, 0, 0, 0);
+    }
 
     printf("alldemo running on DSI 1080x1920%s%s%s%s. Ctrl+C to stop.\n",
            solid_test ? " solid-test" : "",
@@ -8565,7 +9821,8 @@ int main(int argc, char **argv) {
             !rga_bind_display_ok && !resize_bind_display_ok &&
             !csc_rga_bind_display_ok && !csc_cl_bind_display_ok &&
             !conv_cl_bind_display_ok &&
-            !transform_bind_display_ok) {
+            !transform_bind_display_ok &&
+            !stereo_bind_display_ok) {
             MEDIA_BUFFER cbuf = {-1, -1};
             if (MEDIA_VI_GetFrame(0, &cbuf, 1) == 0) {
                 void *addr = NULL;
@@ -9277,6 +10534,48 @@ int main(int argc, char **argv) {
             usleep(1000000 / FPS);
             continue;
         }
+        if (stereo_bind_display_ok) {
+            if ((frame % 15) == 0) {
+                uint64_t vi_count = 0;
+                uint64_t lbl_count = 0;
+                uint64_t sbs_count = 0;
+                char perf[180];
+                char gpu_text[24];
+                char rga_text[24];
+                update_perf_status();
+                if (MEDIA_SYS_GetModuleFrameCount("VI", 0, &vi_count) == 0) {
+                    g_health.camera_frames = (int)vi_count;
+                }
+                (void)MEDIA_SYS_GetModuleFrameCount("STEREO_3D", LIVE_STEREO_GRP,
+                                                    &lbl_count);
+                (void)MEDIA_SYS_GetModuleFrameCount("STEREO_3D", LIVE_STEREO_SBS_GRP,
+                                                    &sbs_count);
+                snprintf(gpu_text, sizeof(gpu_text), g_perf.gpu_available ? "%.0f%%" : "N/A",
+                         g_perf.gpu_percent);
+                snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
+                         g_perf.rga_percent);
+                snprintf(perf, sizeof(perf), "PAGE %02d/%02d STEREO CPU %.0f%% GPU %s RGA %s LBL %llu SBS %llu",
+                         module_page_number("STEREO_3D"), (int)ARRAY_SIZE(g_module_pages),
+                         g_perf.cpu_percent, gpu_text, rga_text,
+                         (unsigned long long)lbl_count,
+                         (unsigned long long)sbs_count);
+                (void)update_display_osd_text("STEREO_3D  VMIX OSD VO", perf);
+                (void)update_stereo_3d_overlay(vi_count, lbl_count, sbs_count, frame);
+                if ((frame % FPS) == 0) {
+                    printf("STEREO_3D vi_frames=%llu line_by_line=%llu side_by_side=%llu cpu=%.0f%% gpu=%s rga=%s\n",
+                           (unsigned long long)vi_count,
+                           (unsigned long long)lbl_count,
+                           (unsigned long long)sbs_count,
+                           g_perf.cpu_percent,
+                           gpu_text,
+                           rga_text);
+                }
+            }
+            maybe_capture_vo_channel_frame(only_tile, frame, dstride);
+            frame++;
+            usleep(1000000 / FPS);
+            continue;
+        }
 
         if (use_vmix_osd_display) {
             const uint8_t *display_src = NULL;
@@ -9363,6 +10662,7 @@ int main(int argc, char **argv) {
     alarm(5);
 
     if (vo_demo_enabled) vo_demo_restore_output();
+    unbind_vi_vpss_stereo_vmix_osd_vo(stereo_bind_display_ok);
     unbind_vi_vpss_transform_vmix_osd_vo(transform_bind_display_ok);
     unbind_vi_vpss_conv_cl_vmix_osd_vo(conv_cl_bind_display_ok);
     unbind_vpss_vmix_osd_vo(vpss_bind_display_ok);
@@ -9375,6 +10675,7 @@ int main(int argc, char **argv) {
     unbind_vi_live_osd_vmix_osd_vo(osd_bind_display_ok);
     unbind_vi_vmix_osd_vo(vi_bind_display_ok);
     if (camera_ok) MEDIA_VI_Disable(0);
+    cleanup_live_stereo_bind(live_stereo_bind_ok);
     cleanup_live_transform_quad(live_transform_quad_ok);
     cleanup_live_conv_cl_quad(live_conv_cl_quad_ok);
     cleanup_live_csc_cl_chain(live_csc_cl_chain_ok);
