@@ -140,7 +140,7 @@ typedef struct {
     int flip_h;
     int flip_v;
     int rotate;
-    int output_format;  // 输出格式：MEDIA_FORMAT_NV12 / RGB888 / BGR888
+    int output_format;  // 输出格式：MEDIA_FORMAT_NV12 / RGB888/BGR888/RGBA family
 } MEDIA_VPSS_OUT_ATTR;
 
 typedef struct {
@@ -657,7 +657,8 @@ typedef struct {
     int width;                // 目标宽度（0=不缩放）
     int height;               // 目标高度（0=不缩放）
     float alpha;              // Alpha 透明度（0.0-1.0）
-    int stride;               // 输入 stride (0 表示按 NV12 16 字节对齐)
+    int stride;               // 输入 stride (0 表示按输入格式 16 字节对齐)
+    int format;               // 输入格式 (MEDIA_FORMAT_NV12/ARGB8888，0 或 -1 表示使用全局默认格式)
 } MEDIA_VMIX_CHANNEL;
 
 typedef struct {
@@ -665,10 +666,10 @@ typedef struct {
     int input_count;          // 输入通道数（1-MEDIA_VMIX_MAX_INPUTS）
     int output_width;         // 输出宽度
     int output_height;        // 输出高度
-    int format;               // 输入/输出格式（MEDIA_FORMAT_NV12）
+    int format;               // 单路 output0 输出格式和默认输入格式（MEDIA_FORMAT_NV12/ARGB8888）
     int input_depth;          // 输入端口队列深度（0 表示默认=4）
     int output_pool_id;       // 输出 buffer 池 ID
-    int output_stride;        // 输出 stride (0 表示按 NV12 16 字节对齐)
+    int output_stride;        // 输出 stride (0 表示按输出格式 16 字节对齐)
     int primary_index;        // 主输入索引 (-1 表示自动选择第一个启用的通道)
 } MEDIA_VMIX_ATTR;
 
@@ -1093,17 +1094,17 @@ int MEDIA_DUALVIEW_Stop(int grp);
 int MEDIA_DUALVIEW_GetFrame(int grp, MEDIA_BUFFER *buf, int timeout_ms);
 int MEDIA_DUALVIEW_ReleaseFrame(int grp, MEDIA_BUFFER buf);
 
-// Transform (基于 LUT 的 XY 变换模块）
+// Transform (基于 LUT 的 XY 变换模块，支持 NV12 与 RGB/BGR/RGBA family 同格式 remap）
 typedef struct {
     int out_width;           // 输出分辨率宽
     int out_height;          // 输出分辨率高
-    int out_stride;          // 输出 stride（0=等于 out_width）
-    int format;              // 输入格式（MEDIA_FORMAT_NV12）
+    int out_stride;          // 输出 stride 字节数（0=按格式自动计算并 4 字节对齐）
+    int format;              // 输入/输出格式（NV12/RGB888/BGR888/RGBA8888/BGRA8888/ARGB8888/ABGR8888）
     int input_depth;         // 输入端口队列深度（0 表示默认=4）
     int pool_id;             // 输出缓冲池 ID
     int in_width;            // 输入分辨率宽（旋转等变换时与输出不同，0=等于 out_width）
     int in_height;           // 输入分辨率高（旋转等变换时与输出不同，0=等于 out_height）
-    int in_stride;           // 输入 stride（0=等于 in_width）
+    int in_stride;           // 输入 stride 字节数（0=按格式自动计算并 4 字节对齐）
     int lut_width;           // LUT 宽度（0=等于 out_width，可小于 out_width 实现下采样节省内存）
     int lut_height;          // LUT 高度（0=等于 out_height，可小于 out_height 实现下采样节省内存）
     const float *lut;        // 预计算的 LUT（大小为 lut_width*lut_height*2）
@@ -1254,6 +1255,7 @@ typedef struct {
 
 typedef struct {
     const char *device;     // DRM card，NULL 表示 /dev/dri/card0
+    const char *target;     // 显示 connector 名称，如 DSI-1 / HDMI-A-1；NULL 表示自动找 active CRTC
     int connector_id;       // writeback connector id，<=0 自动查找
     int crtc_id;            // 被回环的 CRTC id，<=0 自动使用当前 active CRTC
     int width;
@@ -1292,6 +1294,8 @@ int MEDIA_SYS_SendFrame(const char *dst_mod, int dst_id, const char *dst_port,
                         MEDIA_BUFFER buf, int timeout_ms);
 
 // All Debug API
+// debug_buf由调用者提供；返回0表示完整写入，1表示被截断，-1表示参数或状态错误。
+int MEDIA_SYS_GetDebugString(char *debug_buf, size_t debug_buf_size);
 int MEDIA_SYS_debug(void);
 
 #endif // MEDIA_API_H
