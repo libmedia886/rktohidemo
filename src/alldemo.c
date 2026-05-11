@@ -7,6 +7,7 @@
 #include <linux/videodev2.h>
 #include <math.h>
 #include <netinet/in.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -16,6 +17,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -262,7 +264,7 @@ typedef struct {
 static volatile sig_atomic_t g_running = 1;
 static volatile sig_atomic_t g_signal_count = 0;
 static health_status_t g_health = {0};
-static perf_status_t g_perf = {0.0f, 0.0f, 0, 0.0f, 0};
+static perf_status_t g_perf = {0};
 static int g_vo_demo_state = 0;
 static int g_vo_demo_prev_state = -1;
 static int g_vo_demo_phase_frame = 0;
@@ -299,6 +301,8 @@ static const char *g_bind_vo_in_port = NULL;
 static const char *g_bind_vpss_in_port = NULL;
 static const char *g_bind_vpss_src_ports[VPSS_DEMO_OUTPUTS] = {NULL};
 static const char *g_bind_vmix_in_ports[VPSS_DEMO_OUTPUTS] = {NULL};
+static uint8_t *g_vpss_preview_frames[VPSS_DEMO_OUTPUTS] = {NULL};
+static int g_vpss_preview_ready[VPSS_DEMO_OUTPUTS] = {0};
 static const char *g_bind_vpss_conv_src_ports[VPSS_DEMO_OUTPUTS] = {NULL};
 static const char *g_bind_conv_pre_csc_in_ports[VPSS_DEMO_OUTPUTS] = {NULL};
 static const char *g_bind_conv_pre_csc_src_ports[VPSS_DEMO_OUTPUTS] = {NULL};
@@ -393,6 +397,7 @@ static const int g_stereo_tint_grps[STEREO_TINT_COUNT] = {
 static void set_tile_status(const char *name, int status);
 static int find_tile_index(const char *name);
 static void update_perf_status(void);
+static void format_runtime_status(char *buf, size_t len);
 
 enum {
     TILE_OFFLINE = 0,
@@ -430,11 +435,19 @@ static module_tile_t g_tiles[] = {
 };
 
 static const char *g_module_pages[] = {
-    "VI", "VPSS", "RGA", "RESIZE_RGA", "CSC_RGA", "CSC_CL", "OSD",
+    "VI", "VPSS", "VO", "RGA", "RESIZE_RGA", "CSC_RGA", "CSC_CL", "OSD",
     "CLAHE", "RETINEX", "CAP_DEHAZE", "DCP_FAST_DEHAZE", "THERMAL", "CONV_CL",
-    "TRANSFORM", "BLEND_PYR", "EDOF_CL", "EXPOSURE_FUSION_CL", "DUALVIEW",
-    "STEREO_3D", "VMIX", "VMIX_RGA", "PANO", "AVM", "SVM3D", "NPU",
-    "VENC", "VDEC", "PIC_IO",
+    "TRANSFORM", "EDOF_CL", "DUALVIEW", "STEREO_3D", "PANO",
+};
+
+static const char *g_default_pages[] = {
+    "VI", "VPSS", "VO", "OSD", "RESIZE_RGA", "THERMAL", "EDOF_CL",
+    "RGA", "CSC_RGA", "CSC_CL", "CLAHE", "RETINEX", "CONV_CL",
+    "TRANSFORM", "STEREO_3D",
+};
+
+static const char *g_vpss_tile_labels[VPSS_DEMO_OUTPUTS] = {
+    "FULL SCALE", "MOVING CROP", "FLIP H/V", "ZOOM CROP",
 };
 
 static loop_asset_t g_loop_assets[] = {
@@ -491,6 +504,82 @@ static void on_signal(int sig) {
     (void)sig;
     if (++g_signal_count > 1) _exit(128 + sig);
     g_running = 0;
+    alarm(5);
+}
+
+static int wait_child_nonblocking(pid_t child, int *status) {
+    pid_t r;
+    do {
+        r = waitpid(child, status, WNOHANG);
+    } while (r < 0 && errno == EINTR);
+    return r == child ? 1 : (r == 0 ? 0 : -1);
+}
+
+static int wait_default_only_child(pid_t child, int seconds) {
+    int status = 0;
+    int elapsed_ms = 0;
+    int limit_ms = seconds > 0 ? seconds * 1000 : -1;
+
+    while (g_running && (limit_ms < 0 || elapsed_ms < limit_ms)) {
+        int done = wait_child_nonblocking(child, &status);
+        if (done != 0) return done > 0 ? status : -1;
+        usleep(100000);
+        if (limit_ms > 0) elapsed_ms += 100;
+    }
+
+    if (!g_running) {
+        for (int i = 0; i < 20; ++i) {
+            int done = wait_child_nonblocking(child, &status);
+            if (done != 0) return done > 0 ? status : -1;
+            usleep(100000);
+        }
+    }
+
+    kill(child, SIGINT);
+    for (int i = 0; i < 50; ++i) {
+        int done = wait_child_nonblocking(child, &status);
+        if (done != 0) return done > 0 ? status : -1;
+        usleep(100000);
+    }
+
+    kill(child, SIGTERM);
+    do {
+        if (waitpid(child, &status, 0) == child) return status;
+    } while (errno == EINTR);
+    return -1;
+}
+
+static int run_default_only_loop(const char *argv0, int rotate_main) {
+    char self[PATH_MAX];
+    ssize_t n = readlink("/proc/self/exe", self, sizeof(self) - 1);
+    if (n > 0) {
+        self[n] = '\0';
+    } else {
+        snprintf(self, sizeof(self), "%s", argv0 && argv0[0] ? argv0 : "./alldemo");
+    }
+
+    printf("alldemo default loop now reuses --only module pages. Ctrl+C to stop.\n");
+
+    int page = 0;
+    while (g_running) {
+        const char *module = g_default_pages[rotate_main ? (page % (int)ARRAY_SIZE(g_default_pages)) : 0];
+        pid_t child = fork();
+        if (child < 0) {
+            perror("fork --only page");
+            return 1;
+        }
+        if (child == 0) {
+            execl(self, self, "--only", module, (char *)NULL);
+            fprintf(stderr, "exec %s --only %s failed: %s\n", self, module, strerror(errno));
+            _exit(127);
+        }
+
+        printf("default loop page: --only %s\n", module);
+        (void)wait_default_only_child(child, rotate_main ? PAGE_ROTATE_SECONDS : -1);
+        if (!rotate_main) break;
+        page++;
+    }
+    return 0;
 }
 
 static int path_readable(const char *path) {
@@ -1383,6 +1472,11 @@ static uint8_t glyph_row(char c, int row) {
     if (c == '_') return row == 6 ? 31 : 0;
     if (c == ':') return (row == 2 || row == 4) ? 4 : 0;
     if (c == '.') return row == 6 ? 4 : 0;
+    if (c == '=') return (row == 2 || row == 4) ? 31 : 0;
+    if (c == '%') {
+        static const uint8_t percent[7] = {17, 18, 4, 8, 9, 17, 0};
+        return percent[row];
+    }
     if (c == '/') return 1 << (6 - row > 4 ? 4 : (6 - row));
     if (c == '>') return row < 3 ? (1 << row) : (row == 3 ? 16 : (1 << (6 - row)));
     return 0;
@@ -1574,19 +1668,42 @@ static void draw_camera_tile(uint8_t *dst, int dstride, int dx, int dy, int dw, 
     }
 }
 
-static void draw_camera_tile_fit(uint8_t *dst, int dstride, int dx, int dy, int dw, int dh,
-                                 const uint8_t *src, int sw, int sh, int sstride) {
-    if (!src || dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return;
+static int fit_rect_for_aspect(int dx, int dy, int dw, int dh, int sw, int sh,
+                               int *ox, int *oy, int *ow, int *oh) {
+    if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return -1;
     int out_w = dw;
     int out_h = (int)((int64_t)sh * out_w / sw);
     if (out_h > dh) {
         out_h = dh;
         out_w = (int)((int64_t)sw * out_h / sh);
     }
-    if (out_w <= 0 || out_h <= 0) return;
-    int ox = dx + (dw - out_w) / 2;
-    int oy = dy + (dh - out_h) / 2;
+    if (out_w <= 0 || out_h <= 0) return -1;
+    if (ox) *ox = dx + (dw - out_w) / 2;
+    if (oy) *oy = dy + (dh - out_h) / 2;
+    if (ow) *ow = out_w;
+    if (oh) *oh = out_h;
+    return 0;
+}
+
+static int draw_camera_tile_fit_rect(uint8_t *dst, int dstride, int dx, int dy, int dw, int dh,
+                                     const uint8_t *src, int sw, int sh, int sstride,
+                                     int *rx, int *ry, int *rw, int *rh) {
+    int ox = 0, oy = 0, out_w = 0, out_h = 0;
+    if (!src || fit_rect_for_aspect(dx, dy, dw, dh, sw, sh, &ox, &oy, &out_w, &out_h) != 0) {
+        return -1;
+    }
     draw_camera_tile(dst, dstride, ox, oy, out_w, out_h, src, sw, sh, sstride);
+    if (rx) *rx = ox;
+    if (ry) *ry = oy;
+    if (rw) *rw = out_w;
+    if (rh) *rh = out_h;
+    return 0;
+}
+
+static void draw_camera_tile_fit(uint8_t *dst, int dstride, int dx, int dy, int dw, int dh,
+                                 const uint8_t *src, int sw, int sh, int sstride) {
+    (void)draw_camera_tile_fit_rect(dst, dstride, dx, dy, dw, dh, src, sw, sh, sstride,
+                                    NULL, NULL, NULL, NULL);
 }
 
 static void nv12_content_rect(const uint8_t *src, int sw, int sh, int sstride,
@@ -1879,12 +1996,54 @@ static void draw_nv12_rgb_comparison(uint8_t *dst, int stride, int x, int y, int
     draw_text(dst, stride, right_x + 14, y + pane_h - label_h + 8, output_label, 1, 170, 255, 220);
 }
 
+static void draw_dehaze_showcase(uint8_t *dst, int stride, int x, int y, int w, int h,
+                                 const uint8_t *input_nv12, const uint8_t *output_rgb,
+                                 const char *title, const char *flow, const char *why,
+                                 const char *param_line, const char *output_label) {
+    char runtime[128];
+    int top_h = 134;
+    int bottom_h = 178;
+    int gap = 12;
+    int compare_y = y + top_h + gap;
+    int compare_h = h - top_h - bottom_h - gap * 2;
+    int bottom_y = y + h - bottom_h;
+
+    if (compare_h < 320) return;
+    format_runtime_status(runtime, sizeof(runtime));
+
+    fill_rect_nv12(dst, stride, x, y, w, top_h, 6, 13, 24);
+    stroke_rect_nv12(dst, stride, x, y, w, top_h, 2, 66, 150, 210);
+    draw_utf8_text(dst, stride, x + 24, y + 18, title, 28, 170, 255, 220);
+    draw_utf8_text(dst, stride, x + 24, y + 62, flow, 20, 210, 235, 255);
+    draw_utf8_text(dst, stride, x + 24, y + 96, why, 20, 255, 230, 120);
+
+    draw_nv12_rgb_comparison(dst, stride, x, compare_y, w, compare_h,
+                             input_nv12, output_rgb,
+                             "LEFT: VI RAW INPUT", output_label);
+
+    fill_rect_nv12(dst, stride, x, bottom_y, w, bottom_h, 5, 10, 18);
+    stroke_rect_nv12(dst, stride, x, bottom_y, w, bottom_h, 2, 0, 190, 170);
+    draw_utf8_text(dst, stride, x + 24, bottom_y + 22,
+                   "展示重点：同尺寸左右对比，输入来自实时摄像头，右侧为算法输出。",
+                   22, 170, 255, 220);
+    draw_text(dst, stride, x + 24, bottom_y + 72, param_line, 1, 190, 230, 255);
+    draw_text(dst, stride, x + 24, bottom_y + 110, runtime, 2, 255, 230, 120);
+}
+
+static void vpss_bind_layout(int *start_x, int *start_y, int *cell, int *gap) {
+    int c = VPSS_TILE_W;
+    int g = 40;
+    if (cell) *cell = c;
+    if (gap) *gap = g;
+    if (start_x) *start_x = (SCREEN_W - c * 2 - g) / 2;
+    if (start_y) *start_y = 300;
+}
+
 static void draw_vpss_showcase_labels(uint8_t *dst, int stride, int x, int y, int w, int h) {
     int gap = 10;
     int label_h = 24;
     int col_w = (w - gap) / 2;
     int row_h = (h - gap) / 2;
-    const char *labels[4] = {"FULL SCALE", "MOVING CROP", "FLIP H/V", "ZOOM CROP"};
 
     for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
         int cx = x + (i % 2) * (col_w + gap);
@@ -1892,8 +2051,89 @@ static void draw_vpss_showcase_labels(uint8_t *dst, int stride, int x, int y, in
         stroke_rect_nv12(dst, stride, cx, cy, col_w, row_h, 2,
                          i == 0 ? 70 : 80, i == 0 ? 140 : 255, i == 0 ? 210 : 180);
         fill_rect_nv12(dst, stride, cx, cy + row_h - label_h, col_w, label_h, 0, 0, 0);
-        draw_text(dst, stride, cx + 8, cy + row_h - label_h + 6, labels[i], 1, 180, 230, 255);
+        draw_text(dst, stride, cx + 8, cy + row_h - label_h + 6,
+                  g_vpss_tile_labels[i], 1, 180, 230, 255);
     }
+}
+
+static void draw_vpss_bind_style_flow(uint8_t *dst, int stride) {
+    const int box_y = 1332;
+    const int box_w = 166;
+    const int box_h = 88;
+    const int box_gap = 14;
+    const int box_x0 = 90;
+    const char *box_title[5] = {"采集 VI", "缩放 VPSS", "合成 VMIX", "叠字 OSD", "出屏 VO"};
+    const char *box_note[5] = {
+        "摄像头原始帧", "缩放 裁剪 翻转", "只排版不缩放", "叠加标题状态", "送显示屏",
+    };
+
+    fill_rect_nv12(dst, stride, 58, 1280, 964, 488, 5, 10, 18);
+    stroke_rect_nv12(dst, stride, 58, 1280, 964, 488, 2, 0, 190, 170);
+    draw_utf8_text(dst, stride, 84, 1304,
+                   "数据流：VI输入经过VPSS处理后上屏", 29, 160, 255, 220);
+    draw_utf8_text(dst, stride, 86, 1348,
+                   "VI不是单独显示，它是VPSS的实时输入源。", 22, 190, 230, 255);
+
+    for (int i = 0; i < 5; ++i) {
+        int bx = box_x0 + i * (box_w + box_gap);
+        fill_rect_nv12(dst, stride, bx, box_y + 58, box_w, box_h, 18, 42, 64);
+        stroke_rect_nv12(dst, stride, bx, box_y + 58, box_w, box_h, 1, 70, 140, 210);
+        draw_utf8_text(dst, stride, bx + 18, box_y + 74, box_title[i], 23, 160, 255, 220);
+        draw_utf8_text(dst, stride, bx + 8, box_y + 110, box_note[i], 17, 190, 230, 255);
+        if (i < 4) {
+            draw_utf8_text(dst, stride, bx + box_w + 3, box_y + 88,
+                           "→", 24, 255, 230, 120);
+        }
+    }
+
+    draw_utf8_text(dst, stride, 86, 1538,
+                   "VPSS把同一份VI输入处理成四路480x480输出。", 23, 255, 230, 120);
+    draw_utf8_text(dst, stride, 86, 1578,
+                   "VMIX只负责摆放四路画面，不依赖VMIX缩小。", 23, 140, 210, 180);
+    draw_text(dst, stride, 86, 1648,
+              "VI -> VPSS63  |  VPSS outputs 0/1/2/3 -> VMIX inputs 0/1/2/3",
+              1, 170, 205, 235);
+    draw_text(dst, stride, 86, 1678,
+              "VMIX80 -> OSD81 -> VO0",
+              1, 170, 205, 235);
+}
+
+static void draw_vpss_bind_style_page(uint8_t *dst, int stride, int frame,
+                                      int page, int total_pages) {
+    int start_x = 0, start_y = 0, cell = 0, gap = 0;
+    char perf[160];
+    char runtime[128];
+    (void)frame;
+    vpss_bind_layout(&start_x, &start_y, &cell, &gap);
+    format_runtime_status(runtime, sizeof(runtime));
+
+    fill_rect_nv12(dst, stride, 0, 0, SCREEN_W, SCREEN_H, 4, 9, 16);
+    fill_rect_nv12(dst, stride, 0, 0, SCREEN_W, 96, 5, 10, 18);
+    fill_rect_nv12(dst, stride, 0, SCREEN_H - 112, SCREEN_W, 112, 5, 10, 18);
+    draw_text(dst, stride, 32, 24, "VPSS  VMIX OSD BIND", 3, 160, 255, 220);
+    snprintf(perf, sizeof(perf), "PAGE %02d/%02d  FULL  MOVING CROP  FLIP  ZOOM  %s",
+             page + 1, total_pages, runtime);
+    draw_text(dst, stride, 32, SCREEN_H - 72, perf, 2, 255, 230, 120);
+
+    for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
+        int x = start_x + (i % 2) * (cell + gap);
+        int y = start_y + (i / 2) * (cell + gap);
+        fill_rect_nv12(dst, stride, x, y, cell, cell, 8, 16, 28);
+        if (g_vpss_preview_ready[i] && g_vpss_preview_frames[i]) {
+            draw_nv12_to_frame(dst, SCREEN_W, SCREEN_H, stride, x, y, cell, cell,
+                               g_vpss_preview_frames[i],
+                               VPSS_TILE_W, VPSS_TILE_H, VPSS_TILE_NV12_STRIDE);
+        } else {
+            draw_text(dst, stride, x + 28, y + cell / 2 - 10, "WAIT VPSS", 2, 255, 190, 100);
+        }
+        fill_rect_nv12(dst, stride, x, y + cell - 30, cell, 30, 0, 0, 0);
+        draw_text(dst, stride, x + 12, y + cell - 22,
+                  g_vpss_tile_labels[i], 1, 180, 230, 255);
+        stroke_rect_nv12(dst, stride, x, y, cell, cell, 2,
+                         i == 0 ? 70 : 80, i == 0 ? 140 : 255, i == 0 ? 210 : 180);
+    }
+
+    draw_vpss_bind_style_flow(dst, stride);
 }
 
 static void draw_vo_showcase(uint8_t *dst, int stride, int x, int y, int w, int h, int frame) {
@@ -2129,6 +2369,81 @@ static void draw_pano_comparison(uint8_t *dst, int stride, int x, int y, int w, 
     draw_text(dst, stride, x + 8, oy + bottom_h - label_h + 5, "PANORAMA OUTPUT", 1, 180, 230, 255);
 }
 
+static void draw_showcase_header(uint8_t *dst, int stride, int x, int y, int w,
+                                 const char *title, const char *flow, const char *why) {
+    fill_rect_nv12(dst, stride, x, y, w, 126, 6, 13, 24);
+    stroke_rect_nv12(dst, stride, x, y, w, 126, 2, 66, 150, 210);
+    draw_utf8_text(dst, stride, x + 24, y + 18, title, 28, 170, 255, 220);
+    draw_utf8_text(dst, stride, x + 24, y + 62, flow, 20, 210, 235, 255);
+    draw_utf8_text(dst, stride, x + 24, y + 94, why, 20, 255, 230, 120);
+}
+
+static void draw_showcase_footer(uint8_t *dst, int stride, int x, int y, int w,
+                                 const char *detail) {
+    char runtime[128];
+    format_runtime_status(runtime, sizeof(runtime));
+
+    fill_rect_nv12(dst, stride, x, y, w, 156, 5, 10, 18);
+    stroke_rect_nv12(dst, stride, x, y, w, 156, 2, 0, 190, 170);
+    draw_utf8_text(dst, stride, x + 24, y + 22, detail, 22, 170, 255, 220);
+    draw_text(dst, stride, x + 24, y + 76, runtime, 2, 255, 230, 120);
+}
+
+static void draw_edof_showcase(uint8_t *dst, int stride, int x, int y, int w, int h,
+                               const uint8_t *left, const uint8_t *right, const uint8_t *out) {
+    int top_h = 126;
+    int bottom_h = 156;
+    int gap = 12;
+    int compare_y = y + top_h + gap;
+    int compare_h = h - top_h - bottom_h - gap * 2;
+    if (compare_h < 320) return;
+
+    draw_showcase_header(dst, stride, x, y, w,
+                         "EDOF_CL：多焦点融合前后对比",
+                         "数据流：近焦图 + 远焦图 -> EDOF_CL -> 清晰融合输出。",
+                         "为什么这样做：GPU根据清晰度权重融合近景和远景，扩展景深。");
+    draw_edof_comparison(dst, stride, x, compare_y, w, compare_h, left, right, out);
+    draw_showcase_footer(dst, stride, x, y + h - bottom_h, w,
+                         "展示重点：每3秒切换一组样张，输出保留两张输入中更清晰的区域。");
+}
+
+static void draw_dualview_showcase(uint8_t *dst, int stride, int x, int y, int w, int h,
+                                   const uint8_t *in0, const uint8_t *in1,
+                                   const uint8_t *sbs, const uint8_t *lbl) {
+    int top_h = 126;
+    int bottom_h = 156;
+    int gap = 12;
+    int compare_y = y + top_h + gap;
+    int compare_h = h - top_h - bottom_h - gap * 2;
+    if (compare_h < 320) return;
+
+    draw_showcase_header(dst, stride, x, y, w,
+                         "DUALVIEW：双输入双输出格式演示",
+                         "数据流：红/蓝两路RGB输入 -> DUALVIEW -> 左右并排和逐行交错。",
+                         "为什么这样做：同一组输入可直接生成不同双视图显示格式。");
+    draw_dualview_comparison(dst, stride, x, compare_y, w, compare_h, in0, in1, sbs, lbl);
+    draw_showcase_footer(dst, stride, x, y + h - bottom_h, w,
+                         "展示重点：input0/input1、side-by-side、line-by-line 四路同屏比较。");
+}
+
+static void draw_pano_showcase(uint8_t *dst, int stride, int x, int y, int w, int h,
+                               const uint8_t *pano_out) {
+    int top_h = 126;
+    int bottom_h = 156;
+    int gap = 12;
+    int compare_y = y + top_h + gap;
+    int compare_h = h - top_h - bottom_h - gap * 2;
+    if (compare_h < 320) return;
+
+    draw_showcase_header(dst, stride, x, y, w,
+                         "PANO：六路输入全景拼接",
+                         "数据流：6张标定图 + PTO标定 -> PANO -> 1024x512全景输出。",
+                         "为什么这样做：查表映射减少运行时几何计算，适合多摄像头环视。");
+    draw_pano_comparison(dst, stride, x, compare_y, w, compare_h, pano_out);
+    draw_showcase_footer(dst, stride, x, y + h - bottom_h, w,
+                         "展示重点：上方是六路输入，下方是同一标定文件拼接后的全景结果。");
+}
+
 static const char *tile_status_text(int status) {
     switch (status) {
     case TILE_LIVE: return "LIVE";
@@ -2174,34 +2489,37 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
     fill_rect_nv12(dst, stride, x, y, w, h, 6, 12, 20);
     loop_asset_t *loop = find_loop_asset(g_tiles[idx].name);
     if (strcmp(g_tiles[idx].name, "VI") == 0 && retinex_in) {
-        draw_camera_tile(dst, stride, x + 6, y + 30, w - 12, h - 38,
-                         retinex_in, CAM_W, CAM_H, CAM_STRIDE);
+        draw_camera_tile_fit(dst, stride, x + 6, y + 30, w - 12, h - 38,
+                             retinex_in, CAM_W, CAM_H, CAM_STRIDE);
         fill_rect_nv12(dst, stride, x + 6, y + h - 24, w - 12, 18, 0, 0, 0);
         draw_text(dst, stride, x + 12, y + h - 22, "LIVE VI INPUT", 1, 220, 255, 230);
     } else if (strcmp(g_tiles[idx].name, "OSD") == 0 && osd_live) {
-        draw_camera_tile(dst, stride, x + 6, y + 30, w - 12, h - 38,
-                         osd_live, CAM_W, CAM_H, CAM_STRIDE);
+        draw_camera_tile_fit(dst, stride, x + 6, y + 30, w - 12, h - 38,
+                             osd_live, CAM_W, CAM_H, CAM_STRIDE);
         fill_rect_nv12(dst, stride, x + 6, y + h - 24, w - 12, 18, 0, 0, 0);
         draw_text(dst, stride, x + 12, y + h - 22, "CAMERA > OSD", 1, 220, 255, 230);
     } else if (strcmp(g_tiles[idx].name, "VPSS") == 0 && vpss_live) {
-        draw_camera_tile(dst, stride, x + 6, y + 30, w - 12, h - 38,
-                         vpss_live, CAM_W, CAM_H, CAM_STRIDE);
-        draw_vpss_showcase_labels(dst, stride, x + 6, y + 30, w - 12, h - 38);
+        int vx = 0, vy = 0, vw = 0, vh = 0;
+        if (draw_camera_tile_fit_rect(dst, stride, x + 6, y + 30, w - 12, h - 38,
+                                      vpss_live, CAM_W, CAM_H, CAM_STRIDE,
+                                      &vx, &vy, &vw, &vh) == 0) {
+            draw_vpss_showcase_labels(dst, stride, vx, vy, vw, vh);
+        }
         fill_rect_nv12(dst, stride, x + 6, y + h - 24, w - 12, 18, 0, 0, 0);
         draw_text(dst, stride, x + 12, y + h - 22, "VPSS MULTI-OUT", 1, 220, 255, 230);
     } else if (strcmp(g_tiles[idx].name, "RESIZE_RGA") == 0 && resize_live) {
-        draw_camera_tile(dst, stride, x + 6, y + 30, w - 12, h - 38,
-                         resize_live, CAM_W, CAM_H, CAM_STRIDE);
+        draw_camera_tile_fit(dst, stride, x + 6, y + 30, w - 12, h - 38,
+                             resize_live, CAM_W, CAM_H, CAM_STRIDE);
         fill_rect_nv12(dst, stride, x + 6, y + h - 24, w - 12, 18, 0, 0, 0);
         draw_text(dst, stride, x + 12, y + h - 22, "CAMERA > RESIZE", 1, 220, 255, 230);
     } else if (strcmp(g_tiles[idx].name, "CSC_RGA") == 0 && csc_rga_live) {
-        draw_camera_tile(dst, stride, x + 6, y + 30, w - 12, h - 38,
-                         csc_rga_live, CAM_W, CAM_H, CAM_STRIDE);
+        draw_camera_tile_fit(dst, stride, x + 6, y + 30, w - 12, h - 38,
+                             csc_rga_live, CAM_W, CAM_H, CAM_STRIDE);
         fill_rect_nv12(dst, stride, x + 6, y + h - 24, w - 12, 18, 0, 0, 0);
         draw_text(dst, stride, x + 12, y + h - 22, "CAMERA > CSC_RGA", 1, 220, 255, 230);
     } else if (strcmp(g_tiles[idx].name, "TRANSFORM") == 0 && transform_live) {
-        draw_camera_tile(dst, stride, x + 6, y + 30, w - 12, h - 38,
-                         transform_live, CAM_W, CAM_H, CAM_STRIDE);
+        draw_camera_tile_fit(dst, stride, x + 6, y + 30, w - 12, h - 38,
+                             transform_live, CAM_W, CAM_H, CAM_STRIDE);
         fill_rect_nv12(dst, stride, x + 6, y + h - 24, w - 12, 18, 0, 0, 0);
         draw_text(dst, stride, x + 12, y + h - 22, "SYNTH > TRANSFORM", 1, 220, 255, 230);
     } else if (strcmp(g_tiles[idx].name, "CAP_DEHAZE") == 0 && cap_live) {
@@ -2218,8 +2536,8 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
         fill_rect_nv12(dst, stride, x + 6, y + h - 24, w - 12, 18, 0, 0, 0);
         draw_text(dst, stride, x + 12, y + h - 22, "SYNTH RGBA > CONV", 1, 220, 255, 230);
     } else if (strcmp(g_tiles[idx].name, "CLAHE") == 0 && clahe_live) {
-        draw_camera_tile(dst, stride, x + 6, y + 30, w - 12, h - 38,
-                         clahe_live, CAM_W, CAM_H, CAM_STRIDE);
+        draw_camera_tile_fit(dst, stride, x + 6, y + 30, w - 12, h - 38,
+                             clahe_live, CAM_W, CAM_H, CAM_STRIDE);
         fill_rect_nv12(dst, stride, x + 6, y + h - 24, w - 12, 18, 0, 0, 0);
         draw_text(dst, stride, x + 12, y + h - 22, "SYNTH NV12 > CLAHE", 1, 220, 255, 230);
     } else if (strcmp(g_tiles[idx].name, "RETINEX") == 0 && (retinex_in || retinex_live)) {
@@ -2235,8 +2553,8 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
         draw_dualview_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38,
                                  dual_in0, dual_in1, dual_sbs, dual_lbl);
     } else if (strcmp(g_tiles[idx].name, "STEREO_3D") == 0 && stereo_live) {
-        draw_camera_tile(dst, stride, x + 6, y + 30, w - 12, h - 38,
-                         stereo_live, CAM_W, CAM_H, CAM_STRIDE);
+        draw_camera_tile_fit(dst, stride, x + 6, y + 30, w - 12, h - 38,
+                             stereo_live, CAM_W, CAM_H, CAM_STRIDE);
         fill_rect_nv12(dst, stride, x + 6, y + h - 24, w - 12, 18, 0, 0, 0);
         draw_text(dst, stride, x + 12, y + h - 22, "CAMERA > STEREO", 1, 220, 255, 230);
     } else if (loop && loop->loaded_count > 0) {
@@ -2294,45 +2612,58 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
     }
 
     if (strcmp(g_tiles[idx].name, "OSD") == 0 && osd_live) {
-        draw_camera_tile(dst, stride, x + 12, y + 12, w - 24, h - 24,
-                         osd_live, CAM_W, CAM_H, CAM_STRIDE);
+        draw_camera_tile_fit(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                             osd_live, CAM_W, CAM_H, CAM_STRIDE);
         return;
     }
 
     if (strcmp(g_tiles[idx].name, "VPSS") == 0 && vpss_live) {
-        draw_camera_tile(dst, stride, x + 12, y + 12, w - 24, h - 24,
-                         vpss_live, CAM_W, CAM_H, CAM_STRIDE);
-        draw_vpss_showcase_labels(dst, stride, x + 12, y + 12, w - 24, h - 24);
+        int vx = 0, vy = 0, vw = 0, vh = 0;
+        if (draw_camera_tile_fit_rect(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                                      vpss_live, CAM_W, CAM_H, CAM_STRIDE,
+                                      &vx, &vy, &vw, &vh) == 0) {
+            draw_vpss_showcase_labels(dst, stride, vx, vy, vw, vh);
+        }
         return;
     }
 
     if (strcmp(g_tiles[idx].name, "RESIZE_RGA") == 0 && resize_live) {
-        draw_camera_tile(dst, stride, x + 12, y + 12, w - 24, h - 24,
-                         resize_live, CAM_W, CAM_H, CAM_STRIDE);
+        draw_camera_tile_fit(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                             resize_live, CAM_W, CAM_H, CAM_STRIDE);
         return;
     }
 
     if (strcmp(g_tiles[idx].name, "CSC_RGA") == 0 && csc_rga_live) {
-        draw_camera_tile(dst, stride, x + 12, y + 12, w - 24, h - 24,
-                         csc_rga_live, CAM_W, CAM_H, CAM_STRIDE);
+        draw_camera_tile_fit(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                             csc_rga_live, CAM_W, CAM_H, CAM_STRIDE);
         return;
     }
 
     if (strcmp(g_tiles[idx].name, "TRANSFORM") == 0 && transform_live) {
-        draw_camera_tile(dst, stride, x + 12, y + 12, w - 24, h - 24,
-                         transform_live, CAM_W, CAM_H, CAM_STRIDE);
+        draw_camera_tile_fit(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                             transform_live, CAM_W, CAM_H, CAM_STRIDE);
         return;
     }
 
     if (strcmp(g_tiles[idx].name, "CAP_DEHAZE") == 0 && (cam || cap_live)) {
-        draw_nv12_rgb_comparison(dst, stride, x + 12, y + 12, w - 24, h - 24,
-                                 cam, cap_live, "LEFT: VI RAW INPUT", "RIGHT: CAP_DEHAZE OUTPUT");
+        draw_dehaze_showcase(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                             cam, cap_live,
+                             "CAP_DEHAZE：实时去雾前后对比",
+                             "数据流：VI采集NV12，转换成RGB后送入CAP_DEHAZE。",
+                             "为什么这样做：快速估计雾气透射率和空气光，突出低能见度场景细节。",
+                             "PARAM guided_r=24 t0=0.12 beta=0.121/0.960/-0.780",
+                             "RIGHT: CAP_DEHAZE OUTPUT");
         return;
     }
 
     if (strcmp(g_tiles[idx].name, "DCP_FAST_DEHAZE") == 0 && (cam || dcp_live)) {
-        draw_nv12_rgb_comparison(dst, stride, x + 12, y + 12, w - 24, h - 24,
-                                 cam, dcp_live, "LEFT: VI RAW INPUT", "RIGHT: DCP_FAST OUTPUT");
+        draw_dehaze_showcase(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                             cam, dcp_live,
+                             "DCP_FAST_DEHAZE：暗通道去雾前后对比",
+                             "数据流：VI采集NV12，转换成RGB后送入DCP_FAST_DEHAZE。",
+                             "为什么这样做：暗通道先验估计雾浓度，用快速细化保持实时展示。",
+                             "PARAM patch=15 omega=0.95 t0=0.12 refine=0.5",
+                             "RIGHT: DCP_FAST OUTPUT");
         return;
     }
 
@@ -2348,8 +2679,8 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
     }
 
     if (strcmp(g_tiles[idx].name, "CLAHE") == 0 && clahe_live) {
-        draw_camera_tile(dst, stride, x + 12, y + 12, w - 24, h - 24,
-                         clahe_live, CAM_W, CAM_H, CAM_STRIDE);
+        draw_camera_tile_fit(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                             clahe_live, CAM_W, CAM_H, CAM_STRIDE);
         return;
     }
 
@@ -2360,32 +2691,32 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
     }
 
     if (strcmp(g_tiles[idx].name, "PANO") == 0 && (g_pano_sample.loaded || pano_out)) {
-        draw_pano_comparison(dst, stride, x + 12, y + 12, w - 24, h - 24, pano_out);
+        draw_pano_showcase(dst, stride, x + 12, y + 12, w - 24, h - 24, pano_out);
         return;
     }
 
     if (strcmp(g_tiles[idx].name, "EDOF_CL") == 0 && (edof_in0 || edof_in1 || edof_out)) {
-        draw_edof_comparison(dst, stride, x + 12, y + 12, w - 24, h - 24,
-                             edof_in0, edof_in1, edof_out);
+        draw_edof_showcase(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                           edof_in0, edof_in1, edof_out);
         return;
     }
 
     if (strcmp(g_tiles[idx].name, "DUALVIEW") == 0 &&
         (dual_in0 || dual_in1 || dual_sbs || dual_lbl)) {
-        draw_dualview_comparison(dst, stride, x + 12, y + 12, w - 24, h - 24,
-                                 dual_in0, dual_in1, dual_sbs, dual_lbl);
+        draw_dualview_showcase(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                               dual_in0, dual_in1, dual_sbs, dual_lbl);
         return;
     }
 
     if (strcmp(g_tiles[idx].name, "STEREO_3D") == 0 && stereo_live) {
-        draw_camera_tile(dst, stride, x + 12, y + 12, w - 24, h - 24,
-                         stereo_live, CAM_W, CAM_H, CAM_STRIDE);
+        draw_camera_tile_fit(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                             stereo_live, CAM_W, CAM_H, CAM_STRIDE);
         return;
     }
 
     if (strcmp(g_tiles[idx].name, "VI") == 0 && cam) {
-        draw_camera_tile(dst, stride, x + 12, y + 12, w - 24, h - 24,
-                         cam, CAM_W, CAM_H, CAM_STRIDE);
+        draw_camera_tile_fit(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                             cam, CAM_W, CAM_H, CAM_STRIDE);
         return;
     }
 
@@ -2462,7 +2793,7 @@ static void draw_main_showcase(uint8_t *canvas, int stride, int frame,
                   strlen(g_tiles[idx].name) > 11 ? 1 : 2, 170, 255, 220);
         draw_text(canvas, stride, x + 786, y + h - 42, tile_status_text(g_tiles[idx].status), 2, sr, sg, sb);
     } else if (cam) {
-        draw_camera_tile(canvas, stride, 42, 130, 996, 560, cam, CAM_W, CAM_H, CAM_STRIDE);
+        draw_camera_tile_fit(canvas, stride, 42, 130, 996, 560, cam, CAM_W, CAM_H, CAM_STRIDE);
         draw_text(canvas, stride, 52, 704, "LIVE VISIBLE CAMERA  VI > VPSS > WALL", 2, 190, 255, 230);
     } else {
         draw_text(canvas, stride, 294, 336, "CAMERA OFFLINE", 4, 255, 180, 80);
@@ -3259,7 +3590,9 @@ static int update_csc_cl_bind_flow_overlay(uint64_t front_count, uint64_t back_c
     char bind_line2[180];
     char kernel_text[64];
     char queue_text[64];
+    char runtime[128];
 
+    format_runtime_status(runtime, sizeof(runtime));
     if (kernel_ms >= 0.0) {
         snprintf(kernel_text, sizeof(kernel_text), "KERNEL %.2f ms", kernel_ms);
     } else {
@@ -3270,8 +3603,9 @@ static int update_csc_cl_bind_flow_overlay(uint64_t front_count, uint64_t back_c
     } else {
         snprintf(queue_text, sizeof(queue_text), "QUEUE N/A");
     }
-    snprintf(count_line, sizeof(count_line), "FRAMES  CL0=%llu  CL1=%llu",
-             (unsigned long long)front_count, (unsigned long long)back_count);
+    snprintf(count_line, sizeof(count_line), "FRAMES  CL0=%llu  CL1=%llu  %s",
+             (unsigned long long)front_count, (unsigned long long)back_count,
+             runtime);
     snprintf(bind_line1, sizeof(bind_line1), "VI0.%s -> CSC_CL%d.%s -> CSC_CL%d.%s",
              g_bind_vi_src_port ? g_bind_vi_src_port : "output0",
              LIVE_CSC_CL_GRP,
@@ -3366,14 +3700,10 @@ static int update_conv_cl_quad_overlay(uint64_t vi_count,
     char usage_line[192];
     char bind_line1[192];
     char bind_line2[192];
-    char gpu_text[24];
-    char rga_text[24];
     char cl_text[48];
+    char runtime[128];
 
-    snprintf(gpu_text, sizeof(gpu_text), g_perf.gpu_available ? "%.0f%%" : "N/A",
-             g_perf.gpu_percent);
-    snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
-             g_perf.rga_percent);
+    format_runtime_status(runtime, sizeof(runtime));
     if (kernel_ms >= 0.0) {
         snprintf(cl_text, sizeof(cl_text), "%.2f/%.2fms",
                  kernel_ms, queue_ms >= 0.0 ? queue_ms : 0.0);
@@ -3386,8 +3716,8 @@ static int update_conv_cl_quad_overlay(uint64_t vi_count,
              g_conv_cl_effects[1].name, (unsigned long long)counts[1],
              g_conv_cl_effects[2].name, (unsigned long long)counts[2],
              g_conv_cl_effects[3].name, (unsigned long long)counts[3]);
-    snprintf(status_line, sizeof(status_line), "VI=%llu  CPU %.0f%%  GPU %s  RGA %s  CL %s",
-             (unsigned long long)vi_count, g_perf.cpu_percent, gpu_text, rga_text, cl_text);
+    snprintf(status_line, sizeof(status_line), "VI=%llu  %s  CL %s",
+             (unsigned long long)vi_count, runtime, cl_text);
     snprintf(usage_line, sizeof(usage_line), "VPSS四路同源同尺寸；画面差异只来自四个CONV_CL卷积核。");
     snprintf(bind_line1, sizeof(bind_line1), "VI0.%s -> VPSS%d.%s -> CSC_RGA[%d..%d] -> CONV_CL[%d..%d]",
              g_bind_vi_src_port ? g_bind_vi_src_port : "output",
@@ -3486,15 +3816,11 @@ static int update_transform_quad_overlay(uint64_t vi_count,
     char bind_line1[192];
     char bind_line2[192];
     char lut_line[160];
-    char gpu_text[24];
-    char rga_text[24];
+    char runtime[128];
 
-    snprintf(gpu_text, sizeof(gpu_text), g_perf.gpu_available ? "%.0f%%" : "N/A",
-             g_perf.gpu_percent);
-    snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
-             g_perf.rga_percent);
-    snprintf(status_line, sizeof(status_line), "VI=%llu  CPU %.0f%%  GPU %s  RGA %s  LUT UPDATE=%d",
-             (unsigned long long)vi_count, g_perf.cpu_percent, gpu_text, rga_text,
+    format_runtime_status(runtime, sizeof(runtime));
+    snprintf(status_line, sizeof(status_line), "VI=%llu  %s  LUT UPDATE=%d",
+             (unsigned long long)vi_count, runtime,
              frame);
     snprintf(count_line, sizeof(count_line), "OUT  %s=%llu  %s=%llu  %s=%llu  %s=%llu",
              g_transform_effects[0].name, (unsigned long long)counts[0],
@@ -3594,16 +3920,12 @@ static int update_stereo_3d_overlay(uint64_t vi_count, uint64_t lbl_count,
     char count_line[160];
     char bind_line1[192];
     char bind_line2[192];
-    char gpu_text[24];
-    char rga_text[24];
+    char runtime[128];
 
-    snprintf(gpu_text, sizeof(gpu_text), g_perf.gpu_available ? "%.0f%%" : "N/A",
-             g_perf.gpu_percent);
-    snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
-             g_perf.rga_percent);
+    format_runtime_status(runtime, sizeof(runtime));
     snprintf(status_line, sizeof(status_line),
-             "VI=%llu  CPU %.0f%%  GPU %s  RGA %s  RED/BLUE INPUTS",
-             (unsigned long long)vi_count, g_perf.cpu_percent, gpu_text, rga_text);
+             "VI=%llu  %s  RED/BLUE INPUTS",
+             (unsigned long long)vi_count, runtime);
     snprintf(count_line, sizeof(count_line), "OUT  LINE_BY_LINE=%llu  SIDE_BY_SIDE=%llu",
              (unsigned long long)lbl_count, (unsigned long long)sbs_count);
     snprintf(bind_line1, sizeof(bind_line1),
@@ -3687,19 +4009,13 @@ static int update_npu_vdec_overlay(const npu_demo_result_t *det,
     char flow2[224];
     char count_line[192];
     char resource_line[160];
-    char cpu_text[24];
-    char gpu_text[24];
-    char rga_text[24];
+    char runtime[128];
     int object_count = det ? det->object_count : 0;
 
     if (object_count < 0) object_count = 0;
     if (object_count > NPU_DEMO_MAX_DRAW_OBJECTS) object_count = NPU_DEMO_MAX_DRAW_OBJECTS;
 
-    snprintf(cpu_text, sizeof(cpu_text), "%.0f%%", g_perf.cpu_percent);
-    snprintf(gpu_text, sizeof(gpu_text), g_perf.gpu_available ? "%.0f%%" : "N/A",
-             g_perf.gpu_percent);
-    snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
-             g_perf.rga_percent);
+    format_runtime_status(runtime, sizeof(runtime));
     snprintf(title, sizeof(title), "NPU：H264视频检测，OSD实时画框");
     snprintf(flow1, sizeof(flow1),
              "数据流：H264文件 -> VDEC解码NV12 -> RGA转640x640 RGB -> NPU(YOLOv5)");
@@ -3714,9 +4030,8 @@ static int update_npu_vdec_overlay(const npu_demo_result_t *det,
              (unsigned long long)vmix_count,
              object_count);
     snprintf(resource_line, sizeof(resource_line),
-             "CPU %s  GPU %s  RGA %s  SRC %s",
-             cpu_text, gpu_text, rga_text,
-             stream_path ? stream_path : "h264");
+             "SRC %s  %s",
+             stream_path ? stream_path : "h264", runtime);
 
     if (update_osd_rect_region(4, 34, panel_y, 1012, 340, 5, 10, 18, 226) != 0) return -1;
     if (update_osd_utf8_text_region(5, 66, panel_y + 24, 30, 160, 255, 220,
@@ -3816,10 +4131,8 @@ static int setup_display_vmix_osd(int dstride, size_t display_size, int input_co
     vmix.output_pool_id = DISPLAY_VMIX_OUTPUT_POOL;
     vmix.primary_index = -1;
     if (input_count == VPSS_DEMO_OUTPUTS) {
-        int cell = VPSS_TILE_W;
-        int gap = 40;
-        int start_x = (SCREEN_W - cell * 2 - gap) / 2;
-        int start_y = 300;
+        int start_x = 0, start_y = 0, cell = 0, gap = 0;
+        vpss_bind_layout(&start_x, &start_y, &cell, &gap);
         for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
             vmix.channels[i].enabled = 1;
             vmix.channels[i].x = start_x + (i % 2) * (cell + gap);
@@ -3916,6 +4229,14 @@ static int module_page_number(const char *name) {
         if (strcasecmp(g_module_pages[i], name) == 0) return (int)i + 1;
     }
     return 1;
+}
+
+static int default_page_index(const char *name) {
+    if (!name) return -1;
+    for (size_t i = 0; i < ARRAY_SIZE(g_default_pages); ++i) {
+        if (strcasecmp(g_default_pages[i], name) == 0) return (int)i;
+    }
+    return -1;
 }
 
 static void fill_live_rga_attr(MEDIA_RGA_GRP_ATTR *attr, const rga_demo_op_t *op) {
@@ -5831,37 +6152,33 @@ static int run_only_npu_vdec_demo(int dstride, size_t display_size) {
             uint64_t post_rga_count = 0;
             uint64_t vmix_count = 0;
             char perf[180];
-            char gpu_text[24];
-            char rga_text[24];
+            char runtime[128];
             update_perf_status();
             (void)MEDIA_SYS_GetModuleFrameCount("VDEC", NPU_DEMO_VDEC_CHN, &vdec_count);
             (void)MEDIA_SYS_GetModuleFrameCount("RGA", NPU_DEMO_PRE_RGA_GRP, &pre_rga_count);
             (void)MEDIA_SYS_GetModuleFrameCount("NPU", NPU_DEMO_NPU_GRP, &npu_count);
             (void)MEDIA_SYS_GetModuleFrameCount("RGA", NPU_DEMO_POST_RGA_GRP, &post_rga_count);
             (void)MEDIA_SYS_GetModuleFrameCount("VMIX", DISPLAY_VMIX_GRP, &vmix_count);
-            snprintf(gpu_text, sizeof(gpu_text), g_perf.gpu_available ? "%.0f%%" : "N/A",
-                     g_perf.gpu_percent);
-            snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
-                     g_perf.rga_percent);
-            snprintf(perf, sizeof(perf), "PAGE %02d/%02d DET %d VDEC %llu NPU %llu CPU %.0f%% GPU %s RGA %s",
+            format_runtime_status(runtime, sizeof(runtime));
+            snprintf(perf, sizeof(perf), "PAGE %02d/%02d DET %d VDEC %llu NPU %llu %s",
                      module_page_number("NPU"), (int)ARRAY_SIZE(g_module_pages),
                      last_det.object_count,
                      (unsigned long long)vdec_count,
                      (unsigned long long)npu_count,
-                     g_perf.cpu_percent, gpu_text, rga_text);
+                     runtime);
             (void)update_display_osd_text("NPU  VDEC RGA YOLO VMIX OSD", perf);
             (void)update_npu_vdec_overlay(&last_det, vdec_count, pre_rga_count,
                                           npu_count, post_rga_count, vmix_count,
                                           NPU_DEMO_H264_PATH, frame);
             if ((frame % FPS) == 0) {
-                printf("NPU vdec=%llu pre_rga=%llu npu=%llu post_rga=%llu vmix=%llu det=%d cpu=%.0f%% gpu=%s rga=%s\n",
+                printf("NPU vdec=%llu pre_rga=%llu npu=%llu post_rga=%llu vmix=%llu det=%d %s\n",
                        (unsigned long long)vdec_count,
                        (unsigned long long)pre_rga_count,
                        (unsigned long long)npu_count,
                        (unsigned long long)post_rga_count,
                        (unsigned long long)vmix_count,
                        last_det.object_count,
-                       g_perf.cpu_percent, gpu_text, rga_text);
+                       runtime);
             }
         }
 
@@ -6387,7 +6704,7 @@ static int update_vpss_dynamic_attrs(int frame) {
 
 static int setup_live_vpss(void) {
     if (MEDIA_POOL_Create(VPSS_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
-    if (MEDIA_POOL_Create(VPSS_OUTPUT_POOL, CAM_FRAME_SIZE, 8) != 0) {
+    if (MEDIA_POOL_Create(VPSS_OUTPUT_POOL, VPSS_TILE_NV12_SIZE, VPSS_DEMO_OUTPUTS * 4) != 0) {
         MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
         return -1;
     }
@@ -6420,6 +6737,11 @@ static void cleanup_live_vpss(int enabled) {
     MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
     MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
     MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+    for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
+        free(g_vpss_preview_frames[i]);
+        g_vpss_preview_frames[i] = NULL;
+        g_vpss_preview_ready[i] = 0;
+    }
 }
 
 static void compose_vpss_showcase(uint8_t *dst, uint8_t **frames, const int *ready) {
@@ -6433,7 +6755,7 @@ static void compose_vpss_showcase(uint8_t *dst, uint8_t **frames, const int *rea
         fill_rect_nv12_frame(dst, CAM_W, CAM_H, CAM_STRIDE, x, y, cell_w, cell_h, 8, 16, 28);
         if (ready[i] && frames[i]) {
             draw_nv12_to_frame(dst, CAM_W, CAM_H, CAM_STRIDE, x + 4, y + 4, cell_w - 8, cell_h - 8,
-                               frames[i], CAM_W, CAM_H, CAM_STRIDE);
+                               frames[i], VPSS_TILE_W, VPSS_TILE_H, VPSS_TILE_NV12_STRIDE);
         }
     }
 }
@@ -6441,12 +6763,11 @@ static void compose_vpss_showcase(uint8_t *dst, uint8_t **frames, const int *rea
 static int process_live_vpss(const uint8_t *src, uint8_t *dst) {
     MEDIA_BUFFER in = {-1, -1};
     MEDIA_BUFFER out = {-1, -1};
-    static uint8_t *outputs[VPSS_DEMO_OUTPUTS] = {NULL};
-    int ready[VPSS_DEMO_OUTPUTS] = {0};
     int ret = -1;
     for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
-        if (!outputs[i]) outputs[i] = malloc(CAM_FRAME_SIZE);
-        if (!outputs[i]) return -1;
+        if (!g_vpss_preview_frames[i]) g_vpss_preview_frames[i] = malloc(VPSS_TILE_NV12_SIZE);
+        if (!g_vpss_preview_frames[i]) return -1;
+        g_vpss_preview_ready[i] = 0;
     }
     if (MEDIA_POOL_GetBuffer(VPSS_INPUT_POOL, &in) != 0) return -1;
     if (copy_to_buffer(in, src, CAM_FRAME_SIZE) != 0) {
@@ -6461,13 +6782,15 @@ static int process_live_vpss(const uint8_t *src, uint8_t *dst) {
         out.pool_id = -1;
         out.index = -1;
         if (MEDIA_VPSS_Chn_GetFrame(LIVE_VPSS_GRP, i, &out, 20) == 0) {
-            if (copy_from_buffer(out, outputs[i], CAM_FRAME_SIZE) == 0) ready[i] = 1;
+            if (copy_from_buffer(out, g_vpss_preview_frames[i], VPSS_TILE_NV12_SIZE) == 0) {
+                g_vpss_preview_ready[i] = 1;
+            }
             MEDIA_VPSS_Chn_ReleaseFrame(LIVE_VPSS_GRP, i, out);
         }
     }
     for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
-        if (ready[i]) {
-            compose_vpss_showcase(dst, outputs, ready);
+        if (g_vpss_preview_ready[i]) {
+            compose_vpss_showcase(dst, g_vpss_preview_frames, g_vpss_preview_ready);
             ret = 0;
             break;
         }
@@ -8286,7 +8609,9 @@ static int load_loop_assets(void) {
                 fprintf(stderr, "warning: failed to load loop asset %s\n", loop->paths[j]);
             }
         }
-        if (loop->loaded_count > 0) set_tile_status(loop->tile_name, TILE_LOOP);
+        if (loop->loaded_count > 0 && default_page_index(loop->tile_name) >= 0) {
+            set_tile_status(loop->tile_name, TILE_LOOP);
+        }
     }
     return total;
 }
@@ -8455,11 +8780,10 @@ static int run_self_test(void) {
 
 static void mark_showcase_modules(void) {
     for (size_t i = 0; i < sizeof(g_tiles) / sizeof(g_tiles[0]); ++i) {
-        g_tiles[i].active = 1;
-        g_tiles[i].status = TILE_SYNTH;
+        int in_default = default_page_index(g_tiles[i].name) >= 0;
+        g_tiles[i].active = in_default;
+        g_tiles[i].status = in_default ? TILE_SYNTH : TILE_OFFLINE;
     }
-    set_tile_status("RTSP_SEND", TILE_OFFLINE);
-    set_tile_status("RTSP_RECV", TILE_OFFLINE);
 }
 
 static void probe_modules(void) {
@@ -8776,73 +9100,72 @@ static void update_perf_status(void) {
     }
 }
 
-static void draw_health_line(uint8_t *canvas, int stride, int y, const char *left, int ok) {
-    fill_rect_nv12(canvas, stride, 52, y - 6, 976, 34, ok ? 3 : 34, ok ? 32 : 12, ok ? 24 : 8);
-    draw_text(canvas, stride, 64, y, ok ? "OK" : "NO", 2,
-              ok ? 150 : 255, ok ? 255 : 150, ok ? 190 : 90);
-    draw_text(canvas, stride, 130, y, left, 2, 190, 230, 255);
-}
+static void format_runtime_status(char *buf, size_t len) {
+    char gpu_text[24];
+    char rga_text[24];
 
-static void draw_page_label(uint8_t *canvas, int stride, const char *title,
-                            int page, int total_pages) {
-    char label[96];
-    char perf[96];
-    fill_rect_nv12(canvas, stride, 28, 112, 1024, 70, 7, 13, 24);
-    stroke_rect_nv12(canvas, stride, 28, 112, 1024, 70, 2, 0, 160, 255);
-    draw_text(canvas, stride, 48, 124, title, 2, 190, 230, 255);
-    snprintf(label, sizeof(label), "PAGE %02d/%02d", page + 1, total_pages);
-    draw_text(canvas, stride, 838, 124, label, 2, 160, 255, 220);
     if (g_perf.gpu_available) {
-        snprintf(perf, sizeof(perf), "CPU %.0f%%   GPU %.0f%%", g_perf.cpu_percent, g_perf.gpu_percent);
+        snprintf(gpu_text, sizeof(gpu_text), "%.0f%%", g_perf.gpu_percent);
     } else {
-        snprintf(perf, sizeof(perf), "CPU %.0f%%   GPU N/A", g_perf.cpu_percent);
+        snprintf(gpu_text, sizeof(gpu_text), "N/A");
     }
-    draw_text(canvas, stride, 48, 154, perf, 2, 255, 230, 120);
+    if (g_perf.rga_available) {
+        snprintf(rga_text, sizeof(rga_text), "%.0f%%", g_perf.rga_percent);
+    } else {
+        snprintf(rga_text, sizeof(rga_text), "N/A");
+    }
+
+    snprintf(buf, len, "CPU %.0f%%  GPU %s  RGA %s",
+             g_perf.cpu_percent, gpu_text, rga_text);
 }
 
-static void draw_module_grid_page(uint8_t *canvas, int stride, int frame,
-                                  const char *title, int page, int total_pages,
-                                  const char **names, int count,
-                                  const display_refs_t *refs) {
-    draw_page_label(canvas, stride, title, page, total_pages);
-
-    int cols = count <= 4 ? 2 : 3;
-    int rows = (count + cols - 1) / cols;
-    int gap = 14;
-    int area_x = 28;
-    int area_y = 204;
-    int area_w = 1024;
-    int area_h = 1460;
-    int tile_w = (area_w - gap * (cols - 1)) / cols;
-    int tile_h = (area_h - gap * (rows - 1)) / rows;
-
-    for (int i = 0; i < count; ++i) {
-        int idx = find_tile_index(names[i]);
-        if (idx < 0) continue;
-        int cx = area_x + (i % cols) * (tile_w + gap);
-        int cy = area_y + (i / cols) * (tile_h + gap);
-        draw_effect_tile(canvas, stride, cx, cy, tile_w, tile_h, idx, frame,
-                         g_tiles[idx].active, refs->osd_live, refs->resize_live,
-                         refs->vpss_live, refs->csc_rga_live, refs->transform_live,
-                         refs->cap_live, refs->dcp_live, refs->conv_live,
-                         refs->clahe_live, refs->cam, refs->retinex_live,
-                         refs->pano_out, refs->edof_in0, refs->edof_in1,
-                         refs->edof_out, refs->stereo_live, refs->dual_in0,
-                         refs->dual_in1, refs->dual_sbs, refs->dual_lbl);
-    }
+static const char *module_flow_note(const char *name) {
+    if (!name) return "数据流：模块输入 -> 算法处理 -> 显示输出。";
+    if (strcasecmp(name, "VI") == 0) return "数据流：摄像头VI采集NV12，送入显示链路实时上屏。";
+    if (strcasecmp(name, "VPSS") == 0) return "数据流：VI输入进入VPSS，多路裁剪缩放后同屏展示。";
+    if (strcasecmp(name, "VO") == 0) return "数据流：合成NV12画面送入VO，输出到MIPI/DSI屏。";
+    if (strcasecmp(name, "OSD") == 0) return "数据流：视频帧进入OSD，叠加图层后再显示。";
+    if (strcasecmp(name, "RGA") == 0) return "数据流：VI输入进入RGA，硬件完成裁剪缩放旋转。";
+    if (strcasecmp(name, "RESIZE_RGA") == 0) return "数据流：VI输入进入RESIZE_RGA，硬件裁剪放大后输出。";
+    if (strcasecmp(name, "CSC_RGA") == 0) return "数据流：NV12和ARGB互转，展示RGA颜色转换链路。";
+    if (strcasecmp(name, "CSC_CL") == 0) return "数据流：NV12进入OpenCL，GPU完成颜色矩阵转换。";
+    if (strcasecmp(name, "CLAHE") == 0) return "数据流：原始输入和CLAHE增强输出同屏对比。";
+    if (strcasecmp(name, "RETINEX") == 0) return "数据流：原始输入和RETINEX光照校正输出同屏对比。";
+    if (strcasecmp(name, "CAP_DEHAZE") == 0) return "数据流：VI转RGB后送CAP_DEHAZE，左右对比去雾效果。";
+    if (strcasecmp(name, "DCP_FAST_DEHAZE") == 0) return "数据流：VI转RGB后送DCP_FAST_DEHAZE，左右对比去雾效果。";
+    if (strcasecmp(name, "THERMAL") == 0) return "数据流：同一红外灰度图映射到多种热成像伪彩模式。";
+    if (strcasecmp(name, "CONV_CL") == 0) return "数据流：四路同源输入进入CONV_CL，GPU并行卷积。";
+    if (strcasecmp(name, "TRANSFORM") == 0) return "数据流：四路同源输入通过LUT做畸变和透视变换。";
+    if (strcasecmp(name, "EDOF_CL") == 0) return "数据流：近焦图和远焦图进入EDOF_CL，输出融合清晰图。";
+    if (strcasecmp(name, "DUALVIEW") == 0) return "数据流：两路RGB输入生成左右并排和逐行交错输出。";
+    if (strcasecmp(name, "STEREO_3D") == 0) return "数据流：蓝/红双输入生成逐行交错和左右并排3D输出。";
+    if (strcasecmp(name, "PANO") == 0) return "数据流：六路图像按PTO标定查表拼接成全景输出。";
+    if (strcasecmp(name, "NPU") == 0) return "数据流：H264解码，经RGA预处理后送NPU检测并叠框。";
+    return "数据流：模块输入 -> 算法处理 -> 显示输出。";
 }
 
 static void draw_single_module_page(uint8_t *canvas, int stride, int frame,
                                     const char *title, int page, int total_pages,
                                     const char *name, const display_refs_t *refs) {
     int idx = find_tile_index(name);
-    draw_page_label(canvas, stride, title, page, total_pages);
-    fill_rect_nv12(canvas, stride, 28, 204, 1024, 1460, 7, 13, 24);
+    char runtime[128];
+    char page_text[64];
+    (void)title;
+
+    format_runtime_status(runtime, sizeof(runtime));
+    fill_rect_nv12(canvas, stride, 0, 0, SCREEN_W, SCREEN_H, 4, 9, 16);
+    fill_rect_nv12(canvas, stride, 0, 0, SCREEN_W, 96, 5, 10, 18);
+    fill_rect_nv12(canvas, stride, 0, SCREEN_H - 112, SCREEN_W, 112, 5, 10, 18);
 
     if (idx >= 0) {
         uint8_t sr, sg, sb;
         tile_status_color(g_tiles[idx].status, &sr, &sg, &sb);
-        draw_tile_content(canvas, stride, 52, 232, 976, 1332,
+        draw_text(canvas, stride, 32, 24, g_tiles[idx].name,
+                  strlen(g_tiles[idx].name) > 11 ? 2 : 3, 160, 255, 220);
+        snprintf(page_text, sizeof(page_text), "PAGE %02d/%02d", page + 1, total_pages);
+        draw_text(canvas, stride, 838, 28, page_text, 2, 160, 255, 220);
+        draw_text(canvas, stride, 32, SCREEN_H - 72, runtime, 2, 255, 230, 120);
+        draw_tile_content(canvas, stride, 28, 118, 1024, 1660,
                           idx, frame, refs->cam, refs->osd_live, refs->resize_live,
                           refs->vpss_live, refs->csc_rga_live, refs->transform_live,
                           refs->cap_live, refs->dcp_live, refs->conv_live,
@@ -8850,72 +9173,50 @@ static void draw_single_module_page(uint8_t *canvas, int stride, int frame,
                           refs->edof_in0, refs->edof_in1, refs->edof_out,
                           refs->stereo_live, refs->dual_in0, refs->dual_in1,
                           refs->dual_sbs, refs->dual_lbl);
-        fill_rect_nv12(canvas, stride, 52, 1590, 976, 46, 0, 0, 0);
-        draw_text(canvas, stride, 72, 1604, "SINGLE MODULE", 2, 190, 230, 255);
-        draw_text(canvas, stride, 464, 1604, g_tiles[idx].name,
-                  strlen(g_tiles[idx].name) > 11 ? 1 : 2, 170, 255, 220);
-        draw_text(canvas, stride, 838, 1604, tile_status_text(g_tiles[idx].status), 2, sr, sg, sb);
-        stroke_rect_nv12(canvas, stride, 28, 204, 1024, 1460, 4, sr, sg, sb);
+        draw_text(canvas, stride, 838, SCREEN_H - 40, tile_status_text(g_tiles[idx].status),
+                  2, sr, sg, sb);
+        draw_utf8_text(canvas, stride, 32, SCREEN_H - 40, module_flow_note(g_tiles[idx].name),
+                       20, 210, 235, 255);
     } else {
+        draw_text(canvas, stride, 32, 24, "UNKNOWN MODULE", 3, 255, 180, 80);
         draw_text(canvas, stride, 320, 850, "UNKNOWN MODULE", 4, 255, 180, 80);
-        stroke_rect_nv12(canvas, stride, 28, 204, 1024, 1460, 4, 255, 120, 90);
     }
 }
 
-static void draw_dashboard(uint8_t *canvas, int stride, int frame, int rotate_main,
-                           const char *only_tile, const uint8_t *cam, const uint8_t *osd_live,
-                           const uint8_t *resize_live, const uint8_t *vpss_live,
-                           const uint8_t *csc_rga_live, const uint8_t *transform_live,
-                           const uint8_t *cap_live, const uint8_t *dcp_live,
-                           const uint8_t *conv_live, const uint8_t *clahe_live,
-                           const uint8_t *retinex_live,
-                           const uint8_t *pano_out,
-                           const uint8_t *edof_in0, const uint8_t *edof_in1,
-                           const uint8_t *edof_out, const uint8_t *stereo_live,
-                           const uint8_t *dual_in0, const uint8_t *dual_in1,
-                           const uint8_t *dual_sbs, const uint8_t *dual_lbl) {
-    fill_rect_nv12(canvas, stride, 0, 0, SCREEN_W, SCREEN_H, 4, 9, 16);
-    fill_rect_nv12(canvas, stride, 0, 0, SCREEN_W, 90, 10, 18, 34);
-    draw_text(canvas, stride, 28, 24, "RKTOHI VISUAL ENGINE", 4, 160, 255, 220);
-    draw_text(canvas, stride, 760, 26, "1080X1920", 2, 90, 180, 255);
-
+static void draw_showcase_page(uint8_t *canvas, int stride, int frame, int rotate_main,
+                               const char *only_tile, const uint8_t *cam, const uint8_t *osd_live,
+                               const uint8_t *resize_live, const uint8_t *vpss_live,
+                               const uint8_t *csc_rga_live, const uint8_t *transform_live,
+                               const uint8_t *cap_live, const uint8_t *dcp_live,
+                               const uint8_t *conv_live, const uint8_t *clahe_live,
+                               const uint8_t *retinex_live,
+                               const uint8_t *pano_out,
+                               const uint8_t *edof_in0, const uint8_t *edof_in1,
+                               const uint8_t *edof_out, const uint8_t *stereo_live,
+                               const uint8_t *dual_in0, const uint8_t *dual_in1,
+                               const uint8_t *dual_sbs, const uint8_t *dual_lbl) {
     display_refs_t refs = {
         cam, osd_live, resize_live, vpss_live, csc_rga_live, transform_live,
         cap_live, dcp_live, conv_live, clahe_live, retinex_live, pano_out,
         edof_in0, edof_in1, edof_out, stereo_live, dual_in0, dual_in1,
         dual_sbs, dual_lbl
     };
-    int total_pages = (int)ARRAY_SIZE(g_module_pages);
-
     if (only_tile) {
         draw_single_module_page(canvas, stride, frame, "MANUAL MODULE SCREEN",
                                 0, 1, only_tile, &refs);
     } else {
+        int total_pages = (int)ARRAY_SIZE(g_default_pages);
         int page = rotate_main ?
             (frame / (FPS * PAGE_ROTATE_SECONDS)) % total_pages : 0;
-        const char *name = g_module_pages[page];
-        draw_single_module_page(canvas, stride, frame, "MODULE SCREEN",
-                                page, total_pages, name, &refs);
+        const char *name = g_default_pages[page];
+        if (strcasecmp(name, "VPSS") == 0) {
+            draw_vpss_bind_style_page(canvas, stride, frame, page, total_pages);
+            return;
+        } else {
+            draw_single_module_page(canvas, stride, frame, "SHOWCASE SCREEN",
+                                    page, total_pages, name, &refs);
+        }
     }
-
-    fill_rect_nv12(canvas, stride, 28, 1690, 1024, 190, 5, 10, 18);
-    stroke_rect_nv12(canvas, stride, 28, 1690, 1024, 190, 2, 0, 220, 180);
-    char line[96];
-    snprintf(line, sizeof(line), "CAM %s FRAMES %d  ASSETS %d/%d  ACTIVE %d  PAGES %d",
-             g_health.camera_running ? "OK" : "NO",
-             g_health.camera_frames,
-             g_health.loop_loaded,
-             g_health.loop_expected,
-             active_module_count(),
-             (int)ARRAY_SIZE(g_module_pages));
-    draw_health_line(canvas, stride, 1718, line, g_health.camera_running);
-    snprintf(line, sizeof(line), "LICENSE %s  DRM %s  MODEL %s",
-             g_health.license_ok ? "OK" : "NO",
-             g_health.drm_ok ? "OK" : "NO",
-             g_health.npu_model_ok ? "OK" : "NO");
-    draw_health_line(canvas, stride, 1764, line,
-                     g_health.license_ok && g_health.drm_ok && g_health.npu_model_ok);
-    draw_text(canvas, stride, 52, 1816, "MODULE PAGES  ONE MODULE PER SCREEN", 2, 255, 230, 120);
 }
 
 static void draw_solid_test(uint8_t *canvas, int stride) {
@@ -9038,6 +9339,10 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    if (!only_tile && !solid_test && !heavy_probe) {
+        return run_default_only_loop(argv[0], rotate_main);
+    }
+
     const int dstride = ALIGN_UP(SCREEN_W, 64);
     const size_t display_size = (size_t)dstride * SCREEN_H * 3 / 2;
 
@@ -9083,7 +9388,7 @@ int main(int argc, char **argv) {
         live_vpss_ok = 1;
     }
     int live_csc_rga_ok = 0;
-    if (!solid_test && !only_tile &&
+    if (!solid_test && !only_tile && default_page_index("CSC_RGA") >= 0 &&
         setup_live_csc_rga() == 0) {
         live_csc_rga_ok = 1;
     }
@@ -9100,12 +9405,12 @@ int main(int argc, char **argv) {
     }
     int live_conv_ok = 0;
     int live_clahe_ok = 0;
-    if (!solid_test && !only_tile &&
+    if (!solid_test && !only_tile && default_page_index("CLAHE") >= 0 &&
         setup_live_clahe() == 0) {
         live_clahe_ok = 1;
     }
     int live_retinex_ok = 0;
-    if (!solid_test && (!only_tile || strcasecmp(only_tile, "RETINEX") == 0) &&
+    if (!solid_test && !only_tile && default_page_index("RETINEX") >= 0 &&
         setup_live_retinex() == 0) {
         live_retinex_ok = 1;
     }
@@ -9125,7 +9430,8 @@ int main(int argc, char **argv) {
     if (!solid_test && only_tile && strcasecmp(only_tile, "PANO") == 0 &&
         loaded_pano_sample > 0 && setup_live_pano() == 0) {
         live_pano_ok = 1;
-    } else if (!solid_test && loaded_pano_sample > 0) {
+    } else if (!solid_test && only_tile && strcasecmp(only_tile, "PANO") == 0 &&
+               loaded_pano_sample > 0) {
         set_tile_status("PANO", TILE_LOOP);
     }
     int live_stereo_ok = 0;
@@ -9206,12 +9512,13 @@ int main(int argc, char **argv) {
          strcasecmp(only_tile, "CONV_CL") == 0 ||
          strcasecmp(only_tile, "TRANSFORM") == 0 ||
          strcasecmp(only_tile, "STEREO_3D") == 0 ||
-         strcasecmp(only_tile, "CLAHE") == 0);
+         strcasecmp(only_tile, "CLAHE") == 0 ||
+         strcasecmp(only_tile, "RETINEX") == 0);
     int use_vi_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "VI") == 0;
     int use_vpss_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "VPSS") == 0;
     int use_osd_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "OSD") == 0;
     int use_clahe_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "CLAHE") == 0;
-    int use_retinex_bind_display = 0;
+    int use_retinex_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "RETINEX") == 0;
     int use_rga_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "RGA") == 0;
     int use_resize_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "RESIZE_RGA") == 0;
     int use_csc_rga_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "CSC_RGA") == 0;
@@ -10067,32 +10374,16 @@ int main(int argc, char **argv) {
                 uint64_t vi_count = 0;
                 uint64_t clahe_count = 0;
                 char perf[160];
+                char runtime[128];
                 update_perf_status();
                 if (MEDIA_SYS_GetModuleFrameCount("VI", 0, &vi_count) == 0) {
                     g_health.camera_frames = (int)vi_count;
                 }
                 (void)MEDIA_SYS_GetModuleFrameCount("CLAHE", LIVE_CLAHE_GRP, &clahe_count);
-                if (g_perf.gpu_available && g_perf.rga_available) {
-                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d RAW VS CLAHE CLIP %.2f OUT %llu CPU %.0f%% GPU %.0f%% RGA %.0f%%",
-                             module_page_number("CLAHE"), (int)ARRAY_SIZE(g_module_pages),
-                             clip, (unsigned long long)clahe_count,
-                             g_perf.cpu_percent, g_perf.gpu_percent, g_perf.rga_percent);
-                } else if (g_perf.gpu_available) {
-                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d RAW VS CLAHE CLIP %.2f OUT %llu CPU %.0f%% GPU %.0f%% RGA N/A",
-                             module_page_number("CLAHE"), (int)ARRAY_SIZE(g_module_pages),
-                             clip, (unsigned long long)clahe_count,
-                             g_perf.cpu_percent, g_perf.gpu_percent);
-                } else if (g_perf.rga_available) {
-                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d RAW VS CLAHE CLIP %.2f OUT %llu CPU %.0f%% GPU N/A RGA %.0f%%",
-                             module_page_number("CLAHE"), (int)ARRAY_SIZE(g_module_pages),
-                             clip, (unsigned long long)clahe_count,
-                             g_perf.cpu_percent, g_perf.rga_percent);
-                } else {
-                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d RAW VS CLAHE CLIP %.2f OUT %llu CPU %.0f%% GPU N/A RGA N/A",
-                             module_page_number("CLAHE"), (int)ARRAY_SIZE(g_module_pages),
-                             clip, (unsigned long long)clahe_count,
-                             g_perf.cpu_percent);
-                }
+                format_runtime_status(runtime, sizeof(runtime));
+                snprintf(perf, sizeof(perf), "P%02d/%02d CLAHE CLIP %.2f OUT %llu %s",
+                         module_page_number("CLAHE"), (int)ARRAY_SIZE(g_module_pages),
+                         clip, (unsigned long long)clahe_count, runtime);
                 (void)update_display_osd_text("CLAHE  RAW VS ENHANCED", perf);
                 (void)update_clahe_compare_overlay(vi_count, clahe_count, clip, frame);
                 if ((frame % FPS) == 0) {
@@ -10121,32 +10412,16 @@ int main(int argc, char **argv) {
                 uint64_t vi_count = 0;
                 uint64_t retinex_count = 0;
                 char perf[160];
+                char runtime[128];
                 update_perf_status();
                 if (MEDIA_SYS_GetModuleFrameCount("VI", 0, &vi_count) == 0) {
                     g_health.camera_frames = (int)vi_count;
                 }
                 (void)MEDIA_SYS_GetModuleFrameCount("RETINEX", LIVE_RETINEX_GRP, &retinex_count);
-                if (g_perf.gpu_available && g_perf.rga_available) {
-                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d GAIN 20 THR 0.5 OUT %llu CPU %.0f%% GPU %.0f%% RGA %.0f%%",
-                             module_page_number("RETINEX"), (int)ARRAY_SIZE(g_module_pages),
-                             (unsigned long long)retinex_count,
-                             g_perf.cpu_percent, g_perf.gpu_percent, g_perf.rga_percent);
-                } else if (g_perf.gpu_available) {
-                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d GAIN 20 THR 0.5 OUT %llu CPU %.0f%% GPU %.0f%% RGA N/A",
-                             module_page_number("RETINEX"), (int)ARRAY_SIZE(g_module_pages),
-                             (unsigned long long)retinex_count,
-                             g_perf.cpu_percent, g_perf.gpu_percent);
-                } else if (g_perf.rga_available) {
-                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d GAIN 20 THR 0.5 OUT %llu CPU %.0f%% GPU N/A RGA %.0f%%",
-                             module_page_number("RETINEX"), (int)ARRAY_SIZE(g_module_pages),
-                             (unsigned long long)retinex_count,
-                             g_perf.cpu_percent, g_perf.rga_percent);
-                } else {
-                    snprintf(perf, sizeof(perf), "PAGE %02d/%02d GAIN 20 THR 0.5 OUT %llu CPU %.0f%% GPU N/A RGA N/A",
-                             module_page_number("RETINEX"), (int)ARRAY_SIZE(g_module_pages),
-                             (unsigned long long)retinex_count,
-                             g_perf.cpu_percent);
-                }
+                format_runtime_status(runtime, sizeof(runtime));
+                snprintf(perf, sizeof(perf), "P%02d/%02d RETINEX OUT %llu %s",
+                         module_page_number("RETINEX"), (int)ARRAY_SIZE(g_module_pages),
+                         (unsigned long long)retinex_count, runtime);
                 (void)update_display_osd_text("RETINEX  RAW VS ENHANCED", perf);
                 (void)update_retinex_compare_overlay(vi_count, retinex_count, frame);
                 if ((frame % FPS) == 0) {
@@ -10621,28 +10896,28 @@ int main(int argc, char **argv) {
         if (solid_test) {
             draw_solid_test((uint8_t *)addr, dstride);
         } else {
-            draw_dashboard((uint8_t *)addr, dstride, frame, rotate_main,
-                           only_tile,
-                           cam_frames > 0 ? last_cam : NULL,
-                           osd_frames > 0 ? last_osd : NULL,
-                           resize_frames > 0 ? last_resize : NULL,
-                           vpss_frames > 0 ? last_vpss : NULL,
-                           csc_rga_frames > 0 ? last_csc_rga : NULL,
-                           transform_frames > 0 ? last_transform : NULL,
-                           cap_frames > 0 ? last_cap : NULL,
-                           dcp_frames > 0 ? last_dcp : NULL,
-                           conv_frames > 0 ? last_conv : NULL,
-                           clahe_frames > 0 ? last_clahe : NULL,
-                           retinex_frames > 0 ? last_retinex : NULL,
-                           pano_frames > 0 ? last_pano : NULL,
-                           last_edof_in0,
-                           last_edof_in1,
-                           edof_frames > 0 ? last_edof : NULL,
-                           stereo_frames > 0 ? last_stereo : NULL,
-                           (only_tile && strcasecmp(only_tile, "DUALVIEW") == 0) ? last_dual_in0 : NULL,
-                           (only_tile && strcasecmp(only_tile, "DUALVIEW") == 0) ? last_dual_in1 : NULL,
-                           dualview_frames > 0 ? last_dual_sbs : NULL,
-                           dualview_frames > 0 ? last_dual_lbl : NULL);
+            draw_showcase_page((uint8_t *)addr, dstride, frame, rotate_main,
+                               only_tile,
+                               cam_frames > 0 ? last_cam : NULL,
+                               osd_frames > 0 ? last_osd : NULL,
+                               resize_frames > 0 ? last_resize : NULL,
+                               vpss_frames > 0 ? last_vpss : NULL,
+                               csc_rga_frames > 0 ? last_csc_rga : NULL,
+                               transform_frames > 0 ? last_transform : NULL,
+                               cap_frames > 0 ? last_cap : NULL,
+                               dcp_frames > 0 ? last_dcp : NULL,
+                               conv_frames > 0 ? last_conv : NULL,
+                               clahe_frames > 0 ? last_clahe : NULL,
+                               retinex_frames > 0 ? last_retinex : NULL,
+                               pano_frames > 0 ? last_pano : NULL,
+                               last_edof_in0,
+                               last_edof_in1,
+                               edof_frames > 0 ? last_edof : NULL,
+                               stereo_frames > 0 ? last_stereo : NULL,
+                               (only_tile && strcasecmp(only_tile, "DUALVIEW") == 0) ? last_dual_in0 : NULL,
+                               (only_tile && strcasecmp(only_tile, "DUALVIEW") == 0) ? last_dual_in1 : NULL,
+                               dualview_frames > 0 ? last_dual_sbs : NULL,
+                               dualview_frames > 0 ? last_dual_lbl : NULL);
         }
         maybe_capture_module_vo_frame(only_tile, frame, (const uint8_t *)addr, dstride);
         (void)MEDIA_POOL_EndCpuAccess(dbuf, DMA_BUF_SYNC_WRITE);
