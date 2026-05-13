@@ -926,18 +926,17 @@ static void maybe_capture_module_vo_frame(const char *only_tile, int frame,
 static void maybe_capture_vo_channel_frame(const char *only_tile, int frame, int stride) {
     if (!only_tile) return;
     int is_retinex = strcasecmp(only_tile, "RETINEX") == 0;
-    int is_wbc = strcasecmp(only_tile, "WBC") == 0;
     int is_conv_cl = strcasecmp(only_tile, "CONV_CL") == 0;
     int is_transform = strcasecmp(only_tile, "TRANSFORM") == 0;
     int is_stereo = strcasecmp(only_tile, "STEREO_3D") == 0;
-    if (!is_retinex && !is_wbc && !is_conv_cl && !is_transform && !is_stereo) return;
+    if (!is_retinex && !is_conv_cl && !is_transform && !is_stereo) return;
     if (frame <= 0) return;
     if ((frame % (FPS * VO_CAPTURE_SECONDS)) != 0) return;
 
-    const char *label = is_wbc ? "WBC" : (is_conv_cl ? "CONV_CL" :
-        (is_transform ? "TRANSFORM" : (is_stereo ? "STEREO_3D" : "RETINEX")));
-    const char *prefix = is_wbc ? "wbc" : (is_conv_cl ? "conv_cl" :
-        (is_transform ? "transform" : (is_stereo ? "stereo_3d" : "retinex")));
+    const char *label = is_conv_cl ? "CONV_CL" :
+        (is_transform ? "TRANSFORM" : (is_stereo ? "STEREO_3D" : "RETINEX"));
+    const char *prefix = is_conv_cl ? "conv_cl" :
+        (is_transform ? "transform" : (is_stereo ? "stereo_3d" : "retinex"));
     MEDIA_BUFFER buf = {-1, -1};
     int source = 0;
     if (MEDIA_VO_GetFrame(0, 0, &buf, 20) == 0) {
