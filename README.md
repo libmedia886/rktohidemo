@@ -20,8 +20,8 @@ cmake --build build -j
 
 - 屏幕：DSI/MIPI 竖屏 `1080x1920`
 - 摄像头：`/dev/video-camera0`
-- 主画面：默认每个功能模块单独一屏轮播，屏幕上显示当前模块名、页码、CPU 占用和 GPU 占用
-- 缺真实传感器输入的模块：用生成帧/循环素材方式参与
+- 主画面：默认轮播第一版展示闭环页面，屏幕上显示当前模块名、页码、实测 FPS、帧耗时、CPU/GPU/RGA 占用
+- 重算法或需要专门输入的模块：用 `--only <tile>` 单页展示，避免默认轮播转到占位页
 
 按 `Ctrl+C` 退出。
 
@@ -31,13 +31,19 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --no-rotate-main
 ```
 
-默认分页策略：`VI` 到 `PIC_IO` 每个功能模块单独一屏；`RTSP_SEND`、`RTSP_RECV` 不参与默认功能屏；`LICENSE` 只作为健康状态显示，不占功能页。后续确认每个模块的真实效果后，再考虑把低负载页面合并。
+默认分页策略：轮播已经能稳定上屏的展示闭环页：`VI`、`VPSS`、`VO`、`WBC`、`OSD`、`RESIZE_RGA`、`THERMAL`、`EDOF_CL`、`RGA`、`CSC_RGA`、`CSC_CL`、`CLAHE`、`RETINEX`、`CAP_DEHAZE`、`CONV_CL`、`TRANSFORM`、`STEREO_3D`、`PANO`。其它已完成的重算法页保留在 `--only` 模式，避免默认轮播出现 `SYNTH`/`PROBED` 占位页或默认初始化资源冲突。
+
+默认运行先按时间自动循环；如果按一次音量键就切到手动模式，不再自动翻页。`KEY_VOLUMEUP` 切到下一页，`KEY_VOLUMEDOWN` 切到上一页。
 
 如果要逐个验证某个小窗体，不让其它实时算法一起运行：
 
 ```bash
 /userdata/alldemo/scripts/run_alldemo.sh --only VPSS
+/userdata/alldemo/scripts/run_alldemo.sh --only VI
+/userdata/alldemo/scripts/run_alldemo.sh --only VO
+/userdata/alldemo/scripts/run_alldemo.sh --only WBC
 /userdata/alldemo/scripts/run_alldemo.sh --only OSD
+/userdata/alldemo/scripts/run_alldemo.sh --only RGA
 /userdata/alldemo/scripts/run_alldemo.sh --only RESIZE_RGA
 /userdata/alldemo/scripts/run_alldemo.sh --only CSC_RGA
 /userdata/alldemo/scripts/run_alldemo.sh --only CSC_CL
@@ -52,30 +58,30 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --only DUALVIEW
 /userdata/alldemo/scripts/run_alldemo.sh --only STEREO_3D
 /userdata/alldemo/scripts/run_alldemo.sh --only PANO
-/userdata/alldemo/scripts/run_alldemo.sh --only NPU
 ```
 
 `--only <tile>` 会把主画面固定到指定小窗体，并且只初始化该小窗体需要的实时模块；未接入真实实时链路的 tile 会显示循环素材或合成占位，且不会强制打开摄像头。
 `TRANSFORM` 单独模式使用实时摄像头输入，走 `VI -> VPSS(4路同源同尺寸NV12) -> RAW/3x TRANSFORM -> VMIX -> OSD -> VO` bind 链路，同屏展示 RAW、UNDISTORT、ROTATE ZOOM、PERSPECTIVE 四路画面；ROTATE ZOOM 路实时更新 XY LUT，VMIX 后的 OSD 层显示四路帧计数和 CPU/GPU/RGA 占用率。
 `VO` 单独模式不占用摄像头，页面直接展示 MIPI/DSI 输出、1080x1920、NV12 plane、动态扫描条和彩条。
 `VO` 单独模式会动态调用 `MEDIA_VO_FreezeMain`、`MEDIA_VO_FreezePlane` 和 `MEDIA_VO_HidePlane`，展示正常刷新、主显示冻结、plane 冻结、短暂隐藏再恢复。隐藏只持续约 1 秒，退出时会强制恢复显示。
+`WBC` 单独模式使用实时摄像头和 DRM writeback，走 `VI -> RESIZE_RGA -> VMIX`、`VO_WBC -> RESIZE_RGA -> VMIX -> OSD -> VO` bind 链路；左侧显示 VI 缩放后的实时参考窗，右侧显示从当前 CRTC 回抓后缩放的 WBC 窗口，屏幕上显示中文数据流、writeback connector/crtc、模块帧计数和 CPU/GPU/RGA 指标。`VO_WBC` 输出为 NV12，抓取宽度按 64 字节对齐要求使用 `1024x1920`，显示前缩放到 `480x900`，缩放后 stride 为 `512`；VI 显示前缩放到 `480x480`，stride 为 `512`。
 `OSD` 单独模式使用实时摄像头输入，走 `VI -> OSD -> VMIX -> OSD -> VO` bind 链路，页面展示动态 region 坐标、zorder 层级、alpha 透明度、enabled 告警开关和两级 OSD 帧计数。
 `RGA` 单独模式使用实时摄像头输入，走 `VI -> RGA -> VMIX -> OSD -> VO` bind 链路，页面会动态轮播 COPY、移动 CROP+SCALE、水平/垂直翻转和 90/180/270 度旋转，并显示 RGA 数据流和当前硬件操作。
 `RESIZE_RGA` 单独模式使用实时摄像头输入，走 `VI -> RESIZE_RGA -> VMIX -> OSD -> VO` bind 链路，页面动态移动裁剪框并改变 crop 尺寸，展示裁剪区域被硬件缩放放大的效果。
 `CSC_RGA` 单独模式使用实时摄像头输入，走 `VI -> CSC_RGA(NV12->ARGB8888) -> CSC_RGA(ARGB8888->NV12) -> VMIX -> OSD -> VO` bind 链路，页面显示颜色格式转换流程、动态通道条和两级 CSC 帧计数。
 `CSC_CL` 单独模式使用实时摄像头输入，走 `VI -> CSC_CL(NV12->ARGB8888) -> CSC_CL(ARGB8888->NV12) -> VMIX -> OSD -> VO` bind 链路，页面用大号数据流展示 OpenCL/GPU 颜色矩阵转换，并显示 kernel/queue 耗时和两级 CSC_CL 帧计数。
-`CAP_DEHAZE` 单独模式使用实时摄像头输入，程序把 VI 的 NV12 帧转换为 RGB 后送入 CAP_DEHAZE，主画面左右对比原始 VI 输入和去雾输出。
-`DCP_FAST_DEHAZE` 单独模式使用实时摄像头输入，程序把 VI 的 NV12 帧转换为 RGB 后送入 DCP_FAST_DEHAZE，主画面左右对比原始 VI 输入和暗通道先验去雾输出。
+`CAP_DEHAZE` 单独模式使用实时摄像头输入，程序把 VI 的 NV12 帧转换为 RGB 后送入 CAP_DEHAZE，主画面左右对比原始 VI 输入和去雾输出，并在屏幕上显示中文数据流、参数、为什么这样做和实测 FPS/CPU/GPU/RGA 指标。
+`DCP_FAST_DEHAZE` 单独模式使用实时摄像头输入，程序把 VI 的 NV12 帧转换为 RGB 后送入 DCP_FAST_DEHAZE，主画面左右对比原始 VI 输入和暗通道先验去雾输出，并在屏幕上显示中文数据流、参数、为什么这样做和实测 FPS/CPU/GPU/RGA 指标。
 `THERMAL` 单独模式使用 `/userdata/rktohi/demo/thermal/1.png` 和 `2.png` 原始 demo 图，一屏展示 16 种热成像伪彩模式，同一张输入图按不同色表映射，便于直接比较 RAINBOW、BLACK HOT、WHITE HOT、IRON、SEPIA 等模式差异；源图每 3 秒自动切换。
 `CONV_CL` 单独模式使用实时摄像头输入，走 `VI -> VPSS(4路同源同尺寸NV12) -> 4x CSC_RGA(NV12->RGBA8888) -> 4x CONV_CL -> 4x CSC_RGA(RGBA8888->NV12) -> VMIX -> OSD -> VO` bind 链路，同屏展示 SHARPEN、EDGE、EMBOSS、BLUR 四种卷积效果，并在 VMIX 后的 OSD 层显示四路帧计数、CPU/GPU/RGA 占用率和 OpenCL kernel/queue 耗时。
 `VPSS` 单独模式使用实时摄像头输入，并在同屏展示 VPSS 多输出能力：全幅缩放、动态裁剪后缩放、水平/垂直翻转切换、中心缩放变化。
 `CLAHE` 单独模式使用实时摄像头输入，走 `VI -> VPSS` 分成两路：`VPSS(output0) -> VMIX(input0)` 显示原始输入，`VPSS(output1) -> CLAHE -> VMIX(input1) -> OSD -> VO` 显示增强输出，并动态展示 clip limit 和帧计数。
-`RETINEX` 单独模式使用实时摄像头输入，走 `VI -> VPSS` 分成两路：`VPSS(output0) -> VMIX(input0)` 显示原始输入，`VPSS(output1) -> RETINEX -> VMIX(input1) -> OSD -> VO` 显示光照校正输出，并展示 gain、threshold、帧计数和 bind 链路。
-`EDOF_CL` 单独模式使用 `assets/loop/edof/mfi_whu` 的 `a.jpg/b.jpg/fused.png` 样张做三栏对比，每 3 秒切换一组。
-`DUALVIEW` 单独模式参考 `/userdata/rktohi/demo/dualview` 示例生成两路 RGB888 输入：input0 纯红、input1 纯蓝，主画面同时显示 input0、input1、side-by-side 输出和 line-by-line 输出，不占用摄像头。
-`STEREO_3D` 单独模式使用实时摄像头输入，走 `VI -> VPSS(4路同源NV12) -> 4x OSD(两组蓝/红 tint) -> 2x STEREO_3D(LINE_BY_LINE/SIDE_BY_SIDE) -> VMIX -> OSD -> VO` bind 链路。4 路 VPSS 输出大小、裁剪和位置完全一致，只是因为一个 OSD 输出不能同时绑定到两个 STEREO_3D 组，所以复制成两组蓝/红输入；上下展示逐行交错和左右并排两种 3D 输出，并显示帧计数和 CPU/GPU/RGA 占用率。
-`PANO` 单独模式使用 `assets/loop/pano/sample2` 的六张图片和 PTO 标定文件，主画面显示六路输入图和 panorama 输出，不占用摄像头。
-`NPU` 单独模式使用 `assets/loop/npu/bus_640x640.h264`，走 `H264文件 -> VDEC -> RGA(NV12转RGB) -> NPU(YOLOv5) -> RGA(RGB转NV12) -> VMIX -> OSD -> VO` 链路，不占用摄像头；屏幕上显示中文数据流说明、检测框、检测数量、模块帧计数以及 CPU/GPU/RGA 占用信息。
+`RETINEX` 单独模式使用实时摄像头输入，走 `VI -> VPSS` 分成两路：`VPSS(output0) -> VMIX(input0)` 显示原始输入，`VPSS(output1) -> RETINEX -> VMIX(input1) -> OSD -> VO` 显示光照校正输出，并展示 gain、threshold、帧计数、bind 链路和实测 FPS/CPU/GPU/RGA 指标。
+`EDOF_CL` 单独模式使用 `assets/loop/edof/mfi_whu` 的 `a.jpg/b.jpg/fused.png` 样张做三栏对比，每 3 秒切换一组；屏幕上显示中文数据流、为什么这样做和实测 FPS/CPU/GPU/RGA 指标。
+`DUALVIEW` 单独模式参考 `/userdata/rktohi/demo/dualview` 示例生成两路 RGB888 输入：input0 纯红、input1 纯蓝，主画面同时显示 input0、input1、side-by-side 输出和 line-by-line 输出，不占用摄像头；屏幕上显示中文数据流和实测 FPS/CPU/GPU/RGA 指标。
+`STEREO_3D` 单独模式使用实时摄像头输入，走 `VI -> VPSS(2路同源NV12：一路原图、一路VPSS旋转90度) -> STEREO_3D(SIDE_BY_SIDE合并) -> VMIX -> OSD -> VO` bind 链路；不再做蓝/红颜色 tint，屏幕显示一个合并输出，并显示帧计数和 CPU/GPU/RGA 占用率。
+`PANO` 单独模式使用 `assets/loop/pano/sample2` 的六张图片和 PTO 标定文件，主画面显示六路输入图和 panorama 输出，不占用摄像头；模块先按 PTO 完整全景域输出，再在屏幕中等比缩放居中显示，避免只看到左上局部；屏幕上显示中文数据流、查表拼接原因和实测 FPS/CPU/GPU/RGA 指标。
+`NPU` 单独模式保留为联调入口，链路目标是 `H264文件 -> VDEC -> RGA(NV12转RGB) -> NPU(YOLOv5) -> RGA(RGB转NV12) -> VMIX -> OSD -> VO`，不占用摄像头。当前设备上该 H264 样例会触发 VDEC `info_change`，尚未纳入第一版展示闭环；演示前不要把它放进默认轮播。
 
 ## 快速自检
 
@@ -93,7 +99,7 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --asset-check
 ```
 
-正常运行时，屏幕标题区会显示当前页码、CPU 占用和 GPU 占用；底部状态栏会显示摄像头出帧数、素材加载数、模块激活数、license/DRM/NPU 状态。摄像头未出帧时主画面会明确显示 `CAMERA OFFLINE`。如果当前系统没有暴露可读 GPU load 节点，GPU 会显示 `N/A`。
+正常运行时，屏幕标题区会显示当前页码、实测 FPS、单帧耗时、CPU/GPU/RGA 占用；底部状态栏会重复显示同一组实时指标，方便展示时直接说明“实时性”和“低 CPU 占用”。摄像头未出帧时主画面会明确显示 `CAMERA OFFLINE`。如果当前系统没有暴露可读 GPU/RGA load 节点，对应指标会显示 `N/A`。
 当前 `--only VI` 已接入 `VI -> VMIX(NV12) -> OSD -> VO` bind 显示链路，不再 CPU 拷贝 VI 图像帧；屏幕下方会显示数据流 bind 面板，直接列出谁绑定到谁，例如 `VI0.output -> VMIX80.input0`、`VMIX80.output0 -> OSD81.input`、`OSD81.output0 -> VO0.input0`。端口名由程序在 `output0/output` 和 `input0/input` 中自动探测，绑定成功后按实际命中的端口显示。
 实现方式在 `src/alldemo.c`：
 
@@ -123,7 +129,7 @@ cmake --build build -j
 
 具体效果和输入来源见 `assets/effect_manifest.json`。
 
-默认运行优先保证现场稳定上屏：实时摄像头进入主画面，其它缺少真实传感器的模块以循环图片/生成帧形式展示在 tile 中。重算法真实初始化探测可以单独执行：
+默认运行优先保证现场稳定上屏：实时摄像头进入主画面，默认轮播只包含已接通展示闭环的页面；重算法真实初始化和未进入默认轮播的模块用 `--only <tile>` 逐个展示。更重的初始化探测可以单独执行：
 
 ```bash
 /userdata/alldemo/scripts/run_alldemo.sh --probe

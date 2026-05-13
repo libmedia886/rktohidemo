@@ -1258,9 +1258,9 @@ typedef struct {
     const char *target;     // 显示 connector 名称，如 DSI-1 / HDMI-A-1；NULL 表示自动找 active CRTC
     int connector_id;       // writeback connector id，<=0 自动查找
     int crtc_id;            // 被回环的 CRTC id，<=0 自动使用当前 active CRTC
-    int width;
-    int height;
-    int stride;             // bytesperline，<=0 自动
+    int width;              // 抓取宽度按格式对齐：ARGB8888/AR24 16 像素，NV12/BGR888 64 像素
+    int height;             // 抓取高度，VO_WBC 不额外对齐
+    int stride;             // bytesperline，<=0 自动；显式配置必须匹配 width/format
     int fps;                // <=0 不做帧率限制
     int format;             // MEDIA_FORMAT_NV12 / BGR888 / ARGB8888
     int pool_id;            // 输出 pool id
