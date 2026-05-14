@@ -928,6 +928,54 @@ int MEDIA_EXPOSURE_FUSION_CL_Disable(int grp);
 int MEDIA_EXPOSURE_FUSION_CL_GetFrame(int grp, MEDIA_BUFFER *buf, int timeout_ms);
 int MEDIA_EXPOSURE_FUSION_CL_ReleaseFrame(int grp, MEDIA_BUFFER buf);
 
+// MCF_FUSION_CL (OpenCL GPU RGB/mono detail injection; no histogram matching)
+typedef enum {
+    MEDIA_MCF_FUSION_CL_PATH_FUSION = 0,
+    MEDIA_MCF_FUSION_CL_PATH_COLOR = 1,
+    MEDIA_MCF_FUSION_CL_PATH_MONO = 2,
+} MEDIA_MCF_FUSION_CL_PATH;
+
+typedef enum {
+    MEDIA_MCF_FUSION_CL_NORMALIZE_NONE = 0,
+    MEDIA_MCF_FUSION_CL_NORMALIZE_MEAN_STD = 1,
+} MEDIA_MCF_FUSION_CL_NORMALIZE_MODE;
+
+typedef struct {
+    int width;
+    int height;
+    int format;
+    int input_depth;
+    int output_pool_id;
+    int input_stride;
+    int output_stride;
+    int path;
+    int normalize_mode;
+    int blur_radius;
+    float base_alpha;
+    float detail_gain;
+    float alpha_min;
+    float alpha_max;
+    float gain_min;
+    float gain_max;
+    float epsilon;
+} MEDIA_MCF_FUSION_CL_ATTR;
+
+typedef struct {
+    double stats_kernel_ms;
+    double fusion_kernel_ms;
+    double gpu_total_ms;
+} MEDIA_MCF_FUSION_CL_PERF;
+
+int MEDIA_MCF_FUSION_CL_CreateGrp(int grp, const MEDIA_MCF_FUSION_CL_ATTR *attr);
+int MEDIA_MCF_FUSION_CL_DestroyGrp(int grp);
+int MEDIA_MCF_FUSION_CL_Start(int grp);
+int MEDIA_MCF_FUSION_CL_Stop(int grp);
+int MEDIA_MCF_FUSION_CL_Enable(int grp);
+int MEDIA_MCF_FUSION_CL_Disable(int grp);
+int MEDIA_MCF_FUSION_CL_GetFrame(int grp, MEDIA_BUFFER *buf, int timeout_ms);
+int MEDIA_MCF_FUSION_CL_ReleaseFrame(int grp, MEDIA_BUFFER buf);
+int MEDIA_MCF_FUSION_CL_GetLastPerf(int grp, MEDIA_MCF_FUSION_CL_PERF *perf);
+
 // OSD (干净的多 region overlay 模块)
 #define MEDIA_OSD_CONTENT_NONE     0
 #define MEDIA_OSD_CONTENT_RECT     1

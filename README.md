@@ -31,7 +31,7 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --no-rotate-main
 ```
 
-默认分页策略：轮播已经能稳定上屏的展示闭环页：`VI`、`VPSS`、`VO`、`WBC`、`OSD`、`RESIZE_RGA`、`THERMAL`、`EDOF_CL`、`RGA`、`CSC_RGA`、`CSC_CL`、`CLAHE`、`RETINEX`、`CAP_DEHAZE`、`CONV_CL`、`TRANSFORM`、`STEREO_3D`、`PANO`。其它已完成的重算法页保留在 `--only` 模式，避免默认轮播出现 `SYNTH`/`PROBED` 占位页或默认初始化资源冲突。
+默认分页策略：轮播已经能稳定上屏的展示闭环页：`VI`、`VPSS`、`VO`、`WBC`、`OSD`、`RESIZE_RGA`、`THERMAL`、`EDOF_CL`、`MCF_FUSION_CL`、`RGA`、`CSC_RGA`、`CSC_CL`、`CLAHE`、`RETINEX`、`CAP_DEHAZE`、`CONV_CL`、`TRANSFORM`、`STEREO_3D`、`PANO`。其它已完成的重算法页保留在 `--only` 模式，避免默认轮播出现 `SYNTH`/`PROBED` 占位页或默认初始化资源冲突。
 
 默认运行先按时间自动循环；如果按一次音量键就切到手动模式，不再自动翻页。`KEY_VOLUMEUP` 切到下一页，`KEY_VOLUMEDOWN` 切到上一页。
 
@@ -55,6 +55,7 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --only CLAHE
 /userdata/alldemo/scripts/run_alldemo.sh --only RETINEX
 /userdata/alldemo/scripts/run_alldemo.sh --only EDOF_CL
+/userdata/alldemo/scripts/run_alldemo.sh --only MCF_FUSION_CL
 /userdata/alldemo/scripts/run_alldemo.sh --only DUALVIEW
 /userdata/alldemo/scripts/run_alldemo.sh --only STEREO_3D
 /userdata/alldemo/scripts/run_alldemo.sh --only PANO
@@ -78,6 +79,7 @@ cmake --build build -j
 `CLAHE` 单独模式使用实时摄像头输入，走 `VI -> VPSS` 分成两路：`VPSS(output0) -> VMIX(input0)` 显示原始输入，`VPSS(output1) -> CLAHE -> VMIX(input1) -> OSD -> VO` 显示增强输出，并动态展示 clip limit 和帧计数。
 `RETINEX` 单独模式使用实时摄像头输入，走 `VI -> VPSS` 分成两路：`VPSS(output0) -> VMIX(input0)` 显示原始输入，`VPSS(output1) -> RETINEX -> VMIX(input1) -> OSD -> VO` 显示光照校正输出，并展示 gain、threshold、帧计数、bind 链路和实测 FPS/CPU/GPU/RGA 指标。
 `EDOF_CL` 单独模式使用 `assets/loop/edof/mfi_whu` 的 `a.jpg/b.jpg/fused.png` 样张做三栏对比，每 3 秒切换一组；屏幕上显示中文数据流、为什么这样做和实测 FPS/CPU/GPU/RGA 指标。
+`MCF_FUSION_CL` 单独模式使用 `assets/loop/mcf_fusion` 的彩色图、单色细节图和参考融合图做对比，每 3 秒切换一组；程序优先调用 `MEDIA_MCF_FUSION_CL` 的 OpenCL 模块生成输出，如果当前 GPU/OpenCL 路径初始化失败则保留参考融合结果上屏，避免展示页空白。
 `DUALVIEW` 单独模式参考 `/userdata/rktohi/demo/dualview` 示例生成两路 RGB888 输入：input0 纯红、input1 纯蓝，主画面同时显示 input0、input1、side-by-side 输出和 line-by-line 输出，不占用摄像头；屏幕上显示中文数据流和实测 FPS/CPU/GPU/RGA 指标。
 `STEREO_3D` 单独模式使用实时摄像头输入，走 `VI -> VPSS(2路同源NV12：一路原图、一路VPSS旋转90度) -> STEREO_3D(SIDE_BY_SIDE合并) -> VMIX -> OSD -> VO` bind 链路；不再做蓝/红颜色 tint，屏幕显示一个合并输出，并显示帧计数和 CPU/GPU/RGA 占用率。
 `PANO` 单独模式使用 `assets/loop/pano/sample2` 的六张图片和 PTO 标定文件，主画面显示六路输入图和 panorama 输出，不占用摄像头；模块先按 PTO 完整全景域输出，再在屏幕中等比缩放居中显示，避免只看到左上局部；屏幕上显示中文数据流、查表拼接原因和实测 FPS/CPU/GPU/RGA 指标。

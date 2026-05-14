@@ -82,6 +82,7 @@
 #define LIVE_WBC_VI_RESIZE_GRP 79
 #define DISPLAY_VMIX_GRP 80
 #define DISPLAY_OSD_GRP 81
+#define LIVE_MCF_GRP 114
 #define LIVE_WBC_CHN 0
 #define LIVE_CONV_CL_QUAD_BASE_GRP 82
 #define LIVE_CONV_CL_PRE_CSC_BASE_GRP 86
@@ -91,6 +92,9 @@
 #define NPU_DEMO_PRE_RGA_GRP 111
 #define NPU_DEMO_NPU_GRP 112
 #define NPU_DEMO_POST_RGA_GRP 113
+#define MCF_INPUT0_POOL STEREO_INPUT0_POOL
+#define MCF_INPUT1_POOL STEREO_INPUT1_POOL
+#define MCF_OUTPUT_POOL STEREO_OUTPUT_POOL
 
 #define CAM_W 640
 #define CAM_H 640
@@ -151,6 +155,7 @@
 #define NAV_ENV_MODE "ALLDEMO_LOOP_MODE"
 #define RGA_OP_SECONDS 3
 #define EDOF_PAIR_SECONDS 3
+#define MCF_PAIR_SECONDS 3
 #define RESIZE_DEMO_UPDATE_FRAMES (FPS * 2)
 #define VO_CAPTURE_SECONDS 5
 #define TILE_FIRST_INDEX 4
@@ -234,6 +239,17 @@ typedef struct {
 } edof_pair_t;
 
 typedef struct {
+    const char *name;
+    const char *color_path;
+    const char *mono_path;
+    const char *reference_path;
+    image_asset_t color;
+    image_asset_t mono;
+    image_asset_t reference;
+    int loaded;
+} mcf_pair_t;
+
+typedef struct {
     const char *pto_path;
     const char *image_paths[PANO_INPUT_COUNT];
     image_asset_t inputs[PANO_INPUT_COUNT];
@@ -284,6 +300,9 @@ typedef struct {
     const uint8_t *edof_in0;
     const uint8_t *edof_in1;
     const uint8_t *edof_out;
+    const uint8_t *mcf_color;
+    const uint8_t *mcf_mono;
+    const uint8_t *mcf_out;
     const uint8_t *stereo_live;
     const uint8_t *dual_in0;
     const uint8_t *dual_in1;
@@ -470,6 +489,7 @@ static module_tile_t g_tiles[] = {
     {"THERMAL", 0, 0, TILE_OFFLINE}, {"CONV_CL", 0, 0, TILE_OFFLINE},
     {"TRANSFORM", 0, 0, TILE_OFFLINE}, {"BLEND_PYR", 0, 0, TILE_OFFLINE},
     {"EDOF_CL", 0, 0, TILE_OFFLINE}, {"EXPOSURE_FUSION_CL", 0, 0, TILE_OFFLINE},
+    {"MCF_FUSION_CL", 0, 0, TILE_OFFLINE},
     {"DUALVIEW", 0, 0, TILE_OFFLINE}, {"STEREO_3D", 0, 0, TILE_OFFLINE},
     {"VMIX", 0, 0, TILE_OFFLINE}, {"VMIX_RGA", 0, 0, TILE_OFFLINE},
     {"PANO", 0, 0, TILE_OFFLINE}, {"AVM", 0, 0, TILE_OFFLINE},
@@ -482,13 +502,13 @@ static module_tile_t g_tiles[] = {
 static const char *g_module_pages[] = {
     "VI", "VPSS", "VO", "WBC", "RGA", "RESIZE_RGA", "CSC_RGA", "CSC_CL", "OSD",
     "CLAHE", "RETINEX", "CAP_DEHAZE", "DCP_FAST_DEHAZE", "THERMAL", "CONV_CL",
-    "TRANSFORM", "EDOF_CL", "DUALVIEW", "STEREO_3D", "PANO",
+    "TRANSFORM", "EDOF_CL", "MCF_FUSION_CL", "DUALVIEW", "STEREO_3D", "PANO",
 };
 
 static const char *g_default_pages[] = {
     "VI", "VPSS", "VO", "WBC", "OSD", "RESIZE_RGA", "THERMAL", "EDOF_CL",
-    "RGA", "CSC_RGA", "CSC_CL", "CLAHE", "RETINEX", "CAP_DEHAZE", "CONV_CL",
-    "TRANSFORM", "STEREO_3D", "PANO",
+    "MCF_FUSION_CL", "RGA", "CSC_RGA", "CSC_CL", "CLAHE", "RETINEX",
+    "CAP_DEHAZE", "CONV_CL", "TRANSFORM", "STEREO_3D", "PANO",
 };
 
 static const char *g_vpss_tile_labels[VPSS_DEMO_OUTPUTS] = {
@@ -525,6 +545,21 @@ static edof_pair_t g_edof_pairs[] = {
     {"assets/loop/edof/mfi_whu/0041/a.jpg",
      "assets/loop/edof/mfi_whu/0041/b.jpg",
      "assets/loop/edof/mfi_whu/0041/fused.png", {0}, {0}, {0}, 0},
+};
+
+static mcf_pair_t g_mcf_pairs[] = {
+    {"street_0001",
+     "assets/loop/mcf_fusion/street_0001/color.jpg",
+     "assets/loop/mcf_fusion/street_0001/mono.jpg",
+     "assets/loop/mcf_fusion/street_0001/reference.jpg", {0}, {0}, {0}, 0},
+    {"urban_0001",
+     "assets/loop/mcf_fusion/urban_0001/color.jpg",
+     "assets/loop/mcf_fusion/urban_0001/mono.jpg",
+     "assets/loop/mcf_fusion/urban_0001/reference.jpg", {0}, {0}, {0}, 0},
+    {"country_0002",
+     "assets/loop/mcf_fusion/country_0002/color.jpg",
+     "assets/loop/mcf_fusion/country_0002/mono.jpg",
+     "assets/loop/mcf_fusion/country_0002/reference.jpg", {0}, {0}, {0}, 0},
 };
 
 static pano_sample_t g_pano_sample = {
@@ -901,6 +936,8 @@ static void maybe_capture_module_vo_frame(const char *only_tile, int frame,
         prefix = "thermal";
     } else if (strcasecmp(only_tile, "EDOF_CL") == 0) {
         prefix = "edof_cl";
+    } else if (strcasecmp(only_tile, "MCF_FUSION_CL") == 0) {
+        prefix = "mcf_fusion_cl";
     } else if (strcasecmp(only_tile, "RETINEX") == 0) {
         prefix = "retinex";
     } else {
@@ -2470,6 +2507,51 @@ static void draw_dualview_comparison(uint8_t *dst, int stride, int x, int y, int
     }
 }
 
+static void draw_mcf_comparison(uint8_t *dst, int stride, int x, int y, int w, int h,
+                                const uint8_t *color, const uint8_t *mono,
+                                const uint8_t *fused) {
+    int gap = 10;
+    int label_h = 22;
+    int top_h = (h - gap) / 2;
+    int bottom_h = h - top_h - gap;
+    int col_w = (w - gap) / 2;
+
+    const uint8_t *top_frames[2] = {color, mono};
+    const char *top_labels[2] = {"COLOR INPUT", "MONO DETAIL"};
+    for (int i = 0; i < 2; ++i) {
+        int cx = x + i * (col_w + gap);
+        int cy = y;
+        fill_rect_nv12(dst, stride, cx, cy, col_w, top_h, 5, 10, 18);
+        stroke_rect_nv12(dst, stride, cx, cy, col_w, top_h, 1, 70, 140, 210);
+        if (top_frames[i]) {
+            draw_camera_tile_fit(dst, stride, cx + 4, cy + 4, col_w - 8,
+                                 top_h - label_h - 8, top_frames[i],
+                                 CAM_W, CAM_H, CAM_STRIDE);
+        } else {
+            draw_text(dst, stride, cx + 12, cy + top_h / 2 - 10,
+                      "WAIT", 1, 255, 190, 100);
+        }
+        fill_rect_nv12(dst, stride, cx, cy + top_h - label_h, col_w, label_h, 0, 0, 0);
+        draw_text(dst, stride, cx + 8, cy + top_h - label_h + 5,
+                  top_labels[i], 1, 180, 230, 255);
+    }
+
+    int oy = y + top_h + gap;
+    fill_rect_nv12(dst, stride, x, oy, w, bottom_h, 5, 10, 18);
+    stroke_rect_nv12(dst, stride, x, oy, w, bottom_h, 1, 80, 255, 180);
+    if (fused) {
+        draw_camera_tile_fit(dst, stride, x + 4, oy + 4, w - 8,
+                             bottom_h - label_h - 8, fused,
+                             CAM_W, CAM_H, CAM_STRIDE);
+    } else {
+        draw_text(dst, stride, x + 12, oy + bottom_h / 2 - 10,
+                  "WAIT", 1, 255, 190, 100);
+    }
+    fill_rect_nv12(dst, stride, x, oy + bottom_h - label_h, w, label_h, 0, 0, 0);
+    draw_text(dst, stride, x + 8, oy + bottom_h - label_h + 5,
+              "MCF OUTPUT", 1, 180, 230, 255);
+}
+
 static void draw_pano_comparison(uint8_t *dst, int stride, int x, int y, int w, int h,
                                  const uint8_t *pano_out) {
     int gap = 10;
@@ -2554,6 +2636,25 @@ static void draw_edof_showcase(uint8_t *dst, int stride, int x, int y, int w, in
                          "展示重点：每3秒切换一组样张，输出保留两张输入中更清晰的区域。");
 }
 
+static void draw_mcf_showcase(uint8_t *dst, int stride, int x, int y, int w, int h,
+                              const uint8_t *color, const uint8_t *mono,
+                              const uint8_t *out) {
+    int top_h = 126;
+    int bottom_h = 156;
+    int gap = 12;
+    int compare_y = y + top_h + gap;
+    int compare_h = h - top_h - bottom_h - gap * 2;
+    if (compare_h < 320) return;
+
+    draw_showcase_header(dst, stride, x, y, w,
+                         "MCF_FUSION_CL：彩色/单色细节融合",
+                         "数据流：彩色图 + 单色细节图 -> MCF_FUSION_CL -> 彩色增强输出。",
+                         "为什么这样做：GPU在Y通道注入单色高频细节，保留彩色观感。");
+    draw_mcf_comparison(dst, stride, x, compare_y, w, compare_h, color, mono, out);
+    draw_showcase_footer(dst, stride, x, y + h - bottom_h, w,
+                         "展示重点：每3秒切换一组样张，真实模块可用时显示OpenCL输出，否则显示参考融合结果。");
+}
+
 static void draw_dualview_showcase(uint8_t *dst, int stride, int x, int y, int w, int h,
                                    const uint8_t *in0, const uint8_t *in1,
                                    const uint8_t *sbs, const uint8_t *lbl) {
@@ -2625,7 +2726,9 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
                              const uint8_t *retinex_in, const uint8_t *retinex_live,
                              const uint8_t *pano_out,
                              const uint8_t *edof_in0, const uint8_t *edof_in1,
-                             const uint8_t *edof_out, const uint8_t *stereo_live,
+                             const uint8_t *edof_out,
+                             const uint8_t *mcf_color, const uint8_t *mcf_mono,
+                             const uint8_t *mcf_out, const uint8_t *stereo_live,
                              const uint8_t *dual_in0, const uint8_t *dual_in1,
                              const uint8_t *dual_sbs, const uint8_t *dual_lbl) {
     uint8_t r0 = (uint8_t)((idx * 47 + frame * 2) % 180 + 40);
@@ -2695,6 +2798,10 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
     } else if (strcmp(g_tiles[idx].name, "EDOF_CL") == 0 && (edof_in0 || edof_in1 || edof_out)) {
         draw_edof_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38,
                              edof_in0, edof_in1, edof_out);
+    } else if (strcmp(g_tiles[idx].name, "MCF_FUSION_CL") == 0 &&
+               (mcf_color || mcf_mono || mcf_out)) {
+        draw_mcf_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38,
+                            mcf_color, mcf_mono, mcf_out);
     } else if (strcmp(g_tiles[idx].name, "DUALVIEW") == 0 &&
                (dual_in0 || dual_in1 || dual_sbs || dual_lbl)) {
         draw_dualview_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38,
@@ -2742,7 +2849,9 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
                               const uint8_t *retinex_live,
                               const uint8_t *pano_out,
                               const uint8_t *edof_in0, const uint8_t *edof_in1,
-                              const uint8_t *edof_out, const uint8_t *stereo_live,
+                              const uint8_t *edof_out,
+                              const uint8_t *mcf_color, const uint8_t *mcf_mono,
+                              const uint8_t *mcf_out, const uint8_t *stereo_live,
                               const uint8_t *dual_in0, const uint8_t *dual_in1,
                               const uint8_t *dual_sbs, const uint8_t *dual_lbl) {
     loop_asset_t *loop = find_loop_asset(g_tiles[idx].name);
@@ -2848,6 +2957,13 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
         return;
     }
 
+    if (strcmp(g_tiles[idx].name, "MCF_FUSION_CL") == 0 &&
+        (mcf_color || mcf_mono || mcf_out)) {
+        draw_mcf_showcase(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                          mcf_color, mcf_mono, mcf_out);
+        return;
+    }
+
     if (strcmp(g_tiles[idx].name, "DUALVIEW") == 0 &&
         (dual_in0 || dual_in1 || dual_sbs || dual_lbl)) {
         draw_dualview_showcase(dst, stride, x + 12, y + 12, w - 24, h - 24,
@@ -2910,7 +3026,9 @@ static void draw_main_showcase(uint8_t *canvas, int stride, int frame,
                                const uint8_t *retinex_live,
                                const uint8_t *pano_out,
                                const uint8_t *edof_in0, const uint8_t *edof_in1,
-                               const uint8_t *edof_out, const uint8_t *stereo_live,
+                               const uint8_t *edof_out,
+                               const uint8_t *mcf_color, const uint8_t *mcf_mono,
+                               const uint8_t *mcf_out, const uint8_t *stereo_live,
                                const uint8_t *dual_in0, const uint8_t *dual_in1,
                                const uint8_t *dual_sbs, const uint8_t *dual_lbl) {
     const int x = 28;
@@ -2932,7 +3050,8 @@ static void draw_main_showcase(uint8_t *canvas, int stride, int frame,
         draw_tile_content(canvas, stride, x + 14, y + 14, w - 28, h - 70,
                           idx, frame, cam, osd_live, resize_live, vpss_live,
                           csc_rga_live, transform_live, cap_live, dcp_live, conv_live, clahe_live,
-                          retinex_live, pano_out, edof_in0, edof_in1, edof_out, stereo_live,
+                          retinex_live, pano_out, edof_in0, edof_in1, edof_out,
+                          mcf_color, mcf_mono, mcf_out, stereo_live,
                           dual_in0, dual_in1, dual_sbs, dual_lbl);
         fill_rect_nv12(canvas, stride, x + 14, y + h - 50, w - 28, 34, 0, 0, 0);
         draw_text(canvas, stride, x + 32, y + h - 42, "MAIN ROTATE", 2, 190, 230, 255);
@@ -8601,6 +8720,73 @@ static int process_live_edof(const uint8_t *src0, const uint8_t *src1, uint8_t *
     return ret;
 }
 
+static int setup_live_mcf(void) {
+    if (MEDIA_POOL_Create(MCF_INPUT0_POOL, CAM_FRAME_SIZE, 2) != 0) return -1;
+    if (MEDIA_POOL_Create(MCF_INPUT1_POOL, CAM_FRAME_SIZE, 2) != 0) goto fail;
+    if (MEDIA_POOL_Create(MCF_OUTPUT_POOL, CAM_FRAME_SIZE, 3) != 0) goto fail;
+
+    MEDIA_MCF_FUSION_CL_ATTR attr = {0};
+    attr.width = CAM_W;
+    attr.height = CAM_H;
+    attr.format = MEDIA_FORMAT_NV12;
+    attr.input_depth = 2;
+    attr.output_pool_id = MCF_OUTPUT_POOL;
+    attr.input_stride = CAM_STRIDE;
+    attr.output_stride = CAM_STRIDE;
+    attr.path = MEDIA_MCF_FUSION_CL_PATH_FUSION;
+    attr.normalize_mode = MEDIA_MCF_FUSION_CL_NORMALIZE_MEAN_STD;
+    attr.blur_radius = 2;
+    attr.base_alpha = 0.25f;
+    attr.detail_gain = 0.80f;
+    attr.alpha_min = 0.15f;
+    attr.alpha_max = 0.85f;
+    attr.gain_min = 0.5f;
+    attr.gain_max = 2.0f;
+    attr.epsilon = 1e-6f;
+
+    if (MEDIA_MCF_FUSION_CL_CreateGrp(LIVE_MCF_GRP, &attr) != 0 ||
+        MEDIA_MCF_FUSION_CL_Enable(LIVE_MCF_GRP) != 0) {
+        MEDIA_MCF_FUSION_CL_DestroyGrp(LIVE_MCF_GRP);
+        goto fail;
+    }
+
+    set_tile_status("MCF_FUSION_CL", TILE_LIVE);
+    return 0;
+
+fail:
+    MEDIA_POOL_Destroy(MCF_OUTPUT_POOL);
+    MEDIA_POOL_Destroy(MCF_INPUT1_POOL);
+    MEDIA_POOL_Destroy(MCF_INPUT0_POOL);
+    return -1;
+}
+
+static void cleanup_live_mcf(int enabled) {
+    if (!enabled) return;
+    MEDIA_MCF_FUSION_CL_Disable(LIVE_MCF_GRP);
+    MEDIA_MCF_FUSION_CL_DestroyGrp(LIVE_MCF_GRP);
+    MEDIA_POOL_Destroy(MCF_OUTPUT_POOL);
+    MEDIA_POOL_Destroy(MCF_INPUT1_POOL);
+    MEDIA_POOL_Destroy(MCF_INPUT0_POOL);
+}
+
+static int process_live_mcf(const uint8_t *color, const uint8_t *mono, uint8_t *dst) {
+    MEDIA_BUFFER out = {-1, -1};
+    int ret = -1;
+    if (send_copied_frame("MCF_FUSION_CL", LIVE_MCF_GRP, "input0",
+                          MCF_INPUT0_POOL, color, CAM_FRAME_SIZE, 1000) != 0) {
+        return -1;
+    }
+    if (send_copied_frame("MCF_FUSION_CL", LIVE_MCF_GRP, "input1",
+                          MCF_INPUT1_POOL, mono, CAM_FRAME_SIZE, 1000) != 0) {
+        return -1;
+    }
+    if (MEDIA_MCF_FUSION_CL_GetFrame(LIVE_MCF_GRP, &out, 3000) == 0) {
+        ret = copy_from_buffer(out, dst, CAM_FRAME_SIZE);
+        MEDIA_MCF_FUSION_CL_ReleaseFrame(LIVE_MCF_GRP, out);
+    }
+    return ret;
+}
+
 static int setup_live_dualview_one(int grp, int output_pool, int mode) {
     MEDIA_DUALVIEW_ATTR attr = {0};
     attr.input_width = CAM_W;
@@ -8967,6 +9153,16 @@ static int find_tile_index(const char *name) {
     return -1;
 }
 
+static int is_mcf_tile_name(const char *name) {
+    return name && (strcasecmp(name, "MCF") == 0 ||
+                    strcasecmp(name, "MCF_FUSION_CL") == 0);
+}
+
+static const char *canonical_tile_name(const char *name) {
+    if (is_mcf_tile_name(name)) return "MCF_FUSION_CL";
+    return name;
+}
+
 static int tile_needs_camera(const char *name) {
     if (!name) return 1;
     return strcasecmp(name, "VI") == 0 ||
@@ -9055,6 +9251,43 @@ static void unload_edof_pairs(void) {
     }
 }
 
+static int load_mcf_pairs(void) {
+    int total = 0;
+    for (size_t i = 0; i < sizeof(g_mcf_pairs) / sizeof(g_mcf_pairs[0]); ++i) {
+        mcf_pair_t *pair = &g_mcf_pairs[i];
+        pair->loaded = 0;
+        if (load_image_rgb(pair->color_path, &pair->color) == 0 &&
+            load_image_rgb(pair->mono_path, &pair->mono) == 0 &&
+            load_image_rgb(pair->reference_path, &pair->reference) == 0) {
+            pair->loaded = 1;
+            total++;
+        } else {
+            fprintf(stderr, "warning: failed to load MCF set %s %s %s\n",
+                    pair->color_path, pair->mono_path, pair->reference_path);
+            free(pair->color.rgb);
+            free(pair->mono.rgb);
+            free(pair->reference.rgb);
+            memset(&pair->color, 0, sizeof(pair->color));
+            memset(&pair->mono, 0, sizeof(pair->mono));
+            memset(&pair->reference, 0, sizeof(pair->reference));
+        }
+    }
+    return total;
+}
+
+static void unload_mcf_pairs(void) {
+    for (size_t i = 0; i < sizeof(g_mcf_pairs) / sizeof(g_mcf_pairs[0]); ++i) {
+        mcf_pair_t *pair = &g_mcf_pairs[i];
+        free(pair->color.rgb);
+        free(pair->mono.rgb);
+        free(pair->reference.rgb);
+        memset(&pair->color, 0, sizeof(pair->color));
+        memset(&pair->mono, 0, sizeof(pair->mono));
+        memset(&pair->reference, 0, sizeof(pair->reference));
+        pair->loaded = 0;
+    }
+}
+
 static int load_pano_sample(void) {
     pano_sample_t *sample = &g_pano_sample;
     sample->loaded = 0;
@@ -9127,6 +9360,16 @@ static edof_pair_t *get_loaded_edof_pair(int idx) {
     for (size_t i = 0; i < sizeof(g_edof_pairs) / sizeof(g_edof_pairs[0]); ++i) {
         if (!g_edof_pairs[i].loaded) continue;
         if (seen == idx) return &g_edof_pairs[i];
+        seen++;
+    }
+    return NULL;
+}
+
+static mcf_pair_t *get_loaded_mcf_pair(int idx) {
+    int seen = 0;
+    for (size_t i = 0; i < sizeof(g_mcf_pairs) / sizeof(g_mcf_pairs[0]); ++i) {
+        if (!g_mcf_pairs[i].loaded) continue;
+        if (seen == idx) return &g_mcf_pairs[i];
         seen++;
     }
     return NULL;
@@ -9262,6 +9505,12 @@ static void probe_modules(void) {
     ex.width = w; ex.height = h; ex.format = MEDIA_FORMAT_NV12; ex.input_depth = 2; ex.output_pool_id = WORK_POOL_OUT; ex.input_stride = stride; ex.output_stride = stride;
     ex.contrast_power = 1.0f; ex.saturation_power = 1.0f; ex.exposedness_power = 1.0f; ex.sigma = 0.2f; ex.epsilon = 0.0001f;
     if (MEDIA_EXPOSURE_FUSION_CL_CreateGrp(33, &ex) == 0) { set_tile_status("EXPOSURE_FUSION_CL", TILE_PROBED); MEDIA_EXPOSURE_FUSION_CL_DestroyGrp(33); }
+
+    MEDIA_MCF_FUSION_CL_ATTR mcf = {0};
+    mcf.width = w; mcf.height = h; mcf.format = MEDIA_FORMAT_NV12; mcf.input_depth = 2; mcf.output_pool_id = WORK_POOL_OUT; mcf.input_stride = stride; mcf.output_stride = stride;
+    mcf.path = MEDIA_MCF_FUSION_CL_PATH_FUSION; mcf.normalize_mode = MEDIA_MCF_FUSION_CL_NORMALIZE_MEAN_STD; mcf.blur_radius = 2;
+    mcf.base_alpha = 0.25f; mcf.detail_gain = 0.80f; mcf.alpha_min = 0.15f; mcf.alpha_max = 0.85f; mcf.gain_min = 0.5f; mcf.gain_max = 2.0f; mcf.epsilon = 1e-6f;
+    if (MEDIA_MCF_FUSION_CL_CreateGrp(38, &mcf) == 0) { set_tile_status("MCF_FUSION_CL", TILE_PROBED); MEDIA_MCF_FUSION_CL_DestroyGrp(38); }
 
     MEDIA_DUALVIEW_ATTR dv = {0};
     dv.input_width = w; dv.input_height = h; dv.input_stride = w * 3; dv.output_width = w * 2; dv.output_height = h; dv.output_stride = w * 6; dv.mode = MEDIA_DUALVIEW_MODE_SIDE_BY_SIDE;
@@ -9534,6 +9783,7 @@ static const char *module_flow_note(const char *name) {
     if (strcasecmp(name, "CONV_CL") == 0) return "数据流：四路同源输入进入CONV_CL，GPU并行卷积。";
     if (strcasecmp(name, "TRANSFORM") == 0) return "数据流：四路同源输入通过LUT做畸变和透视变换。";
     if (strcasecmp(name, "EDOF_CL") == 0) return "数据流：近焦图和远焦图进入EDOF_CL，输出融合清晰图。";
+    if (strcasecmp(name, "MCF_FUSION_CL") == 0) return "数据流：彩色图和单色细节图进入MCF_FUSION_CL，输出彩色细节增强图。";
     if (strcasecmp(name, "DUALVIEW") == 0) return "数据流：两路RGB输入生成左右并排和逐行交错输出。";
     if (strcasecmp(name, "STEREO_3D") == 0) return "数据流：VI经VPSS分两路，原图和旋转图进入STEREO_3D合并输出。";
     if (strcasecmp(name, "PANO") == 0) return "数据流：六路图像按PTO标定查表拼接成全景输出。";
@@ -9559,6 +9809,7 @@ static const char *module_showcase_note(const char *name) {
     if (strcasecmp(name, "CONV_CL") == 0) return "展示重点：四路GPU卷积同屏比较。";
     if (strcasecmp(name, "TRANSFORM") == 0) return "展示重点：LUT畸变矫正、旋转缩放和透视变换。";
     if (strcasecmp(name, "EDOF_CL") == 0) return "展示重点：近焦和远焦图融合成更清晰输出。";
+    if (strcasecmp(name, "MCF_FUSION_CL") == 0) return "展示重点：单色高频细节注入彩色图，观察纹理增强和GPU耗时。";
     if (strcasecmp(name, "DUALVIEW") == 0) return "展示重点：两路输入生成左右并排和逐行交错输出。";
     if (strcasecmp(name, "STEREO_3D") == 0) return "展示重点：原图和旋转分支合并为一个3D格式输出。";
     if (strcasecmp(name, "PANO") == 0) return "展示重点：六张标定图拼接为完整全景。";
@@ -9599,6 +9850,7 @@ static void draw_single_module_page(uint8_t *canvas, int stride, int frame,
                           refs->cap_live, refs->dcp_live, refs->conv_live,
                           refs->clahe_live, refs->retinex_live, refs->pano_out,
                           refs->edof_in0, refs->edof_in1, refs->edof_out,
+                          refs->mcf_color, refs->mcf_mono, refs->mcf_out,
                           refs->stereo_live, refs->dual_in0, refs->dual_in1,
                           refs->dual_sbs, refs->dual_lbl);
         draw_text(canvas, stride, 838, SCREEN_H - 40, tile_status_text(g_tiles[idx].status),
@@ -9620,14 +9872,16 @@ static void draw_showcase_page(uint8_t *canvas, int stride, int frame, int rotat
                                const uint8_t *retinex_live,
                                const uint8_t *pano_out,
                                const uint8_t *edof_in0, const uint8_t *edof_in1,
-                               const uint8_t *edof_out, const uint8_t *stereo_live,
+                               const uint8_t *edof_out,
+                               const uint8_t *mcf_color, const uint8_t *mcf_mono,
+                               const uint8_t *mcf_out, const uint8_t *stereo_live,
                                const uint8_t *dual_in0, const uint8_t *dual_in1,
                                const uint8_t *dual_sbs, const uint8_t *dual_lbl) {
     display_refs_t refs = {
         cam, osd_live, resize_live, vpss_live, csc_rga_live, transform_live,
         cap_live, dcp_live, conv_live, clahe_live, retinex_live, pano_out,
-        edof_in0, edof_in1, edof_out, stereo_live, dual_in0, dual_in1,
-        dual_sbs, dual_lbl
+        edof_in0, edof_in1, edof_out, mcf_color, mcf_mono, mcf_out,
+        stereo_live, dual_in0, dual_in1, dual_sbs, dual_lbl
     };
     if (only_tile) {
         int loop_page = module_page_number(only_tile) - 1;
@@ -9753,6 +10007,7 @@ int main(int argc, char **argv) {
             rotate_main = 0;
         }
     }
+    only_tile = canonical_tile_name(only_tile);
 
     if (self_test) {
         return run_self_test();
@@ -9787,6 +10042,8 @@ int main(int argc, char **argv) {
     int loaded_assets = solid_test ? 0 : load_loop_assets();
     int loaded_edof_pairs = (!solid_test && (!only_tile || strcasecmp(only_tile, "EDOF_CL") == 0)) ?
         load_edof_pairs() : 0;
+    int loaded_mcf_pairs = (!solid_test && (!only_tile || strcasecmp(only_tile, "MCF_FUSION_CL") == 0)) ?
+        load_mcf_pairs() : 0;
     int loaded_pano_sample = (!solid_test && (!only_tile || strcasecmp(only_tile, "PANO") == 0)) ?
         load_pano_sample() : 0;
     collect_health(loaded_assets);
@@ -9797,6 +10054,7 @@ int main(int argc, char **argv) {
     if (!solid_test && only_tile && strcasecmp(only_tile, "NPU") == 0) {
         int npu_ret = run_only_npu_vdec_demo(dstride, display_size);
         unload_pano_sample();
+        unload_mcf_pairs();
         unload_edof_pairs();
         unload_loop_assets();
         MEDIA_SYS_Exit();
@@ -9852,6 +10110,13 @@ int main(int argc, char **argv) {
     } else if (!solid_test && loaded_edof_pairs > 0) {
         set_tile_status("EDOF_CL", TILE_LOOP);
     }
+    int live_mcf_ok = 0;
+    if (!solid_test && only_tile && strcasecmp(only_tile, "MCF_FUSION_CL") == 0 &&
+        loaded_mcf_pairs > 0 && setup_live_mcf() == 0) {
+        live_mcf_ok = 1;
+    } else if (!solid_test && loaded_mcf_pairs > 0) {
+        set_tile_status("MCF_FUSION_CL", TILE_LOOP);
+    }
     int live_dualview_ok = 0;
     if (!solid_test && only_tile && strcasecmp(only_tile, "DUALVIEW") == 0 &&
         setup_live_dualview() == 0) {
@@ -9873,6 +10138,7 @@ int main(int argc, char **argv) {
         cleanup_live_stereo(live_stereo_ok);
         cleanup_live_pano(live_pano_ok);
         cleanup_live_dualview(live_dualview_ok);
+        cleanup_live_mcf(live_mcf_ok);
         cleanup_live_edof(live_edof_ok);
         cleanup_live_retinex(live_retinex_ok);
         cleanup_live_clahe(live_clahe_ok);
@@ -9886,6 +10152,7 @@ int main(int argc, char **argv) {
         cleanup_live_resize(live_resize_ok);
         cleanup_live_osd(live_osd_ok);
         unload_pano_sample();
+        unload_mcf_pairs();
         unload_edof_pairs();
         unload_loop_assets();
         MEDIA_SYS_Exit();
@@ -9906,6 +10173,7 @@ int main(int argc, char **argv) {
         cleanup_live_stereo(live_stereo_ok);
         cleanup_live_pano(live_pano_ok);
         cleanup_live_dualview(live_dualview_ok);
+        cleanup_live_mcf(live_mcf_ok);
         cleanup_live_edof(live_edof_ok);
         cleanup_live_retinex(live_retinex_ok);
         cleanup_live_clahe(live_clahe_ok);
@@ -9919,6 +10187,7 @@ int main(int argc, char **argv) {
         cleanup_live_resize(live_resize_ok);
         cleanup_live_osd(live_osd_ok);
         unload_pano_sample();
+        unload_mcf_pairs();
         unload_edof_pairs();
         unload_loop_assets();
         MEDIA_SYS_Exit();
@@ -10571,6 +10840,8 @@ int main(int argc, char **argv) {
     int retinex_frames = 0;
     int edof_frames = 0;
     int edof_pair_index = -1;
+    int mcf_frames = 0;
+    int mcf_pair_index = -1;
     int dualview_frames = 0;
     int pano_frames = 0;
     int stereo_frames = 0;
@@ -10590,6 +10861,9 @@ int main(int argc, char **argv) {
     uint8_t *last_edof_in0 = malloc(CAM_FRAME_SIZE);
     uint8_t *last_edof_in1 = malloc(CAM_FRAME_SIZE);
     uint8_t *last_edof = malloc(CAM_FRAME_SIZE);
+    uint8_t *last_mcf_color = malloc(CAM_FRAME_SIZE);
+    uint8_t *last_mcf_mono = malloc(CAM_FRAME_SIZE);
+    uint8_t *last_mcf = malloc(CAM_FRAME_SIZE);
     uint8_t *last_dual_in0 = malloc(RGB_FRAME_SIZE);
     uint8_t *last_dual_in1 = malloc(RGB_FRAME_SIZE);
     uint8_t *last_dual_sbs = malloc(RGB_FRAME_SIZE);
@@ -10612,6 +10886,9 @@ int main(int argc, char **argv) {
     if (last_edof_in0) memset(last_edof_in0, 0, CAM_FRAME_SIZE);
     if (last_edof_in1) memset(last_edof_in1, 0, CAM_FRAME_SIZE);
     if (last_edof) memset(last_edof, 0, CAM_FRAME_SIZE);
+    if (last_mcf_color) memset(last_mcf_color, 0, CAM_FRAME_SIZE);
+    if (last_mcf_mono) memset(last_mcf_mono, 0, CAM_FRAME_SIZE);
+    if (last_mcf) memset(last_mcf, 0, CAM_FRAME_SIZE);
     if (last_dual_in0) memset(last_dual_in0, 0, RGB_FRAME_SIZE);
     if (last_dual_in1) memset(last_dual_in1, 0, RGB_FRAME_SIZE);
     if (last_dual_sbs) memset(last_dual_sbs, 0, RGB_FRAME_SIZE);
@@ -10732,6 +11009,22 @@ int main(int argc, char **argv) {
                     }
                     edof_pair_index = next_pair;
                     edof_frames++;
+                }
+            }
+        }
+        if (loaded_mcf_pairs > 0 && last_mcf_color && last_mcf_mono && last_mcf) {
+            int next_pair = (frame / (FPS * MCF_PAIR_SECONDS)) % loaded_mcf_pairs;
+            if (next_pair != mcf_pair_index) {
+                mcf_pair_t *pair = get_loaded_mcf_pair(next_pair);
+                if (pair) {
+                    image_to_nv12_frame(&pair->color, last_mcf_color);
+                    image_to_nv12_frame(&pair->mono, last_mcf_mono);
+                    image_to_nv12_frame(&pair->reference, last_mcf);
+                    if (live_mcf_ok) {
+                        (void)process_live_mcf(last_mcf_color, last_mcf_mono, last_mcf);
+                    }
+                    mcf_pair_index = next_pair;
+                    mcf_frames++;
                 }
             }
         }
@@ -11451,6 +11744,9 @@ int main(int argc, char **argv) {
                                last_edof_in0,
                                last_edof_in1,
                                edof_frames > 0 ? last_edof : NULL,
+                               last_mcf_color,
+                               last_mcf_mono,
+                               mcf_frames > 0 ? last_mcf : NULL,
                                stereo_frames > 0 ? last_stereo : NULL,
                                (only_tile && strcasecmp(only_tile, "DUALVIEW") == 0) ? last_dual_in0 : NULL,
                                (only_tile && strcasecmp(only_tile, "DUALVIEW") == 0) ? last_dual_in1 : NULL,
@@ -11506,6 +11802,7 @@ int main(int argc, char **argv) {
     cleanup_live_stereo(live_stereo_ok);
     cleanup_live_pano(live_pano_ok);
     cleanup_live_dualview(live_dualview_ok);
+    cleanup_live_mcf(live_mcf_ok);
     cleanup_live_edof(live_edof_ok);
     cleanup_live_retinex(live_retinex_ok);
     cleanup_live_clahe(live_clahe_ok);
@@ -11523,6 +11820,7 @@ int main(int argc, char **argv) {
     MEDIA_POOL_Destroy(WORK_POOL_RGB);
     MEDIA_POOL_Destroy(WORK_POOL_OUT);
     unload_pano_sample();
+    unload_mcf_pairs();
     unload_edof_pairs();
     unload_loop_assets();
     free(last_stereo);
@@ -11533,6 +11831,9 @@ int main(int argc, char **argv) {
     free(last_dual_in1);
     free(last_dual_in0);
     free(last_pano);
+    free(last_mcf);
+    free(last_mcf_mono);
+    free(last_mcf_color);
     free(last_edof);
     free(last_edof_in1);
     free(last_edof_in0);
