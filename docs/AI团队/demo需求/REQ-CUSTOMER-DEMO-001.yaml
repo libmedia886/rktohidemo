@@ -1,0 +1,53 @@
+demo_requirement:
+  requirement_id: "REQ-CUSTOMER-DEMO-001"
+  case_name: "CUSTOMER_DEMO"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-CUSTOMER-DEMO.yaml"
+  user_value: "客户演示时默认入口直接展示稳定、容易理解、效果明显的模块页，减少工程调试页带来的解释成本。"
+  scope:
+    - "新增客户演示页表并作为无参数默认运行入口。"
+    - "新增 --customer-demo 和 --engineering-demo 参数。"
+    - "客户演示页表使用更适合客户理解的页面顺序和更长停留时间。"
+    - "更新 README，说明客户演示和工程演示的区别。"
+  non_scope:
+    - "不修改底层算法和 /userdata/rktohi 源码。"
+    - "不复制 rktohi/src 实现源码。"
+    - "不在本需求内逐页重做每个模块的画面内容。"
+    - "不把 NPU、AVM、SVM3D 等联调入口放入默认客户演示。"
+  target_screen:
+    layout: "沿用现有单模块竖屏布局。"
+    input_source: "实时摄像头、循环样张或已有 demo 素材，按各 case 现有实现选择。"
+    output_view: "默认轮播客户演示页；工程完整页表由 --engineering-demo 触发。"
+    overlay_text:
+      - "顶部模块名、页码、客户演示模式标识。"
+      - "中文展示重点。"
+      - "底部中文数据流和 CPU/GPU/RGA 状态。"
+    runtime_metrics:
+      - "FPS"
+      - "frame_time"
+      - "CPU"
+      - "GPU"
+      - "RGA"
+  implementation_boundary:
+    alldemo_files:
+      - "src/alldemo.c"
+      - "README.md"
+      - "docs/AI团队/demo需求/PRODUCT-CUSTOMER-DEMO.yaml"
+      - "docs/AI团队/demo需求/REQ-CUSTOMER-DEMO-001.yaml"
+    rktohi_dependency: "使用当前已同步的 media_api 和 libmedia 产物；本需求不修改 rktohi。"
+    copied_artifacts_only: true
+  acceptance_criteria:
+    - "无参数运行进入客户演示页表，页表不包含 VO、WBC、CSC_RGA、STEREO_3D。"
+    - "--engineering-demo 进入完整工程页表，包含 VO、WBC、CSC_RGA、STEREO_3D。"
+    - "客户演示页顶部模式显示 CUSTOMER DEMO 或 CUSTOMER MANUAL。"
+    - "README 说明客户演示、工程演示和单页 --only 的用途。"
+    - "工程可以重新编译，asset-check 可以执行。"
+  validation_plan:
+    build:
+      - "cmake --build build -j"
+    run:
+      - "./scripts/run_alldemo.sh --asset-check"
+      - "timeout -s INT 12s ./scripts/run_alldemo.sh --customer-demo"
+      - "timeout -s INT 12s ./scripts/run_alldemo.sh --engineering-demo"
+  open_questions: []
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

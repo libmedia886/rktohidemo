@@ -29,6 +29,7 @@ target_link_libraries(alldemo
     OpenCL
     crypto
     EGL
+    gbm
     freetype
     rknnrt
     rt

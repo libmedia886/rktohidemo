@@ -16,11 +16,11 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh
 ```
 
-默认参数适配当前设备：
+默认参数适配当前设备，并面向客户演示：
 
 - 屏幕：DSI/MIPI 竖屏 `1080x1920`
 - 摄像头：`/dev/video-camera0`
-- 主画面：默认轮播第一版展示闭环页面，屏幕上显示当前模块名、页码、实测 FPS、帧耗时、CPU/GPU/RGA 占用
+- 主画面：默认轮播客户演示页，屏幕上显示当前模块名、页码、实测 FPS、帧耗时、CPU/GPU/RGA 占用
 - 重算法或需要专门输入的模块：用 `--only <tile>` 单页展示，避免默认轮播转到占位页
 
 按 `Ctrl+C` 退出。
@@ -31,7 +31,19 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --no-rotate-main
 ```
 
-默认分页策略：轮播已经能稳定上屏的展示闭环页：`VI`、`VPSS`、`VO`、`WBC`、`OSD`、`RESIZE_RGA`、`THERMAL`、`EDOF_CL`、`MCF_FUSION_CL`、`RGA`、`CSC_RGA`、`CSC_CL`、`CLAHE`、`RETINEX`、`CAP_DEHAZE`、`CONV_CL`、`TRANSFORM`、`STEREO_3D`、`PANO`。其它已完成的重算法页保留在 `--only` 模式，避免默认轮播出现 `SYNTH`/`PROBED` 占位页或默认初始化资源冲突。
+默认客户演示分页策略：轮播用户容易看懂、画面效果明显、稳定上屏的页面：`VI`、`VPSS`、`OSD`、`RGA`、`RESIZE_RGA`、`CSC_CL`、`CLAHE`、`RETINEX`、`CAP_DEHAZE`、`CONV_CL`、`TRANSFORM`、`THERMAL`、`EDOF_CL`、`MCF_FUSION_CL`、`PANO`。偏工程验证或调试意味更强的 `VO`、`WBC`、`CSC_RGA`、`STEREO_3D` 保留在工程演示或 `--only` 模式，避免客户现场误解为黑屏、冻结、格式细节或调试页。
+
+如果要看完整工程页表：
+
+```bash
+/userdata/alldemo/scripts/run_alldemo.sh --engineering-demo
+```
+
+客户演示模式也可以显式指定：
+
+```bash
+/userdata/alldemo/scripts/run_alldemo.sh --customer-demo
+```
 
 默认运行先按时间自动循环；如果按一次音量键就切到手动模式，不再自动翻页。`KEY_VOLUMEUP` 切到下一页，`KEY_VOLUMEDOWN` 切到上一页。
 

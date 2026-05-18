@@ -1,0 +1,29 @@
+product_brief:
+  case_name: "CUSTOMER_DEMO"
+  target_user: "到现场观看 AllDemo 的客户和售前演示人员"
+  demo_goal: "默认启动即进入客户能看懂的稳定演示轮播，优先展示实时输入、硬件处理、图像增强和多图融合效果。"
+  first_screen_message: "客户看到的是一个按页轮播的模块能力展示，每页有模块名、展示重点、中文数据流和运行指标。"
+  must_show:
+    - "默认运行使用客户演示页表，不出现黑屏、冻结、占位或偏工程调试页。"
+    - "每页显示中文展示重点、数据流、CPU/GPU/RGA 状态和页码。"
+    - "保留 --only <case> 用于单页讲解，保留 --engineering-demo 用于完整工程页表。"
+  should_show:
+    - "客户演示优先顺序从实时采集和基础处理开始，再到增强、变换、融合和全景。"
+    - "每页停留时间比工程轮播略长，给讲解留出时间。"
+  avoid_showing:
+    - "默认客户演示中不放 VO 冻结/隐藏、WBC 回抓、CSC_RGA 往返细节、STEREO_3D 调试页。"
+    - "不把资源缺失、PROBED、SYNTH 或联调入口包装成完成能力。"
+  input_source_preference: "live_camera|loop_assets|existing_demo_asset"
+  visual_layout: "继续使用一页一个模块的竖屏展示；顶部模块名和展示重点，中央主画面，底部数据流和运行指标。"
+  comparison_rule: "比较类页面必须保持窗格尺寸一致，并说明输入来源和处理结果。"
+  overlay_text:
+    data_flow: "每页必须显示中文数据流。"
+    rationale: "每页必须说明为什么这样展示或用户应该看什么。"
+    runtime_metrics: "CPU/GPU/RGA/FPS/frame time"
+  acceptance_feel:
+    - "默认启动后不需要额外参数即可用于客户演示。"
+    - "现场讲解可以按音量键进入手动翻页。"
+    - "工程人员仍可用 --engineering-demo 或 --only 查看完整能力。"
+  product_defects: []
+  product_verdict: "Need Implementation"
+  next_skill: "alldemo-requirements-boundary"

@@ -25,6 +25,19 @@ typedef enum {
 typedef int MEDIA_DEV;
 typedef int MEDIA_CHN;
 
+typedef enum {
+    MEDIA_STATUS_OK = 0,
+    MEDIA_ERR_INVALID_PARAM = -1,
+    MEDIA_ERR_MODULE_NOT_FOUND = -1001,
+    MEDIA_ERR_PORT_NOT_FOUND = -1002,
+    MEDIA_ERR_PORT_DIRECTION = -1003,
+    MEDIA_ERR_PORT_INCOMPATIBLE = -1004,
+    MEDIA_ERR_PIPELINE_STATE = -1005,
+    MEDIA_ERR_RESOURCE = -1006,
+    MEDIA_ERR_ALREADY_EXISTS = -1007,
+    MEDIA_ERR_NOT_FOUND = -1008,
+} MEDIA_STATUS;
+
 typedef struct {
     int pool_id;
     int index;
@@ -59,6 +72,8 @@ typedef enum {
     // 编码格式（用于模块间传递编码包）
     MEDIA_FORMAT_H264 = 100,  // H.264 编码包
     MEDIA_FORMAT_H265 = 101,  // H.265 编码包
+    MEDIA_FORMAT_MJPEG = 102, // MJPEG 编码包
+    MEDIA_FORMAT_JPEG = 103,  // JPEG 编码包
 } MEDIA_FORMAT;
 
 typedef enum {
@@ -102,6 +117,27 @@ typedef struct {
     int pool_id;
     int format;     // 像素格式 (V4L2_PIX_FMT_*)
 } MEDIA_VI_ATTR;
+
+typedef enum {
+    MEDIA_TPG_PATTERN_COLOR_BARS = 0,
+    MEDIA_TPG_PATTERN_CHECKERBOARD = 1,
+    MEDIA_TPG_PATTERN_GRADIENT = 2,
+    MEDIA_TPG_PATTERN_SOLID = 3,
+    MEDIA_TPG_PATTERN_MOVING_BOX = 4,
+} MEDIA_TPG_PATTERN;
+
+typedef struct {
+    int width;       // required > 0
+    int height;      // required > 0
+    int stride;      // 0=auto from format/width
+    int format;      // MEDIA_FORMAT_NV12/RGB888/BGR888/RGBA/BGRA/ARGB/ABGR/GRAY8
+    int fps;         // <=0 defaults to 30 in module implementation
+    int pool_id;     // required >= 0
+    int pattern;     // MEDIA_TPG_PATTERN_*
+    int block_size;  // checker/moving-box block size, <=0 uses module default
+    uint32_t fg_color; // 0xRRGGBB
+    uint32_t bg_color; // 0xRRGGBB
+} MEDIA_TPG_ATTR;
 
 typedef struct {
     const char *folder_path;  // required
@@ -369,6 +405,99 @@ typedef struct {
     const char *adapter_name;
 } MEDIA_NPU_MODEL_INFO;
 
+#define MEDIA_SYS_MAX_STATS_MODULES 32
+#define MEDIA_SYS_MAX_STATS_PORTS 32
+#define MEDIA_SYS_MAX_STATS_POOLS 16
+#define MEDIA_SYS_STATS_NAME_LEN 64
+#define MEDIA_SYS_STATS_DETAIL_LEN 128
+
+typedef enum {
+    MEDIA_PORT_DIR_INPUT = 0,
+    MEDIA_PORT_DIR_OUTPUT = 1,
+} MEDIA_PORT_DIR;
+
+typedef struct {
+    int has_gpu;
+    double gpu_kernel_ms;
+    double gpu_queue_ms;
+    char detail[MEDIA_SYS_STATS_DETAIL_LEN];
+} MEDIA_MODULE_EXTRA_STATS;
+
+typedef struct {
+    char name[MEDIA_SYS_STATS_NAME_LEN];
+    int direction;              /* MEDIA_PORT_DIR_* */
+    int connected;
+    int width;
+    int height;
+    int stride;
+    int format;
+    int declared_queue_depth;
+
+    int queue_current;
+    int queue_capacity;
+    int queue_high_watermark;
+    uint64_t send_count;
+    uint64_t enqueue_count;
+    uint64_t dequeue_count;
+    uint64_t drop_count;
+    uint64_t manual_overwrite_count;
+    double queue_latency_last_ms;
+    double queue_latency_avg_ms;
+    double queue_latency_max_ms;
+
+    int last_layout_valid;
+    int last_layout_format;
+    int last_layout_width;
+    int last_layout_height;
+    uint32_t last_layout_strides[4];
+} MEDIA_PORT_STATS;
+
+typedef struct {
+    char name[MEDIA_SYS_STATS_NAME_LEN];
+    int type;
+    int state;
+    uint64_t frame_count;        /* total frame count, not reset by MEDIA_SYS_ResetStats */
+    uint64_t stats_frame_count;  /* frame count since last MEDIA_SYS_ResetStats */
+    uint64_t process_count;
+    uint64_t process_fail_count;
+    double fps;                 /* average since last MEDIA_SYS_ResetStats */
+    double process_last_ms;
+    double process_avg_ms;
+    double process_max_ms;
+
+    int has_gpu;
+    double gpu_kernel_ms;
+    double gpu_queue_ms;
+    char gpu_detail[MEDIA_SYS_STATS_DETAIL_LEN];
+
+    int input_count;
+    int output_count;
+    MEDIA_PORT_STATS inputs[MEDIA_SYS_MAX_STATS_PORTS];
+    MEDIA_PORT_STATS outputs[MEDIA_SYS_MAX_STATS_PORTS];
+} MEDIA_MODULE_STATS;
+
+typedef struct {
+    int pool_id;
+    size_t buffer_size;
+    int total_count;
+    int available_count;
+    int used_count;
+    int peak_used_count;
+    uint64_t get_count;
+    uint64_t put_count;
+    uint64_t get_fail_count;
+} MEDIA_POOL_STATS;
+
+typedef struct {
+    char name[MEDIA_SYS_STATS_NAME_LEN];
+    int state;
+    int module_count;
+    int connection_count;
+    int pool_count;
+    MEDIA_MODULE_STATS modules[MEDIA_SYS_MAX_STATS_MODULES];
+    MEDIA_POOL_STATS pools[MEDIA_SYS_MAX_STATS_POOLS];
+} MEDIA_PIPELINE_STATS;
+
 // 系统控制
 int MEDIA_SYS_Init(void);
 int MEDIA_SYS_Exit(void);
@@ -376,6 +505,8 @@ int MEDIA_SYS_SetLicense(const char *path);
 int MEDIA_SYS_DumpChipInfo(const char *path);
 const char *MEDIA_SYS_GetVersion(void);
 int MEDIA_SYS_GetModuleFrameCount(const char *mod, int id, uint64_t *frame_count);
+int MEDIA_SYS_GetPipelineStats(MEDIA_PIPELINE_STATS *stats);
+int MEDIA_SYS_ResetStats(void);
 
 // 绑定/解绑
 int MEDIA_SYS_Bind(const char *src_mod, int src_id, const char *src_port,
@@ -389,6 +520,17 @@ int MEDIA_VI_Enable(MEDIA_DEV dev);
 int MEDIA_VI_Disable(MEDIA_DEV dev);
 int MEDIA_VI_GetFrame(MEDIA_DEV dev, MEDIA_BUFFER *buf, int timeout_ms);
 int MEDIA_VI_ReleaseFrame(MEDIA_DEV dev, MEDIA_BUFFER buf);
+
+// TPG (test pattern generator)
+int MEDIA_TPG_CreateChn(int chn, const MEDIA_TPG_ATTR *attr);
+int MEDIA_TPG_SetAttr(int chn, const MEDIA_TPG_ATTR *attr);
+int MEDIA_TPG_DestroyChn(int chn);
+int MEDIA_TPG_Enable(int chn);
+int MEDIA_TPG_Disable(int chn);
+int MEDIA_TPG_Start(int chn);
+int MEDIA_TPG_Stop(int chn);
+int MEDIA_TPG_GetFrame(int chn, MEDIA_BUFFER *buf, int timeout_ms);
+int MEDIA_TPG_ReleaseFrame(int chn, MEDIA_BUFFER buf);
 
 // Pool
 int MEDIA_POOL_Create(int pool_id, size_t size, int count);
@@ -1084,6 +1226,8 @@ typedef struct {
     int src_y;                  /* 源图像 Y 坐标裁剪起点 */
     int src_width;              /* 源图像裁剪宽度 (0 表示使用输入端口宽度) */
     int src_height;             /* 源图像裁剪高度 (0 表示使用输入端口高度) */
+    int input_width;            /* 输入图像宽度 (0 表示按 crop 区域兼容推导) */
+    int input_height;           /* 输入图像高度 (0 表示按 crop 区域兼容推导) */
     int input_stride;           /* 输入 stride (0 表示默认=width) */
     int input_format;           /* 输入格式 (MEDIA_FORMAT_NV12, MEDIA_FORMAT_RGB888, MEDIA_FORMAT_RGBA8888) */
     int input_depth;            /* 输入端口队列深度（0 表示默认=4） */
@@ -1304,8 +1448,6 @@ typedef struct {
 typedef struct {
     const char *device;     // DRM card，NULL 表示 /dev/dri/card0
     const char *target;     // 显示 connector 名称，如 DSI-1 / HDMI-A-1；NULL 表示自动找 active CRTC
-    int connector_id;       // writeback connector id，<=0 自动查找
-    int crtc_id;            // 被回环的 CRTC id，<=0 自动使用当前 active CRTC
     int width;              // 抓取宽度按格式对齐：ARGB8888/AR24 16 像素，NV12/BGR888 64 像素
     int height;             // 抓取高度，VO_WBC 不额外对齐
     int stride;             // bytesperline，<=0 自动；显式配置必须匹配 width/format

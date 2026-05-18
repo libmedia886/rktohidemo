@@ -149,10 +149,12 @@
 #define PANO_OUTPUT_SIZE (PANO_STITCH_STRIDE * PANO_STITCH_H * 3 / 2)
 #define MAIN_ROTATE_SECONDS 5
 #define PAGE_ROTATE_SECONDS 8
+#define CUSTOMER_ROTATE_SECONDS 10
 #define NAV_KEY_MAX_FDS 16
 #define NAV_ENV_PAGE "ALLDEMO_LOOP_PAGE"
 #define NAV_ENV_TOTAL "ALLDEMO_LOOP_TOTAL"
 #define NAV_ENV_MODE "ALLDEMO_LOOP_MODE"
+#define NAV_ENV_PROFILE "ALLDEMO_LOOP_PROFILE"
 #define RGA_OP_SECONDS 3
 #define EDOF_PAIR_SECONDS 3
 #define MCF_PAIR_SECONDS 3
@@ -506,9 +508,39 @@ static const char *g_module_pages[] = {
 };
 
 static const char *g_default_pages[] = {
+    "VI", "VPSS", "OSD", "RGA", "RESIZE_RGA", "CSC_CL", "CLAHE", "RETINEX",
+    "CAP_DEHAZE", "CONV_CL", "TRANSFORM", "THERMAL", "EDOF_CL", "MCF_FUSION_CL",
+    "PANO",
+};
+
+static const char *g_engineering_pages[] = {
     "VI", "VPSS", "VO", "WBC", "OSD", "RESIZE_RGA", "THERMAL", "EDOF_CL",
     "MCF_FUSION_CL", "RGA", "CSC_RGA", "CSC_CL", "CLAHE", "RETINEX",
     "CAP_DEHAZE", "CONV_CL", "TRANSFORM", "STEREO_3D", "PANO",
+};
+
+typedef struct {
+    const char *name;
+    const char *profile;
+    const char *const *pages;
+    int total_pages;
+    int rotate_seconds;
+} demo_loop_t;
+
+static const demo_loop_t g_customer_loop = {
+    "customer demo",
+    "CUSTOMER",
+    g_default_pages,
+    (int)ARRAY_SIZE(g_default_pages),
+    CUSTOMER_ROTATE_SECONDS,
+};
+
+static const demo_loop_t g_engineering_loop = {
+    "engineering demo",
+    "ENGINEERING",
+    g_engineering_pages,
+    (int)ARRAY_SIZE(g_engineering_pages),
+    PAGE_ROTATE_SECONDS,
 };
 
 static const char *g_vpss_tile_labels[VPSS_DEMO_OUTPUTS] = {
@@ -653,13 +685,14 @@ static int wrap_page_index(int page, int total) {
     return page % total;
 }
 
-static void set_loop_child_env(int page, int total, int manual_mode) {
+static void set_loop_child_env(int page, int total, int manual_mode, const char *profile) {
     char value[32];
     snprintf(value, sizeof(value), "%d", page + 1);
     setenv(NAV_ENV_PAGE, value, 1);
     snprintf(value, sizeof(value), "%d", total);
     setenv(NAV_ENV_TOTAL, value, 1);
     setenv(NAV_ENV_MODE, manual_mode ? "MANUAL" : "AUTO", 1);
+    setenv(NAV_ENV_PROFILE, profile && profile[0] ? profile : "DEFAULT", 1);
 }
 
 static int wait_default_only_child(pid_t child, int seconds,
@@ -704,8 +737,9 @@ static int wait_default_only_child(pid_t child, int seconds,
     return -1;
 }
 
-static int run_default_only_loop(const char *argv0, int rotate_main) {
+static int run_default_only_loop(const char *argv0, int rotate_main, const demo_loop_t *loop) {
     char self[PATH_MAX];
+    if (!loop) loop = &g_customer_loop;
     ssize_t n = readlink("/proc/self/exe", self, sizeof(self) - 1);
     if (n > 0) {
         self[n] = '\0';
@@ -713,7 +747,7 @@ static int run_default_only_loop(const char *argv0, int rotate_main) {
         snprintf(self, sizeof(self), "%s", argv0 && argv0[0] ? argv0 : "./alldemo");
     }
 
-    printf("alldemo default loop now reuses --only module pages. Ctrl+C to stop.\n");
+    printf("alldemo %s reuses --only module pages. Ctrl+C to stop.\n", loop->name);
 
     nav_key_reader_t nav_reader = {0};
     int nav_count = rotate_main ? nav_key_reader_open(&nav_reader) : 0;
@@ -728,10 +762,10 @@ static int run_default_only_loop(const char *argv0, int rotate_main) {
 
     int page = 0;
     int manual_mode = 0;
-    int total_pages = (int)ARRAY_SIZE(g_default_pages);
+    int total_pages = loop->total_pages;
     while (g_running) {
         int page_index = rotate_main ? wrap_page_index(page, total_pages) : 0;
-        const char *module = g_default_pages[page_index];
+        const char *module = loop->pages[page_index];
         pid_t child = fork();
         if (child < 0) {
             perror("fork --only page");
@@ -739,16 +773,16 @@ static int run_default_only_loop(const char *argv0, int rotate_main) {
             return 1;
         }
         if (child == 0) {
-            set_loop_child_env(page_index, total_pages, manual_mode);
+            set_loop_child_env(page_index, total_pages, manual_mode, loop->profile);
             execl(self, self, "--only", module, (char *)NULL);
             fprintf(stderr, "exec %s --only %s failed: %s\n", self, module, strerror(errno));
             _exit(127);
         }
 
-        printf("default loop page: --only %s (%s)\n", module, manual_mode ? "manual" : "auto");
+        printf("%s page: --only %s (%s)\n", loop->name, module, manual_mode ? "manual" : "auto");
         nav_key_action_t nav_action = NAV_KEY_NONE;
         (void)wait_default_only_child(child,
-                                      rotate_main && !manual_mode ? PAGE_ROTATE_SECONDS : -1,
+                                      rotate_main && !manual_mode ? loop->rotate_seconds : -1,
                                       rotate_main ? &nav_reader : NULL,
                                       &nav_action);
         if (!rotate_main) break;
@@ -4623,7 +4657,14 @@ static int module_page_total(void) {
 
 static const char *showcase_nav_mode(void) {
     const char *mode = getenv(NAV_ENV_MODE);
+    const char *profile = getenv(NAV_ENV_PROFILE);
     if (!mode || !mode[0]) return NULL;
+    if (profile && strcasecmp(profile, "CUSTOMER") == 0) {
+        return strcasecmp(mode, "MANUAL") == 0 ? "CUSTOMER MANUAL" : "CUSTOMER DEMO";
+    }
+    if (profile && strcasecmp(profile, "ENGINEERING") == 0) {
+        return strcasecmp(mode, "MANUAL") == 0 ? "ENGINEER MANUAL" : "ENGINEER DEMO";
+    }
     if (strcasecmp(mode, "MANUAL") == 0) return "MANUAL";
     if (strcasecmp(mode, "AUTO") == 0) return "AUTO LOOP";
     return NULL;
@@ -4735,8 +4776,6 @@ static int setup_live_wbc(void) {
 
     attr.device = NULL;
     attr.target = NULL;
-    attr.connector_id = connector_id;
-    attr.crtc_id = crtc_id;
     attr.width = WBC_CAPTURE_W;
     attr.height = WBC_CAPTURE_H;
     attr.stride = WBC_CAPTURE_STRIDE;
@@ -9995,12 +10034,15 @@ int main(int argc, char **argv) {
     int self_test = 0;
     int solid_test = 0;
     int rotate_main = 1;
+    const demo_loop_t *demo_loop = &g_customer_loop;
     const char *only_tile = NULL;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--probe") == 0) heavy_probe = 1;
         if (strcmp(argv[i], "--asset-check") == 0) asset_check = 1;
         if (strcmp(argv[i], "--self-test") == 0) self_test = 1;
         if (strcmp(argv[i], "--solid-test") == 0) solid_test = 1;
+        if (strcmp(argv[i], "--customer-demo") == 0) demo_loop = &g_customer_loop;
+        if (strcmp(argv[i], "--engineering-demo") == 0) demo_loop = &g_engineering_loop;
         if (strcmp(argv[i], "--no-rotate-main") == 0) rotate_main = 0;
         if (strcmp(argv[i], "--only") == 0 && i + 1 < argc) {
             only_tile = argv[++i];
@@ -10026,7 +10068,7 @@ int main(int argc, char **argv) {
     }
 
     if (!only_tile && !solid_test && !heavy_probe) {
-        return run_default_only_loop(argv[0], rotate_main);
+        return run_default_only_loop(argv[0], rotate_main, demo_loop);
     }
 
     const int dstride = ALIGN_UP(SCREEN_W, 64);
@@ -11796,9 +11838,9 @@ int main(int argc, char **argv) {
     cleanup_live_clahe_bind(live_clahe_bind_ok);
     cleanup_live_retinex_bind(live_retinex_bind_ok);
     cleanup_live_rga(live_rga_ok);
-    cleanup_display_vmix_osd(display_vmix_osd_ok);
     MEDIA_VO_Stop(0, 0);
     MEDIA_VO_DestroyChn(0, 0);
+    cleanup_display_vmix_osd(display_vmix_osd_ok);
     cleanup_live_stereo(live_stereo_ok);
     cleanup_live_pano(live_pano_ok);
     cleanup_live_dualview(live_dualview_ok);
