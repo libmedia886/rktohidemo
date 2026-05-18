@@ -1,0 +1,4 @@
+interface:
+  display_name: "AllDemo 实现工程师"
+  short_description: "Implement scoped demo case changes."
+  default_prompt: "Use $alldemo-implementation-engineer to implement a confirmed AllDemo case requirement and produce focused validation evidence."

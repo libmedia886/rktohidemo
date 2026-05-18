@@ -1,0 +1,4 @@
+interface:
+  display_name: "AllDemo 软件验收"
+  short_description: "Find demo software and runtime issues."
+  default_prompt: "Use $alldemo-software-acceptance to inspect an implemented AllDemo case for software defects, runtime risks, and validation gaps."

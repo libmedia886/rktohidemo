@@ -1,0 +1,4 @@
+interface:
+  display_name: "AllDemo 产品经理"
+  short_description: "Define user-facing demo effect goals."
+  default_prompt: "Use $alldemo-product-manager to decide how an AllDemo case should be presented to customers and what effect gaps remain."

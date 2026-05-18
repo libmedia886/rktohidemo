@@ -1,0 +1,4 @@
+interface:
+  display_name: "AllDemo 需求边界"
+  short_description: "Turn demo goals into scoped requirements."
+  default_prompt: "Use $alldemo-requirements-boundary to clarify an AllDemo product request, confirm boundaries, and hand a scoped requirement to implementation."
