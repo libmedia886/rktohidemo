@@ -124,6 +124,7 @@
 #define VPSS_TILE_NV12_SIZE (VPSS_TILE_NV12_STRIDE * VPSS_TILE_H * 3 / 2)
 #define VPSS_TILE_RGBA_STRIDE (VPSS_TILE_W * 4)
 #define VPSS_TILE_RGBA_SIZE (VPSS_TILE_RGBA_STRIDE * VPSS_TILE_H)
+#define VPSS_QUAD_OUTPUT_POOL_COUNT (VPSS_DEMO_OUTPUTS * 6)
 #define TRANSFORM_OUTPUT_POOL CONV_CL_OUTPUT_POOL
 #define STEREO_INPUT_COUNT 2
 #define STEREO_ROTATED_OUTPUT 1
@@ -1160,7 +1161,6 @@ static void maybe_capture_vo_channel_frame(const char *only_tile, int frame, int
     int is_conv_cl = strcasecmp(only_tile, "CONV_CL") == 0;
     int is_transform = strcasecmp(only_tile, "TRANSFORM") == 0;
     int is_stereo = strcasecmp(only_tile, "STEREO_3D") == 0;
-    int is_vmix = strcasecmp(only_tile, "VMIX") == 0;
     int is_vi = strcasecmp(only_tile, "VI") == 0;
     int is_vpss = strcasecmp(only_tile, "VPSS") == 0;
     int is_osd = strcasecmp(only_tile, "OSD") == 0;
@@ -1170,7 +1170,7 @@ static void maybe_capture_vo_channel_frame(const char *only_tile, int frame, int
     int is_clahe = strcasecmp(only_tile, "CLAHE") == 0;
     int is_cap_dehaze = strcasecmp(only_tile, "CAP_DEHAZE") == 0;
     int is_dcp_dehaze = strcasecmp(only_tile, "DCP_FAST_DEHAZE") == 0;
-    if (!is_retinex && !is_conv_cl && !is_transform && !is_stereo && !is_vmix && !is_vi && !is_vpss && !is_osd && !is_rga && !is_resize_rga && !is_csc_cl && !is_clahe && !is_cap_dehaze && !is_dcp_dehaze) return;
+    if (!is_retinex && !is_conv_cl && !is_transform && !is_stereo && !is_vi && !is_vpss && !is_osd && !is_rga && !is_resize_rga && !is_csc_cl && !is_clahe && !is_cap_dehaze && !is_dcp_dehaze) return;
     if (frame <= 0) return;
     if ((frame % (FPS * VO_CAPTURE_SECONDS)) != 0) return;
 
@@ -1185,9 +1185,6 @@ static void maybe_capture_vo_channel_frame(const char *only_tile, int frame, int
     } else if (is_stereo) {
         label = "STEREO_3D";
         prefix = "stereo_3d";
-    } else if (is_vmix) {
-        label = "VMIX";
-        prefix = "vmix";
     } else if (is_vi) {
         label = "VI";
         prefix = "vi";
@@ -8487,7 +8484,7 @@ static int update_vpss_dynamic_attrs(int frame) {
 
 static int setup_live_vpss(void) {
     if (MEDIA_POOL_Create(VPSS_INPUT_POOL, live_camera_input_frame_size(), 3) != 0) return -1;
-    if (MEDIA_POOL_Create(VPSS_OUTPUT_POOL, VPSS_TILE_NV12_SIZE, VPSS_DEMO_OUTPUTS * 4) != 0) {
+    if (MEDIA_POOL_Create(VPSS_OUTPUT_POOL, VPSS_TILE_NV12_SIZE, VPSS_QUAD_OUTPUT_POOL_COUNT) != 0) {
         MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
         return -1;
     }
@@ -9678,7 +9675,7 @@ static int setup_live_conv_cl_quad(void) {
 
     if (MEDIA_POOL_Create(VPSS_INPUT_POOL, live_camera_input_frame_size(), 3) != 0) return -1;
     vpss_input_pool_created = 1;
-    if (MEDIA_POOL_Create(VPSS_OUTPUT_POOL, VPSS_TILE_NV12_SIZE, VPSS_DEMO_OUTPUTS * 4) != 0) {
+    if (MEDIA_POOL_Create(VPSS_OUTPUT_POOL, VPSS_TILE_NV12_SIZE, VPSS_QUAD_OUTPUT_POOL_COUNT) != 0) {
         destroy_live_conv_cl_quad_pools(conv_input_pools_created, conv_output_pools_created,
                                         vpss_output_pool_created, vpss_input_pool_created);
         return -1;
@@ -12957,8 +12954,9 @@ int main(int argc, char **argv) {
             int crop_x = pingpong_i(frame * 4, CAM_W - crop_size) & ~1;
             int crop_y = pingpong_i(frame * 3, CAM_H - crop_size) & ~1;
             int zoom_crop = 640 - (pingpong_i(frame * 2, 320) & ~1);
+            int stable_vmix_page = only_tile && strcasecmp(only_tile, "VMIX") == 0;
             if (zoom_crop < 320) zoom_crop = 320;
-            if ((frame % 4) == 0) {
+            if (!stable_vmix_page && (frame % 4) == 0) {
                 if (update_vpss_dynamic_attrs(frame) != 0 && (frame % FPS) == 0) {
                     fprintf(stderr, "warning: VPSS dynamic attr update rejected\n");
                 }
