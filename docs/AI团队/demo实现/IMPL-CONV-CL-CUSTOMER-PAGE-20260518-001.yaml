@@ -1,0 +1,36 @@
+implementation_record:
+  requirement_id: "SRS-CONV-CL-CUSTOMER-PAGE-001"
+  case_name: "CONV_CL_CUSTOMER_PAGE"
+  date: "2026-05-18"
+  status: "Implemented"
+  summary:
+    - "CONV_CL 单页从四个并发 CONV_CL bind 分支切换为单个 CONV_CL 组顺序四核处理。"
+    - "主循环使用实时 VI NV12 输入，转换为 RGBA staging 后依次设置 SHARPEN、EDGE、EMBOSS、BLUR 表，并把四个真实输出合成 2x2 页面。"
+    - "页面新增 CONV_CL 专属中文展示：数据流、原因说明、四格标签、四个输出计数、CPU/GPU/RGA 和 CL kernel/queue 耗时。"
+    - "maybe_capture_module_vo_frame() 支持 CONV_CL，生成 vo_captures/conv_cl_vo_*.bmp。"
+    - "主循环增加 CONV_CL vi_frames、四效果帧计数、CPU/GPU/RGA、CL 耗时和 mode=single-sequential 周期日志。"
+    - "CONV_CL cleanup 避免提前销毁 CAMERA_POOL，等待 VI/sys cleanup 顺序释放相机 buffer。"
+    - "rktohi CONV_CL 高频 conv_table 更新日志改为 CONV_CL_LOG_TABLE_UPDATE=1 才输出，默认客户页日志不刷屏。"
+  changed_files:
+    alldemo:
+      - "src/alldemo.c"
+      - "README.md"
+      - "assets/effect_manifest.json"
+      - "docs/AI团队/demo需求/PRODUCT-CONV-CL-CUSTOMER-PAGE.yaml"
+      - "docs/AI团队/demo需求/SRS-CONV-CL-CUSTOMER-PAGE-001.yaml"
+      - "docs/AI团队/demo实现/IMPL-CONV-CL-CUSTOMER-PAGE-20260518-001.yaml"
+      - "docs/AI团队/demo验收/ACCEPT-CONV-CL-CUSTOMER-PAGE-20260518-001.yaml"
+      - "docs/问题记录/20260518-1706-conv-cl-four-live-groups-fail-eglimage-import-in-one-process.md"
+    rktohi:
+      - "/userdata/rktohi/src/module/conv_cl/conv_cl.c"
+  implementation_notes:
+    - "四个 CONV_CL 并发组在此板同进程下只有第一路 SHARPEN 正常，其余路 EGLImage import -34；单个 CONV_CL 组在 standalone probe 和 alldemo sequential path 中稳定。"
+    - "CONV_CL 当前客户页是 CPU 取 VI 帧、NV12 转 RGBA、SendFrame/GetFrame 后合成到 VO 页面，不再声明为四分支 bind 链路。"
+    - "alldemo 只消费 rktohi 构建产物，不复制 rktohi/src 实现源码。"
+  issue_record:
+    - "docs/问题记录/20260518-1706-conv-cl-four-live-groups-fail-eglimage-import-in-one-process.md"
+  validation_artifacts:
+    - "/tmp/alldemo_conv_cl_srs001_baseline.log"
+    - "/tmp/alldemo_conv_cl_srs001_vmix_rga.log"
+    - "/tmp/alldemo_conv_cl_srs001_final.log"
+    - "vo_captures/conv_cl_vo_000150.bmp"

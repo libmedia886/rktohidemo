@@ -1,0 +1,25 @@
+acceptance_report:
+  case_name: "OSD_CUSTOMER_PAGE"
+  requirement_id: "SRS-OSD-CUSTOMER-PAGE-001"
+  verdict: "Pass With Risks"
+  evidence:
+    - command: "git diff --check"
+      result: "Passed"
+      summary: "无 whitespace error。"
+    - command: "cmake --build build -j"
+      result: "Passed"
+      summary: "重新编译和链接 build/alldemo 通过。"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      result: "Passed"
+      summary: "循环素材检查通过，脚本路径未回归。"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only OSD"
+      result: "Passed"
+      summary: "OSD 单页启动到真实两级 OSD bind 链路；日志有 OSD/display OSD 帧计数和 CPU/GPU/RGA 指标；生成 vo_captures/osd_vo_000150.bmp；退出后无残留进程。"
+    - command: "grep -c 'Width mismatch\\|bind failed\\|OSD bind display setup failed' /tmp/alldemo_osd_srs001.log"
+      result: "Passed"
+      summary: "计数为 0。"
+  software_issues: []
+  not_verified:
+    - "未做人工屏幕视觉验收，产品仍需复看 OSD 页面文字密度和 region 可读性。"
+    - "未完整跑完客户默认轮播所有页面。"
+  next_skill: "alldemo-product-manager"

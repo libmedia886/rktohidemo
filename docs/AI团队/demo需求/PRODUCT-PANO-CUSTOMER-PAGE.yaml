@@ -1,0 +1,39 @@
+product_brief:
+  case_name: "PANO_CUSTOMER_PAGE"
+  target_user: "到现场观看 AllDemo 的客户和售前演示人员"
+  demo_goal: "把 PANO 页讲成可理解的六路全景拼接展示：六张标定输入图进入全景流程，主输出区显示 1920x960 全景预览。"
+  first_screen_message: "客户一眼看到 6 路输入和 panorama 输出，知道该能力用于多摄像头环视/全景拼接。"
+  must_show:
+    - "PANO 保持在默认客户演示页表内。"
+    - "页面使用 assets/loop/pano/sample2 的六张 camera_*.jpg 和 calib_file.pto。"
+    - "单页显示六路输入图和 PANORAMA OUTPUT。"
+    - "默认客户页使用稳定 reference-strip 预览，避免 live PANO worker 影响 Ctrl+C 清理。"
+    - "需要验证真实 live PANO 模块时可显式设置 ALLDEMO_PANO_LIVE=1。"
+    - "运行日志输出 PANO 帧数、输出状态、mode、cache 状态、预览尺寸、全景域尺寸和 CPU/GPU/RGA 状态。"
+    - "运行后保存 PANO 页面 VO 抓帧，供产品复看页面效果。"
+  should_show:
+    - "客户能理解六路输入如何形成横向全景预览。"
+    - "短运行验证能看到 150/300/450 抓帧和完整清理日志。"
+    - "README 和 effect manifest 应明确 reference 默认模式、ALLDEMO_PANO_LIVE=1 可选 live 模块、页面缓存和抓帧证据。"
+  avoid_showing:
+    - "不要默认启动会卡住清理的 live PANO worker。"
+    - "不要默认使用 8378x4190 超大全景输出拖慢客户页。"
+    - "不要把 reference-strip 默认预览说成已经通过 live PANO 模块输出。"
+  input_source_preference: "loop_six_camera_images"
+  visual_layout: "竖屏单模块页；上方中文数据流和原因说明，中部六路输入 + PANORAMA OUTPUT，对输出做等比居中显示，底部展示重点和运行状态。"
+  comparison_rule: "六路输入和输出必须来自同一组 sample2 素材；默认输出是稳定 reference-strip，全景 live 模块为显式验证模式。"
+  overlay_text:
+    data_flow: "数据流：6张标定图 + PTO标定 -> PANO -> 1920x960全景预览输出。"
+    rationale: "PTO 查表把多路相机画面映射到完整全景域，再输出客户页预览。"
+    runtime_metrics: "CPU/GPU/RGA/FPS/frame time/output state/mode/cache state/preview size/domain size"
+  acceptance_feel:
+    - "客户能看懂六路输入和横向全景输出的关系。"
+    - "演示人员能用抓帧复看输入网格、输出预览、中文说明和指标是否清楚。"
+    - "PANO 页面能短运行并干净退出。"
+  product_defects:
+    - id: "PROD-PANO-001"
+      description: "PANO 基线默认 live worker 使用 8378x4190 输出，35 秒内没有抓帧和清理证据；live stop 路径在 SIGINT 下会卡住。"
+      expected_change: "默认客户页切到稳定 reference-strip 预览，保留 live 模块为显式开关，增加缓存、日志、抓帧和验收记录。"
+      severity: "Critical"
+  product_verdict: "Implemented"
+  next_skill: "alldemo-runtime-acceptance"

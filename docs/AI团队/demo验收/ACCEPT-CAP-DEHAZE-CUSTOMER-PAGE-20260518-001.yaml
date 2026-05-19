@@ -1,0 +1,40 @@
+acceptance_record:
+  requirement_id: "SRS-CAP-DEHAZE-CUSTOMER-PAGE-001"
+  case_name: "CAP_DEHAZE_CUSTOMER_PAGE"
+  date: "2026-05-18"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "git diff --check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 3s 9s stdbuf -oL -eL ./scripts/run_alldemo.sh --only CAP_DEHAZE > /tmp/alldemo_cap_dehaze_srs001_final.log 2>&1"
+      cwd: "/userdata/alldemo"
+      result: "pass_functional_probe"
+    - command: "stdbuf -oL -eL ./scripts/run_alldemo.sh --only CAP_DEHAZE > /tmp/alldemo_cap_dehaze_srs001_ctrlc2.log 2>&1, then send Ctrl+C"
+      cwd: "/userdata/alldemo"
+      result: "pass_clean_shutdown"
+  observed_runtime:
+    processing_chain:
+      - "VI_0.output -> CPU copy"
+      - "NV12 -> RGB conversion in alldemo"
+      - "RGB -> CAP_DEHAZE_66.input"
+      - "CAP_DEHAZE_66.output0 -> CPU page compositor"
+      - "DISPLAY_POOL frame -> VO_0.input0"
+    frame_counts:
+      - "CAP_DEHAZE vi_frames=148 cap_frames=145 guided_r=24 t0=0.12 cpu=23% gpu=34% rga=0%"
+      - "CAP_DEHAZE vi_frames=298 cap_frames=295 guided_r=24 t0=0.12 cpu=25% gpu=43% rga=0%"
+    capture:
+      - "vo_captures/cap_dehaze_vo_000150.bmp"
+      - "vo_captures/cap_dehaze_vo_000300.bmp"
+  negative_checks:
+    - "grep count for -34, bind failed, VO capture failed, 拒绝销毁, and generic failed/失败 patterns was 0 in the Ctrl+C log."
+    - "pgrep found no residual alldemo/run_alldemo process after Ctrl+C."
+    - "Ctrl+C log showed CAP_DEHAZE removed, pools 6/7/1 destroyed, VI module cleaned up, pipeline destroyed, and buffer manager cleaned up."
+  acceptance_limits:
+    - "Runtime proof covers the chain, metrics, capture, and clean shutdown; final customer-facing visual judgment still needs screen/BMP review."

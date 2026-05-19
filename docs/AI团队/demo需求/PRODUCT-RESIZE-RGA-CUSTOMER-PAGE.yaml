@@ -1,0 +1,37 @@
+product_brief:
+  case_name: "RESIZE_RGA_CUSTOMER_PAGE"
+  target_user: "到现场观看 AllDemo 的客户和售前演示人员"
+  demo_goal: "把 RESIZE_RGA 页作为客户默认轮播中的硬件裁剪缩放能力讲清楚：实时摄像头输入中移动 crop 窗口，硬件把裁剪区域放大到输出画面。"
+  first_screen_message: "客户看到左侧取景框里的 crop 区域不断移动和变化，右侧输出显示该区域被硬件实时放大。"
+  must_show:
+    - "RESIZE_RGA 保持在默认客户演示页表内。"
+    - "RESIZE_RGA 单页使用实时摄像头输入，不使用静态占位图。"
+    - "屏幕上显示 crop x/y/w/h、zoom 倍率、真实数据流和 RESIZE_RGA 帧计数。"
+    - "输入端口尺寸保持 VI 全帧尺寸，crop 只作为源裁剪窗口，不能再次出现 Width mismatch。"
+    - "运行后保存 RESIZE_RGA 页面 VO 抓帧，供产品复看页面效果。"
+  should_show:
+    - "客户能理解 RESIZE_RGA 与 RGA 页的区别：本页专注动态裁剪和缩放放大。"
+    - "README 和 effect manifest 应说明移动 crop 窗口和硬件缩放。"
+    - "短运行验证应覆盖多个 crop 状态。"
+  avoid_showing:
+    - "不要把 crop 尺寸误写成输入端口尺寸。"
+    - "不要把 RESIZE_RGA 与 CSC_RGA、通用 RGA 操作混在一起。"
+    - "不修改 /userdata/rktohi 源码或复制 rktohi/src 到 alldemo。"
+  input_source_preference: "live_camera"
+  visual_layout: "继续使用竖屏单模块页；上部显示 RESIZE_RGA 输出，下部显示原始取景框、crop 框、zoom、真实 bind 链路和运行指标。"
+  comparison_rule: "本页用 crop 示意框和输出放大结果说明效果，不做左右公平对比。"
+  overlay_text:
+    data_flow: "数据流：VI -> RESIZE_RGA(动态crop+scale) -> VMIX -> OSD -> VO"
+    rationale: "把裁剪和缩放交给RGA硬件，CPU不用逐像素缩放。"
+    runtime_metrics: "CPU/GPU/RGA/FPS/frame time/RESIZE_RGA frames/crop/zoom"
+  acceptance_feel:
+    - "客户能看懂裁剪区域被硬件放大。"
+    - "演示人员能用抓帧复看 crop 框、zoom 和说明是否清楚。"
+    - "RESIZE_RGA 页面能短运行并干净退出。"
+  product_defects:
+    - id: "PROD-RESIZE-RGA-001"
+      description: "RESIZE_RGA 已修复 bind 输入尺寸，但缺少独立页面 SRS 和页面抓帧证据，manifest 描述仍过于泛化。"
+      expected_change: "RESIZE_RGA 纳入 VO 抓帧，文档描述改为动态 crop+scale 硬件放大展示。"
+      severity: "Minor"
+  product_verdict: "Need Implementation"
+  next_skill: "alldemo-requirements-boundary"

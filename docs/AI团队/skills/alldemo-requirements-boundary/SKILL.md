@@ -15,7 +15,8 @@ description: Requirements-boundary workflow for /userdata/alldemo showcase work.
 - 保持 demo 边界。`alldemo` 是展示工程，优先做用户可见页面、素材、链路、状态指标和运行包装；不要把底层库实现源码复制进来。
 - 需要共享能力时，以 `/userdata/rktohi` 为库源头；只同步头文件、库和必要素材到 `alldemo`。
 - 每次需求只围绕一个 case 或一组强相关页面，避免把默认轮播、多个模块和底层库重构混在一条需求里。
-- 需求确认后才交给实现；软件验收或产品复看提出的问题，先归类为软件缺陷、产品缺陷或新增需求，再决定是否进入下一轮实现。
+- 需求确认后才交给实现；软件验收或产品复看提出的问题，先归类为软件缺陷、产品缺陷或新增需求。缺陷进入整改前必须有 `docs/缺陷报告/` 下的一缺陷一文件报告。
+- 不直接修改 `docs/AI团队/srs_status.yaml` 或 `docs/缺陷报告/INDEX.md`；新增或变更 SRS 后交给 `$alldemo-task-manager` 更新集中状态。
 
 ## 3. 输入
 
@@ -26,6 +27,7 @@ description: Requirements-boundary workflow for /userdata/alldemo showcase work.
 - `README.md`、`assets/effect_manifest.json`、`src/alldemo.c` 中现有页面能力。
 - `/userdata/rktohi/include/media_api.h`、相关 demo 和模块说明，用于确认库能力和参数边界。
 - `$alldemo-software-acceptance` 输出的软件问题、未验证项和阻塞项。
+- `docs/AI团队/srs_status.yaml`，只读，用于确认已有 SRS 状态、阻塞项和下一步。
 
 ## 4. 输出需求
 
@@ -68,6 +70,8 @@ demo_requirement:
       - "./scripts/run_alldemo.sh --only <case>"
   open_questions:
     - ""
+  defect_reports:
+    - "docs/缺陷报告/DEFECT-<case>-YYYYMMDD-NNN-<slug>.md"
   confirmed_by_product: false
   next_skill: "alldemo-implementation-engineer"
 ```
@@ -89,11 +93,18 @@ demo_requirement:
 把每个反馈归到一个类别：
 
 - `Product Requirement`: 画面故事、展示顺序、视觉布局、文案解释、客户感知变化。
-- `Software Defect`: 崩溃、退出不了、构建失败、黑屏、资源泄漏、状态错误、命令不可复现。
+- `Product Defect`: 已实现页面不符合客户展示预期，例如画面乱、页面太小、流程图不清、风格不统一、调试文字过多。
+- `Software Defect`: 崩溃、退出不了、构建失败、黑屏、闪烁、资源泄漏、状态错误、命令不可复现、轮播过早切页。
 - `Library Dependency`: 需要 `rktohi` 新能力、头文件或 `libmedia` 更新。
 - `Asset Gap`: 缺少样张、模型、视频、参考输出或对比素材。
 - `Validation Gap`: 当前环境无法运行、缺少截图/输出文件/日志证据。
 - `Out of Scope`: 和本 case 无关，或会破坏当前展示稳定性。
+
+缺陷报告放在 `docs/缺陷报告/`，文件名使用 `DEFECT-<case>-YYYYMMDD-NNN-<slug>.md`。报告保持简洁，至少包含：
+
+- 状态、分类、页面或范围。
+- 问题描述。
+- 大概解决方案。
 
 ## 7. 交付给实现的最小条件
 
@@ -103,8 +114,11 @@ demo_requirement:
 - 明确目标画面和用户要看到的变化。
 - 明确数据来源：实时摄像头、循环素材、生成图、原 demo 素材或文件输入。
 - 明确需要展示的中文数据流和运行指标。
+- 明确是否要体现 4K 能力；实时算法页默认优先 `3840x2160`，达不到时用 1080P 并在流程图标注。
+- 明确比较布局；实时双路对比默认上下布局。
 - 明确不改哪些模块、文件、底层算法或默认轮播。
 - 明确可执行验证命令，或说明本轮无法现场运行的原因。
+- 如果是缺陷整改，明确对应缺陷报告路径。
 - 产品已经确认关键边界，或用户明确要求先按当前假设实现。
 
 ## 8. 禁止做
@@ -114,3 +128,4 @@ demo_requirement:
 - 不要把 `rktohi/src` 实现源码复制到 `alldemo`。
 - 不要把软件验收发现的问题直接标成产品已接受。
 - 不要把无法运行或未验证的能力写成已完成。
+- 不要直接推进 SRS 集中状态；状态推进由 `$alldemo-task-manager` 根据证据完成。

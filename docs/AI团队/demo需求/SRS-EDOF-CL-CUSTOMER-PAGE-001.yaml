@@ -1,0 +1,74 @@
+software_requirement_specification:
+  requirement_id: "SRS-EDOF-CL-CUSTOMER-PAGE-001"
+  case_name: "EDOF_CL_CUSTOMER_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-EDOF-CL-CUSTOMER-PAGE.yaml"
+  user_value: "客户默认轮播逐页优化时，EDOF_CL 页需要稳定展示扩展景深效果，并提供可复看的页面抓帧证据。"
+  scope:
+    - "保持 EDOF_CL 在客户默认页表中，不改变默认顺序。"
+    - "EDOF_CL 使用 assets/loop/edof/mfi_whu/0002、0019、0041 三组样张。"
+    - "页面显示 INPUT A、INPUT B、OUTPUT 三栏对比。"
+    - "样张按 3 秒周期切换。"
+    - "默认客户页不自动启动 live EDOF_CL OpenCL worker；需要验证 live 路径时由 ALLDEMO_EDOF_CL_LIVE=1 显式打开。"
+    - "EDOF_CL 页面按样张索引缓存整页 NV12 渲染结果；样张不变时主循环直接拷贝缓存，避免每帧重绘三张大图。"
+    - "主循环输出 EDOF_CL frames、sample、updates、mode、cache、CPU/GPU/RGA 日志。"
+    - "EDOF_CL 运行后调用 maybe_capture_module_vo_frame() 生成 vo_captures/edof_cl_vo_*.bmp。"
+    - "更新 effect manifest 中 EDOF_CL 的效果描述，突出 reference 默认模式、可选 live OpenCL、页面缓存、运行指标和 VO 抓帧。"
+    - "更新 README 的 EDOF_CL 单页说明，明确输入样张、展示模式、缓存和抓帧证据。"
+  non_scope:
+    - "不修改 rktohi EDOF_CL public API。"
+    - "不在本需求内优化 EDOF_CL OpenCL 内核性能或 pthread 取消语义。"
+    - "不复制 rktohi/src 到 alldemo。"
+    - "不把参考融合样张描述为实时摄像头或实时 OpenCL 输出。"
+  target_screen:
+    layout: "竖屏单模块页；中部三栏显示 INPUT A、INPUT B、OUTPUT，底部显示中文展示重点。"
+    input_source: "assets/loop/edof/mfi_whu 中的近焦、远焦和参考融合图片。"
+    output_view: "三栏同组样张对比；每 3 秒切换下一组。"
+    overlay_text:
+      - "标题显示 EDOF_CL 多焦点融合前后对比。"
+      - "显示近焦图 + 远焦图进入 EDOF_CL 融合流程，右侧显示清晰融合结果。"
+      - "显示 GPU 根据清晰度权重融合近景和远景，扩展景深。"
+      - "显示 CPU/GPU/RGA 和页面运行状态。"
+    runtime_metrics:
+      - "FPS"
+      - "frame_time"
+      - "CPU"
+      - "GPU"
+      - "RGA"
+      - "EDOF_CL frames"
+      - "sample index"
+      - "sample updates"
+      - "mode"
+      - "cache state"
+  implementation_boundary:
+    alldemo_files:
+      - "src/alldemo.c"
+      - "README.md"
+      - "assets/effect_manifest.json"
+      - "docs/AI团队/demo需求/PRODUCT-EDOF-CL-CUSTOMER-PAGE.yaml"
+      - "docs/AI团队/demo需求/SRS-EDOF-CL-CUSTOMER-PAGE-001.yaml"
+    rktohi_dependency: "使用当前 media_api.h/libmedia；本需求不改 rktohi 源码。"
+    copied_artifacts_only: true
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 在 /userdata/alldemo 通过。"
+    - "./scripts/run_alldemo.sh --asset-check 可以执行通过。"
+    - "timeout -s INT -k 8s 16s stdbuf -oL -eL ./build/alldemo --only EDOF_CL 能启动目标页，日志出现 EDOF_CL frames、sample、updates、mode、cache 和 CPU/GPU/RGA。"
+    - "运行日志中 EDOF_CL frames 至少达到 300，并生成 vo_captures/edof_cl_vo_000150.bmp 和 vo_captures/edof_cl_vo_000300.bmp。"
+    - "运行日志中 拒绝销毁、VO capture failed、bind failed、failed、失败 计数为 0。"
+    - "退出日志显示 DISPLAY_POOL、pipeline 和 buffer manager 清理完成，退出后无残留 alldemo 进程。"
+    - "README 和 assets/effect_manifest.json 的 EDOF_CL 描述不再停留在泛化 near/far focus fusion。"
+  validation_plan:
+    build:
+      - "git diff --check"
+      - "cmake --build build -j"
+    run:
+      - "./scripts/run_alldemo.sh --asset-check"
+      - "timeout -s INT -k 8s 16s stdbuf -oL -eL ./build/alldemo --only EDOF_CL"
+      - "grep for 拒绝销毁, VO capture failed, bind failed, failed, 失败"
+      - "ls -lt vo_captures/edof_cl_vo_*.bmp"
+      - "pgrep -af 'alldemo|run_alldemo'"
+  open_questions:
+    - "仍需要产品或现场人员看实际屏幕/抓帧，判断三栏输入输出差异是否足够直观。"
+    - "live OpenCL 路径需要单独性能/清理专项，不纳入客户默认页验收。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

@@ -35,7 +35,22 @@ build_if_needed() {
         cmake -S "$PWD" -B "$PWD/build"
     fi
 
-    if [[ "$SYNC_CHANGED" -ne 0 || ! -x build/alldemo ]]; then
+    local src_changed=0
+    if [[ -x build/alldemo ]]; then
+        if [[ CMakeLists.txt -nt build/alldemo ||
+              include/media_api.h -nt build/alldemo ||
+              lib/libmedia.a -nt build/alldemo ]]; then
+            src_changed=1
+        else
+            local newer_src
+            newer_src="$(find src -type f -newer build/alldemo -print -quit)"
+            if [[ -n "$newer_src" ]]; then
+                src_changed=1
+            fi
+        fi
+    fi
+
+    if [[ "$SYNC_CHANGED" -ne 0 || "$src_changed" -ne 0 || ! -x build/alldemo ]]; then
         local jobs
         jobs="${BUILD_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
         cmake --build "$PWD/build" -j "$jobs"

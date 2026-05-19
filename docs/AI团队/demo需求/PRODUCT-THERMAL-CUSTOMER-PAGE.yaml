@@ -1,0 +1,39 @@
+product_brief:
+  case_name: "THERMAL_CUSTOMER_PAGE"
+  target_user: "到现场观看 AllDemo 的客户和售前演示人员"
+  demo_goal: "把 THERMAL 页讲成可理解的热成像伪彩能力展示：同一张红外/热成像样张一屏映射成 16 种色表，让客户直接比较不同伪彩模式如何突出温度强弱和热目标。"
+  first_screen_message: "客户一眼看到同一输入在 RAINBOW、BLACK HOT、WHITE HOT、IRON、SEPIA 等模式下的颜色差异，并知道这只是显示色表变化，不是输入图变化。"
+  must_show:
+    - "THERMAL 保持在默认客户演示页表内。"
+    - "页面使用 /userdata/rktohi/demo/thermal/1.png 和 2.png 样张，不复制 rktohi 源码。"
+    - "一屏展示 16 种热成像伪彩模式，所有格子来自同一张当前源图。"
+    - "源图每 3 秒切换一次，色表格子同步更新。"
+    - "屏幕上显示中文数据流、为什么这样做、16 模式说明和 CPU/GPU/RGA 状态。"
+    - "运行日志输出 THERMAL 帧数、样张索引、cache 状态和 CPU/GPU/RGA 状态。"
+    - "运行后保存 THERMAL 页面 VO 抓帧，供产品复看页面效果。"
+  should_show:
+    - "客户能理解伪彩是把灰度/温度强弱映射到不同颜色，用于不同场景的目标突出。"
+    - "短运行验证能看到帧数稳定推进到 150/300，并生成抓帧。"
+    - "README 和 effect manifest 明确 16 模式、3 秒切换、页面缓存、运行指标和抓帧证据。"
+  avoid_showing:
+    - "不要只显示一张伪彩图，必须一屏比较多种色表。"
+    - "不要把 THERMAL 描述成真实温度测量或算法识别结果；当前页展示的是伪彩显示映射。"
+    - "不要每帧重算所有静态伪彩格，导致短运行拿不到抓帧证据。"
+  input_source_preference: "rktohi_loop_images"
+  visual_layout: "竖屏单模块页；中部 4x4 网格展示 16 种伪彩模式，顶部中文说明同源图和色表映射关系，底部显示运行状态。"
+  comparison_rule: "同一时刻 16 个格子必须来自同一张当前源图，显示差异只由伪彩色表决定。"
+  overlay_text:
+    data_flow: "数据流：读取 rktohi thermal 样张，按当前色表映射为 NV12 页面，再送 VO 显示。"
+    rationale: "同一灰度热图用不同色表表达温度强弱，便于按现场场景突出热目标或背景层次。"
+    runtime_metrics: "CPU/GPU/RGA/FPS/frame time/source asset/cache state/modes"
+  acceptance_feel:
+    - "客户能看懂 16 种色表的视觉差异。"
+    - "演示人员能用抓帧复看中文说明、4x4 布局和指标是否清楚。"
+    - "THERMAL 页面能短运行并干净退出。"
+  product_defects:
+    - id: "PROD-THERMAL-001"
+      description: "THERMAL 页面已有 16 模式视觉展示，但缺少独立产品/SRS/验收记录；基线短运行没有当前抓帧和清理证据。"
+      expected_change: "补足产品/SRS/实现/验收记录，增加页面缓存和运行日志，刷新 VO 抓帧。"
+      severity: "Major"
+  product_verdict: "Implemented"
+  next_skill: "alldemo-runtime-acceptance"

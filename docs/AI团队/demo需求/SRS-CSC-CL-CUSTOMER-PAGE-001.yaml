@@ -1,0 +1,71 @@
+software_requirement_specification:
+  requirement_id: "SRS-CSC-CL-CUSTOMER-PAGE-001"
+  case_name: "CSC_CL_CUSTOMER_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-CSC-CL-CUSTOMER-PAGE.yaml"
+  user_value: "客户默认轮播逐页优化时，CSC_CL 页需要清楚表达 GPU/OpenCL 颜色矩阵转换能力，并提供可复看的页面抓帧证据。"
+  scope:
+    - "保持 CSC_CL 在客户默认页表中，不改变默认顺序。"
+    - "使用已验证 CSC_CL bind 链路：VI -> CSC_CL(NV12->ARGB8888) -> DISPLAY_OSD(ARGB8888) -> VO。"
+    - "把 CSC_CL 纳入 maybe_capture_vo_channel_frame() 支持范围，输出 vo_captures/csc_cl_vo_*.bmp。"
+    - "在 CSC_CL 主循环中调用抓帧函数，使 --only CSC_CL 能实际生成抓帧。"
+    - "更新 effect manifest 中 CSC_CL 的效果描述，突出 OpenCL、NV12/ARGB、OSD 叠加、kernel/queue 耗时和 VO 抓帧。"
+    - "更新 README 的 CSC_CL 单页说明，明确 OpenCL 颜色矩阵转换、OSD/VO 显示链路和抓帧证据。"
+    - "补充实现和软件验收记录，作为后续逐页优化模板。"
+  non_scope:
+    - "不改变 MEDIA_CSC_CL API。"
+    - "不把 CSC_CL 输出 dma-buf 再导入第二个 OpenCL/EGL consumer。"
+    - "不把 CSC_CL 与 CSC_RGA 合并为一个需求。"
+    - "不把自动抓帧等同于人工视觉验收。"
+  target_screen:
+    layout: "竖屏单模块页；上部为 CSC_CL 输出，下部为 NV12/ARGB 流程卡片、kernel/queue 条、真实 bind 链路和运行指标。"
+    input_source: "实时摄像头 /dev/video-camera0。"
+    output_view: "CSC_CL 处理后的视频经 ARGB OSD 叠加输出到 VO。"
+    overlay_text:
+      - "标题显示 CSC_CL 和客户演示页码。"
+      - "显示 NV12 -> ARGB -> OSD -> VO 格式路径。"
+      - "显示 kernel/queue 耗时。"
+      - "显示真实 bind 链路和 CSC_CL/OSD 帧计数。"
+    runtime_metrics:
+      - "FPS"
+      - "frame_time"
+      - "CPU"
+      - "GPU"
+      - "RGA"
+      - "CSC_CL frames"
+      - "OSD frames"
+      - "kernel ms"
+      - "queue ms"
+  implementation_boundary:
+    alldemo_files:
+      - "src/alldemo.c"
+      - "README.md"
+      - "assets/effect_manifest.json"
+      - "docs/AI团队/demo需求/PRODUCT-CSC-CL-CUSTOMER-PAGE.yaml"
+      - "docs/AI团队/demo需求/SRS-CSC-CL-CUSTOMER-PAGE-001.yaml"
+    rktohi_files:
+      - "/userdata/rktohi/src/module/csc_cl/csc_cl.c"
+      - "/userdata/rktohi/src/module/osd/osd.c"
+      - "/userdata/rktohi/src/common/format/format_utils.c"
+    rktohi_dependency: "使用 rktohi 当前库作为源头；补齐 CSC_CL EGL context handling 与 OSD ARGB8888 能力后同步 libmedia.a/libmedia.so。"
+    copied_artifacts_only: true
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以重新编译并链接 build/alldemo。"
+    - "./scripts/run_alldemo.sh --asset-check 可以执行通过。"
+    - "timeout -s INT -k 3s 9s ./scripts/run_alldemo.sh --only CSC_CL 能启动目标页，日志出现 CSC_CL/OSD 帧计数、kernel/queue 或 CL N/A 信息和 bind 链路，退出后无残留 alldemo 进程。"
+    - "CSC_CL 运行后生成 vo_captures/csc_cl_vo_*.bmp 抓帧文件。"
+    - "运行日志中 bind failed、CSC_CL bind display setup failed 计数为 0。"
+    - "README 的 CSC_CL 描述包含 OpenCL 颜色矩阵转换、OSD/VO 显示链路、kernel/queue 耗时和抓帧证据。"
+    - "assets/effect_manifest.json 的 CSC_CL 描述不再停留在泛化 OpenCL color conversion path。"
+  validation_plan:
+    build:
+      - "git diff --check"
+      - "cmake --build build -j"
+    run:
+      - "./scripts/run_alldemo.sh --asset-check"
+      - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only CSC_CL"
+      - "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo'"
+  open_questions:
+    - "仍需要产品或现场人员看实际屏幕/抓帧，判断流程卡片和性能条是否足够直观。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

@@ -16,8 +16,13 @@ description: Product-manager workflow for /userdata/alldemo showcase cases. Use 
 - 页面必须显示中文数据流、核心参数或效果理由，以及 CPU/GPU/RGA 等运行状态；不要只把说明留在日志或 README。
 - 比较类页面要保证对比窗大小一致、输入来源一致、标注清楚，避免用户误判效果。
 - 真实链路优先。能做实时摄像头闭环时优先实时；不适合实时的算法页可用样张循环，但必须在屏幕上诚实说明输入来源。
+- 需要体现实时处理能力时，VI 输入优先使用 `3840x2160`；达不到 4K 时用 1080P 并在流程图标注。无需体现能力时可用小分辨率以保证稳定。
+- 页面风格、标题位置、主画面位置、流程图位置和指标位置要尽量统一；模块差异应体现在内容，不应体现在基础模板漂移。
+- 每页必须有清晰数据流，优先画成流程图；实时双路对比统一为上下布局。
+- 客户演示页不要显示小字英文调试说明，必要信息改成简短中文。
 - 默认展示页不能出现用户无法理解的 `SYNTH`、`PROBED`、空白页、黑屏、花屏或占位效果，除非产品明确把它定位为联调入口。
-- 发现效果不好时，先描述产品缺陷和期望变化，再交给 `$alldemo-requirements-boundary` 确认边界。
+- 发现效果不好时，先把反馈拆成 `Product Requirement`、`Product Defect` 或 `Software Defect`。缺陷必须在 `docs/缺陷报告/` 一缺陷一文件记录，再交给 `$alldemo-requirements-boundary` 确认边界。
+- 不直接修改 `docs/AI团队/srs_status.yaml` 或 `docs/缺陷报告/INDEX.md`；产品复看结论写入产品文件或回复后，由 `$alldemo-task-manager` 汇总状态。
 
 ## 3. 输入
 
@@ -29,6 +34,7 @@ description: Product-manager workflow for /userdata/alldemo showcase cases. Use 
 - `src/alldemo.c` 中当前页面布局、文字、链路和状态显示。
 - `/userdata/rktohi/demo/**` 或 `/userdata/rktohi` 相关模块原始 demo，用于理解模块本来想展示的效果。
 - 既有 `docs/AI团队/demo需求/*.yaml`、`docs/AI团队/demo验收/*.yaml` 和本轮验收反馈。
+- `docs/AI团队/srs_status.yaml`，只读，用于了解当前任务状态和待产品复看的项目。
 
 ## 4. 输出交接物
 
@@ -60,6 +66,7 @@ product_brief:
       description: ""
       expected_change: ""
       severity: "Blocker|Major|Minor"
+      defect_report: "docs/缺陷报告/DEFECT-<case>-YYYYMMDD-NNN-<slug>.md"
   product_verdict: "Need Requirements|Need Implementation|Need Software Acceptance|Accepted"
   next_skill: "alldemo-requirements-boundary"
 ```
@@ -72,9 +79,11 @@ product_brief:
 2. 读当前实现：查看 README、manifest、`src/alldemo.c` 和必要的 `rktohi` 原 demo，避免凭空设计。
 3. 定义展示故事：明确输入、处理、输出、对比方式、动态变化、状态指标和中文说明。
 4. 定义不可接受项：例如黑屏、占位、对比尺寸不一致、文字挡画面、用户看不出差异、运行指标缺失。
-5. 交给需求边界：把产品目标、必须展示和不做范围交给 `$alldemo-requirements-boundary`，由它确认工程边界。
-6. 实现和软件验收完成后复看产品效果：只判断“给用户看的效果是否好”，不要替代软件验收。
-7. 如果不满意，输出产品缺陷或新增需求，再回到 `$alldemo-requirements-boundary`；直到 `product_verdict: Accepted`。
+5. 对复看反馈做分类：新增展示规则写成需求；已观察到的闪烁、混乱、过早切页、画面过小、缺少流程图等写成缺陷。
+6. 为每个缺陷写简洁缺陷报告，包含问题描述和大概解决方案；不要把多个独立缺陷塞进一个文件。
+7. 交给需求边界：把产品目标、必须展示、不做范围和缺陷报告路径交给 `$alldemo-requirements-boundary`，由它确认工程边界。
+8. 实现和软件验收完成后复看产品效果：只判断“给用户看的效果是否好”，不要替代软件验收。
+9. 如果不满意，输出产品缺陷或新增需求，再回到 `$alldemo-requirements-boundary`；直到 `product_verdict: Accepted`。
 
 ## 6. 产品验收口径
 
@@ -91,6 +100,7 @@ product_brief:
 ## 7. 禁止做
 
 - 不要直接改代码；需要修改时交给需求和实现流程。
+- 不要直接改集中任务状态；SRS 状态和缺陷索引交给 `$alldemo-task-manager`。
 - 不要把“能运行”当成“展示效果好”。
 - 不要为了画面好看隐瞒输入来源、CPU fallback、占位素材或未验证状态。
 - 不要让默认轮播包含产品上不可接受的页面。

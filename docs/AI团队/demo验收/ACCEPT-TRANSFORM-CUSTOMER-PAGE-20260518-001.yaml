@@ -1,0 +1,41 @@
+acceptance_record:
+  requirement_id: "SRS-TRANSFORM-CUSTOMER-PAGE-001"
+  case_name: "TRANSFORM_CUSTOMER_PAGE"
+  date: "2026-05-18"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "git diff --check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 8s 15s stdbuf -oL -eL ./scripts/run_alldemo.sh --only TRANSFORM > /tmp/alldemo_transform_srs001_final4.log 2>&1"
+      cwd: "/userdata/alldemo"
+      result: "pass_functional_probe_timeout_expected"
+    - command: "pgrep -af '[b]uild/alldemo|[r]un_alldemo'"
+      cwd: "/userdata/alldemo"
+      result: "pass_no_residual_process"
+  observed_runtime:
+    processing_chain:
+      - "VI_0.output -> VPSS_63.input"
+      - "VPSS_63.output0 -> VMIX_80.input0 RAW"
+      - "VPSS_63.output1 -> TRANSFORM_94.input -> VMIX_80.input1 UNDISTORT"
+      - "VPSS_63.output2 -> TRANSFORM_95.input -> VMIX_80.input2 ROTATE ZOOM"
+      - "VPSS_63.output3 -> TRANSFORM_96.input -> VMIX_80.input3 PERSPECTIVE"
+      - "VMIX_80.output0 -> OSD_81.input -> VO_0.input0"
+    frame_counts:
+      - "TRANSFORM vi_frames=319 RAW=319 UNDISTORT=319 ROTATE ZOOM=319 PERSPECTIVE=319 cpu=19% gpu=34% rga=0% lut=300"
+      - "TRANSFORM vi_frames=383 RAW=383 UNDISTORT=383 ROTATE ZOOM=383 PERSPECTIVE=383 cpu=22% gpu=36% rga=0% lut=360"
+    capture:
+      - "vo_captures/transform_vo_000150.bmp md5=8197d3e487bb438073e19515f69c725d"
+      - "vo_captures/transform_vo_000300.bmp md5=e0112807877c2b9497e008550594bc66"
+  negative_checks:
+    - "grep count for 拒绝销毁, bind failed, Source module TRANSFORM, VO capture failed, clCreateFromEGLImageKHR was 0 in /tmp/alldemo_transform_srs001_final4.log."
+    - "pgrep found no residual alldemo/run_alldemo process after timeout-triggered INT."
+    - "Cleanup log showed OSD_81, VMIX_80, TRANSFORM_96/95/94 and VPSS_63 removed; pools 6/15/14/13/1/2 destroyed; pipeline and buffer manager cleaned up."
+  acceptance_limits:
+    - "Runtime proof covers the chain, counters, captures, log cleanliness, and clean shutdown; final customer-facing visual judgment still needs screen/BMP review."

@@ -1,0 +1,38 @@
+product_brief:
+  case_name: "CONV_CL_CUSTOMER_PAGE"
+  target_user: "到现场观看 AllDemo 的客户和售前演示人员"
+  demo_goal: "把 CONV_CL 页讲成可看懂的 GPU 卷积能力展示：实时摄像头输入转换为 RGBA 后进入单个 CONV_CL 组，按顺序加载 SHARPEN、EDGE、EMBOSS、BLUR 四个卷积核，并把四个真实输出同屏展示。"
+  first_screen_message: "客户一眼看到同一帧画面经过四种卷积核后的差异，知道这是 OpenCL/GPU 图像卷积能力。"
+  must_show:
+    - "CONV_CL 保持在默认客户演示页表内。"
+    - "CONV_CL 单页使用实时摄像头输入，不使用静态占位图。"
+    - "屏幕上显示 SHARPEN、EDGE、EMBOSS、BLUR 四格等源画面。"
+    - "四格输出必须来自 MEDIA_CONV_CL 真实处理结果，不使用页面侧假滤镜替代。"
+    - "屏幕上显示中文数据流、为什么这样做、四个卷积核帧计数、CPU/GPU/RGA 和 OpenCL kernel/queue 耗时。"
+    - "运行后保存 CONV_CL 页面 VO 抓帧，供产品复看页面效果。"
+  should_show:
+    - "客户能理解四格差异只来自卷积核，不来自不同输入。"
+    - "README 和 effect manifest 应明确 VI->RGBA staging->CONV_CL sequential kernels->page compositor->VO 数据流。"
+    - "短运行验证应看到四个效果帧计数同步增长。"
+  avoid_showing:
+    - "不要只写 edge / sharpen / blur tiles，必须说明四个核、真实 CONV_CL 输出、计数和抓帧。"
+    - "不要继续使用已验证不稳定的四个 CONV_CL 并发 bind 链路作为客户页。"
+    - "不复制 rktohi/src 到 alldemo；alldemo 只消费重建后的库和头文件产物。"
+  input_source_preference: "live_camera"
+  visual_layout: "竖屏单模块页；中部 2x2 四格等源卷积输出，顶部和底部显示中文数据流、原因说明和运行指标。"
+  comparison_rule: "四格画面必须来自同一 VI 帧或同源连续帧，显示差异只由卷积核决定。"
+  overlay_text:
+    data_flow: "数据流：VI 采集 NV12，转换成 RGBA 后送入单个 CONV_CL，顺序加载四个卷积核，页面合成后送 VO。"
+    rationale: "同源画面只改变卷积核，稳定展示锐化、边缘、浮雕和模糊差异。"
+    runtime_metrics: "CPU/GPU/RGA/FPS/frame time/VI frames/SHARPEN/EDGE/EMBOSS/BLUR/OpenCL kernel/queue"
+  acceptance_feel:
+    - "客户能看懂四个卷积核的视觉差异。"
+    - "演示人员能用抓帧复看说明文字、四格布局和指标是否清楚。"
+    - "CONV_CL 页面能短运行并干净退出。"
+  product_defects:
+    - id: "PROD-CONV-CL-001"
+      description: "原 CONV_CL 页描述泛化，四路并发 CONV_CL bind 链路在板端只跑通第一路，其余路 EGLImage import -34。"
+      expected_change: "切换为单 CONV_CL 组顺序四核处理，保留真实 OpenCL 输出，并补足说明、运行日志、VO 抓帧和问题记录。"
+      severity: "Critical"
+  product_verdict: "Implemented"
+  next_skill: "alldemo-runtime-acceptance"

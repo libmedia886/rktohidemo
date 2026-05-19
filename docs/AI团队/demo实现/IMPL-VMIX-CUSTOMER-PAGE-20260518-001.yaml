@@ -1,0 +1,42 @@
+implementation_summary:
+  requirement_id: "SRS-VMIX-CUSTOMER-PAGE-001"
+  case_name: "VMIX_CUSTOMER_PAGE"
+  changed_files:
+    - "README.md"
+    - "assets/effect_manifest.json"
+    - "docs/AI团队/demo需求/PRODUCT-VMIX-CUSTOMER-PAGE.yaml"
+    - "docs/AI团队/demo需求/SRS-VMIX-CUSTOMER-PAGE-001.yaml"
+    - "docs/AI团队/demo实现/IMPL-VMIX-CUSTOMER-PAGE-20260518-001.yaml"
+  implementation_scope:
+    - "保持 VMIX 默认客户页和 VI -> VPSS -> VMIX -> OSD -> VO 实时 bind 链路。"
+    - "确认 VMIX 页已有自动 VO 抓帧，生成 vo_captures/vmix_vo_*.bmp。"
+    - "更新 README 和 effect manifest，说明 VMIX alpha 合成、实时指标和抓帧证据。"
+    - "补齐 VMIX 页 Product/SRS/Implementation 文档。"
+  non_scope:
+    - "不修改 /userdata/rktohi 源码。"
+    - "不修改 MEDIA_VMIX API 或底层 VMIX 模块。"
+    - "不修改 VMIX_RGA 页面。"
+    - "不声明已完成人工视觉验收。"
+  data_flow: "VI_0.output -> VPSS_63.input; VPSS_63.output0..3 -> VMIX_80.input0..3; VMIX_80.output0 -> OSD_81.input; OSD_81.output0 -> VO_0.input0"
+  user_visible_changes:
+    - "VMIX 页面运行时会保存 vo_captures/vmix_vo_000150.bmp 等抓帧。"
+    - "README 和 manifest 中 VMIX 描述补充 alpha 合成、帧计数、CPU/GPU/RGA 指标和可复看证据。"
+  validation:
+    - command: "timeout -s INT -k 8s 8s ./scripts/run_alldemo.sh --only VMIX"
+      result: "Passed"
+      evidence: "/tmp/alldemo_vmix_page_srs001.log 记录 VMIX bind flow、VMIX vi_frames/vmix_frames 指标，生成 vo_captures/vmix_vo_000150.bmp，退出后 pipeline/buffer manager 清理完成。"
+    - command: "md5sum vo_captures/vmix_vo_000150.bmp"
+      result: "Passed"
+      evidence: "58ef4212a87e396cdac280f4b9cb9733"
+    - command: "grep -c '拒绝销毁\\|VO capture failed\\|bind failed\\|failed\\|失败' /tmp/alldemo_vmix_page_srs001.log"
+      result: "Passed"
+      evidence: "计数为 0。"
+    - command: "pgrep -af '[b]uild/alldemo|[r]un_alldemo'"
+      result: "Passed"
+      evidence: "无残留进程。"
+  not_verified:
+    - "未由现场人员看屏幕或抓帧确认 VMIX 页面视觉效果。"
+    - "未完整跑完全部客户默认轮播周期。"
+  known_risks:
+    - "VMIX 页面依赖实时摄像头和 VPSS 四路输出，现场摄像头异常时会影响页面说服力。"
+  next_skill: "alldemo-software-acceptance"

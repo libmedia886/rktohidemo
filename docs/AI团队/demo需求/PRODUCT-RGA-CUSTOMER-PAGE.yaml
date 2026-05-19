@@ -1,0 +1,38 @@
+product_brief:
+  case_name: "RGA_CUSTOMER_PAGE"
+  target_user: "到现场观看 AllDemo 的客户和售前演示人员"
+  demo_goal: "把 RGA 页作为客户默认轮播中的硬件 2D 图像处理能力讲清楚：实时摄像头输入由 RGA 完成拷贝、裁剪缩放、翻转和旋转，CPU 不逐像素搬帧处理。"
+  first_screen_message: "客户看到 RGA 页面自动轮播 COPY、CROP_ZOOM、FLIP、ROTATE 等操作，并能从屏幕说明理解当前硬件操作和数据流。"
+  must_show:
+    - "RGA 保持在默认客户演示页表内。"
+    - "RGA 单页使用实时摄像头输入，不使用静态占位图。"
+    - "屏幕上显示当前 RGA 操作：COPY、CROP_ZOOM、FLIP_H、FLIP_V、ROTATE90/180/270。"
+    - "屏幕上显示真实数据流：VI -> RGA -> VMIX -> OSD -> VO。"
+    - "屏幕上显示 RGA 帧计数和 CPU/GPU/RGA 状态。"
+    - "运行后保存 RGA 页面 VO 抓帧，供产品复看页面效果。"
+  should_show:
+    - "客户可以直观看到 RGA 硬件操作在画面上的变化，而不是只看参数名。"
+    - "README 和 effect manifest 应说明这是硬件 2D 操作轮播。"
+    - "短运行验证至少覆盖 COPY 和 CROP_ZOOM 两个状态。"
+  avoid_showing:
+    - "不要把 RGA 页面只写成 crop/rotate/mosaic 泛描述，屏幕和文档要对应真实轮播操作。"
+    - "不要把 RGA 与 RESIZE_RGA、CSC_RGA 的职责混在一起。"
+    - "不修改 /userdata/rktohi 源码或复制 rktohi/src 到 alldemo。"
+  input_source_preference: "live_camera"
+  visual_layout: "继续使用竖屏单模块页；上部显示 RGA 输出，下部显示当前操作、操作列表、真实 bind 链路和运行指标。"
+  comparison_rule: "RGA 不是左右对比页；本页以当前操作标签和画面变化作为效果判断。"
+  overlay_text:
+    data_flow: "数据流：VI -> RGA(硬件2D操作) -> VMIX -> OSD -> VO"
+    rationale: "图像变换交给RGA，CPU不用搬帧逐像素处理。"
+    runtime_metrics: "CPU/GPU/RGA/FPS/frame time/RGA frames/current op"
+  acceptance_feel:
+    - "客户能看懂 RGA 当前在做哪一种硬件 2D 操作。"
+    - "演示人员能用抓帧复看 COPY/CROP_ZOOM 等状态是否清楚。"
+    - "RGA 页面能短运行并干净退出。"
+  product_defects:
+    - id: "PROD-RGA-001"
+      description: "RGA 页面已有实时轮播，但缺少页面抓帧证据，manifest 描述也不够贴合当前 COPY/CROP/FLIP/ROTATE 轮播。"
+      expected_change: "RGA 纳入 VO 抓帧，文档描述改为硬件 2D 操作轮播。"
+      severity: "Minor"
+  product_verdict: "Need Implementation"
+  next_skill: "alldemo-requirements-boundary"

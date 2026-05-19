@@ -1,0 +1,37 @@
+product_brief:
+  case_name: "CAP_DEHAZE_CUSTOMER_PAGE"
+  target_user: "到现场观看 AllDemo 的客户和售前演示人员"
+  demo_goal: "把 CAP_DEHAZE 页作为客户默认轮播中的实时去雾能力讲清楚：实时摄像头输入转换为 RGB 后进入 CAP_DEHAZE，屏幕上下等尺寸对比原始画面和去雾输出，并展示 guided radius、t0、beta 参数和运行指标。"
+  first_screen_message: "客户一眼看到低能见度画面经过 CAP 去雾后的细节变化，知道这是实时视频增强能力。"
+  must_show:
+    - "CAP_DEHAZE 保持在默认客户演示页表内。"
+    - "CAP_DEHAZE 单页使用实时摄像头输入，不使用静态占位图。"
+    - "屏幕上显示 VI 原始输入与 CAP_DEHAZE 去雾输出两路等尺寸上下对比。"
+    - "屏幕上显示 guided radius、t0、beta、CAP_DEHAZE 帧计数和 CPU/GPU/RGA 状态。"
+    - "运行后保存 CAP_DEHAZE 页面 VO 抓帧，供产品复看页面效果。"
+  should_show:
+    - "客户能理解 CAP_DEHAZE 用于雾气、灰霾、低能见度场景的细节恢复。"
+    - "README 和 effect manifest 应明确 RAW vs CAP_DEHAZE、NV12->RGB 数据流、参数指标和 VO 抓帧。"
+    - "短运行验证应看到 VI/CAP_DEHAZE 帧计数同步增长。"
+  avoid_showing:
+    - "不要只写 CAP dehaze comparison，必须说明实时输入、参数和可复看抓帧。"
+    - "不要把 CAP_DEHAZE 与 DCP_FAST_DEHAZE 混为同一页。"
+    - "不复制 rktohi/src 到 alldemo；alldemo 只消费重建后的库和头文件产物。"
+  input_source_preference: "live_camera"
+  visual_layout: "竖屏单模块页；中部上下等尺寸对比 RAW 和 CAP_DEHAZE 输出，顶部和底部显示中文数据流、参数、为什么这样做和运行指标。"
+  comparison_rule: "CAP_DEHAZE 是实时双路对比页；上方显示 VI RAW 输入，下方显示 CAP_DEHAZE 输出，两路画面必须保持等尺寸。"
+  overlay_text:
+    data_flow: "数据流：VI 采集 NV12，CPU 转 RGB 后送入 CAP_DEHAZE，输出 RGB 去雾结果，再合成到 VO 页面。"
+    rationale: "快速估计雾气透射率和空气光，突出低能见度场景细节。"
+    runtime_metrics: "CPU/GPU/RGA/FPS/frame time/VI frames/CAP_DEHAZE frames/guided radius/t0/beta"
+  acceptance_feel:
+    - "客户能看懂上下两幅图的去雾对比。"
+    - "演示人员能用抓帧复看说明文字、等尺寸视窗和参数是否清楚。"
+    - "CAP_DEHAZE 页面能短运行并干净退出。"
+  product_defects:
+    - id: "PROD-CAP-DEHAZE-001"
+      description: "CAP_DEHAZE 页面已有对比画面，但缺少独立 SRS、VO 抓帧证据和运行日志帧计数，manifest 描述过于泛化。"
+      expected_change: "CAP_DEHAZE 纳入 VO 抓帧，日志显示 VI/CAP 帧计数，文档描述补足 RAW vs CAP_DEHAZE、参数和运行指标。"
+      severity: "Major"
+  product_verdict: "Implemented"
+  next_skill: "alldemo-runtime-acceptance"

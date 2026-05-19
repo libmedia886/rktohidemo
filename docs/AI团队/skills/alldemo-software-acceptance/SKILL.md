@@ -16,6 +16,7 @@ description: Software acceptance workflow for /userdata/alldemo showcase changes
 - 对硬件相关页面，没跑就不能说通过；可以给出构建通过和现场未验证的边界。
 - 问题要能交回责任角色：实现问题交 `$alldemo-implementation-engineer`，需求不清交 `$alldemo-requirements-boundary`，展示效果不满意交 `$alldemo-product-manager`。
 - 长运行 demo 的干净退出属于验收内容。
+- 缺陷整改必须按 `docs/缺陷报告/DEFECT-*.md` 逐项复验；一个缺陷一个结论，不要把多个缺陷合并验收。
 
 ## 3. 输入
 
@@ -25,6 +26,7 @@ description: Software acceptance workflow for /userdata/alldemo showcase changes
 - `$alldemo-requirements-boundary` 的需求边界和验收条件。
 - 本轮 git diff、`README.md`、`scripts/run_alldemo.sh`、`src/alldemo.c`、`assets/effect_manifest.json`。
 - 相关 `rktohi` 产物同步状态：`include/media_api.h`、`lib/libmedia.a`、`lib/libmedia.so`。
+- `docs/AI团队/srs_status.yaml`，只读，用于确认当前 SRS 状态和关联缺陷。
 
 ## 4. 验收检查项
 
@@ -34,7 +36,10 @@ description: Software acceptance workflow for /userdata/alldemo showcase changes
 - 资源：素材路径、图片/视频解码、模型、参考输出是否存在。
 - 单页入口：`--only <case>` 是否能启动目标页面，是否误初始化其它重模块。
 - 画面基本正确：无黑屏、花屏、严重拉伸、对比窗大小不一致、文字重叠、状态栏遮挡主画面。
-- 链路显示：屏幕数据流是否和实际模块链路一致。
+- 画面一致性：标题、主画面、流程图、说明区和指标区是否符合统一模板。
+- 输入分辨率：实时算法页是否优先使用 4K；未达到 4K 时是否在流程图标注 1080P 或实际分辨率。
+- 链路显示：屏幕数据流是否和实际模块链路一致，是否足够清晰。
+- 对比布局：实时双路对比是否统一为上下布局。
 - 指标显示：FPS、帧耗时、CPU/GPU/RGA 状态是否存在；不可读时是否合理显示 `N/A`。
 - 退出：`Ctrl+C` 或 timeout 后是否干净退出，无残留进程。
 - 默认轮播：改动是否意外把不稳定页、占位页或联调页放入默认展示。
@@ -57,7 +62,9 @@ cmake --build build -j
 
 ## 6. 缺陷记录
 
-建议写入 `docs/AI团队/demo验收/ACCEPT-<case_name>-YYYYMMDD-NNN.yaml`：
+验收发现新缺陷时，先在 `docs/缺陷报告/` 写一缺陷一文件的简洁报告。缺陷报告至少包含状态、分类、页面或范围、问题描述和大概解决方案。
+
+同时建议写入 `docs/AI团队/demo验收/ACCEPT-<case_name>-YYYYMMDD-NNN.yaml`：
 
 ```yaml
 acceptance_report:
@@ -74,6 +81,7 @@ acceptance_report:
       category: "Build|Runtime|Asset|Layout|Overlay|DataFlow|Metrics|Shutdown|Linkage|Regression|Validation"
       description: ""
       evidence: ""
+      defect_report: "docs/缺陷报告/DEFECT-<case>-YYYYMMDD-NNN-<slug>.md"
       owner_skill: "alldemo-implementation-engineer|alldemo-requirements-boundary|alldemo-product-manager"
       required_action: ""
   not_verified:
@@ -82,6 +90,8 @@ acceptance_report:
 ```
 
 `Pass` 只能用于适用检查都通过且无阻塞未验证项。存在现场未跑、硬件不可用或只能静态确认时，最多给 `Pass With Risks` 或 `Blocked`。
+
+验收报告写完后，不直接改 `docs/AI团队/srs_status.yaml`；由 `$alldemo-task-manager` 根据 ACCEPT 文件更新集中状态。
 
 ## 7. 判定标准
 
@@ -103,3 +113,4 @@ acceptance_report:
 - 不要把产品主观不满意写成软件 bug，除非有明确的软件表现问题。
 - 不要修代码，除非用户明确要求“验收并修复”。
 - 不要把未运行的硬件链路写成已通过。
+- 不要直接修改 `docs/AI团队/srs_status.yaml` 或 `docs/缺陷报告/INDEX.md`。

@@ -1,0 +1,47 @@
+implementation_summary:
+  requirement_id: "SRS-RGA-CUSTOMER-PAGE-001"
+  case_name: "RGA_CUSTOMER_PAGE"
+  changed_files:
+    - "src/alldemo.c"
+    - "README.md"
+    - "assets/effect_manifest.json"
+    - "docs/AI团队/demo需求/PRODUCT-RGA-CUSTOMER-PAGE.yaml"
+    - "docs/AI团队/demo需求/SRS-RGA-CUSTOMER-PAGE-001.yaml"
+    - "docs/AI团队/demo实现/IMPL-RGA-CUSTOMER-PAGE-20260518-001.yaml"
+  implementation_scope:
+    - "保持 RGA 在客户默认页表中，不改变当前默认顺序。"
+    - "保持现有 RGA 实时 bind 链路：VI -> RGA -> VMIX -> DISPLAY_OSD -> VO。"
+    - "将 RGA 加入 VO 抓帧路径，生成 vo_captures/rga_vo_*.bmp。"
+    - "在 RGA 单页主循环中调用抓帧函数。"
+    - "更新 README，说明 RGA 当前硬件操作、真实数据流、RGA 帧计数、运行指标和抓帧证据。"
+    - "更新 effect manifest，描述硬件 COPY/CROP_ZOOM/FLIP/ROTATE 操作轮播和 VO 抓帧。"
+  non_scope:
+    - "不修改 /userdata/rktohi 源码。"
+    - "不修改 MEDIA_RGA API 或底层 RGA 模块。"
+    - "不重新设计 RGA 页面布局、操作列表和轮播周期。"
+    - "不声明已经完成人工视觉验收。"
+  data_flow: "VI_0.output -> RGA_59.input0; RGA_59.output0 -> VMIX_80.input0; VMIX_80.output0 -> OSD_81.input; OSD_81.output0 -> VO_0.input0"
+  user_visible_changes:
+    - "README 中 RGA 页面说明更明确：页面动态轮播 COPY、CROP_ZOOM、FLIP 和 ROTATE，显示当前硬件操作和指标。"
+    - "RGA 页面运行时会保存 vo_captures/rga_vo_000150.bmp 等抓帧，方便后续产品复看。"
+    - "manifest 中 RGA 不再只是泛化 crop/rotate/mosaic 描述，而是明确硬件 2D 操作轮播。"
+  validation:
+    - command: "git diff --check"
+      result: "Passed"
+      evidence: "无 whitespace error。"
+    - command: "cmake --build build -j"
+      result: "Passed"
+      evidence: "[100%] Built target alldemo。"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      result: "Passed"
+      evidence: "THERMAL、TRANSFORM、VMIX、AVM 素材检查通过。"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only RGA"
+      result: "Passed"
+      evidence: "/tmp/alldemo_rga_srs001.log 记录 VI -> RGA_59 -> VMIX_80 -> OSD_81 -> VO 的 bind 链路，COPY/CROP_ZOOM/FLIP_H 状态有帧计数，生成 rga_vo_000150.bmp，退出后 pgrep 无残留。"
+  not_verified:
+    - "未由现场人员看屏幕或抓帧确认 RGA 页面视觉效果。"
+    - "8 秒短运行覆盖 COPY、CROP_ZOOM、FLIP_H，未覆盖 FLIP_V 和 ROTATE90/180/270 的自动轮播画面。"
+    - "未完整跑完全部客户默认轮播周期。"
+  known_risks:
+    - "RGA 页面布局未重做，本轮只增强说明准确性和抓帧证据；产品复看后可能继续要求延长单页停留或调整操作轮播节奏。"
+  next_skill: "alldemo-software-acceptance"

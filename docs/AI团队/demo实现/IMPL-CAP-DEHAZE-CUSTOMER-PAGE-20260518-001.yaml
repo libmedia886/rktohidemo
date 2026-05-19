@@ -1,0 +1,29 @@
+implementation_record:
+  requirement_id: "SRS-CAP-DEHAZE-CUSTOMER-PAGE-001"
+  case_name: "CAP_DEHAZE_CUSTOMER_PAGE"
+  date: "2026-05-18"
+  status: "Implemented"
+  summary:
+    - "CAP_DEHAZE 单页保持实时摄像头输入，VI 获取 NV12 后在页面侧转换为 RGB，再送入 MEDIA_CAP_DEHAZE。"
+    - "页面主画面已随迭代 003 更新为上下等尺寸显示 VI RAW 输入和 CAP_DEHAZE 输出，并保留中文数据流、原因说明、参数和运行状态。"
+    - "maybe_capture_module_vo_frame() 支持 CAP_DEHAZE，生成 vo_captures/cap_dehaze_vo_*.bmp。"
+    - "主循环增加 CAP_DEHAZE vi_frames/cap_frames、guided_r、t0、CPU/GPU/RGA 周期日志，方便自动验收。"
+    - "CAP_DEHAZE cleanup 增加输出队列 drain，并避免在 VI 模块 cleanup 前销毁 CPU 去雾页的 CAMERA_POOL。"
+  changed_files:
+    alldemo:
+      - "src/alldemo.c"
+      - "README.md"
+      - "assets/effect_manifest.json"
+      - "docs/AI团队/demo需求/PRODUCT-CAP-DEHAZE-CUSTOMER-PAGE.yaml"
+      - "docs/AI团队/demo需求/SRS-CAP-DEHAZE-CUSTOMER-PAGE-001.yaml"
+  implementation_notes:
+    - "CAP_DEHAZE 当前页面不是 bind 链路，而是 CPU 取 VI 帧、NV12 转 RGB、SendFrame/GetFrame 后合成到 VO 页面。"
+    - "运行日志显示 OpenCL backend enabled；本次未修改 rktohi CAP_DEHAZE 算法源码。"
+    - "alldemo 只消费 rktohi 构建产物，不复制 rktohi/src 实现源码。"
+  issue_record:
+    - "docs/问题记录/20260518-1641-cap-dehaze-customer-page-needed-capture-logs-and-shutdown-drain.md"
+  validation_artifacts:
+    - "/tmp/alldemo_cap_dehaze_srs001_final.log"
+    - "/tmp/alldemo_cap_dehaze_srs001_ctrlc2.log"
+    - "vo_captures/cap_dehaze_vo_000150.bmp"
+    - "vo_captures/cap_dehaze_vo_000300.bmp"

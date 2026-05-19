@@ -1,0 +1,33 @@
+implementation_record:
+  requirement_id: "SRS-TRANSFORM-CUSTOMER-PAGE-001"
+  case_name: "TRANSFORM_CUSTOMER_PAGE"
+  date: "2026-05-18"
+  status: "Implemented"
+  summary:
+    - "TRANSFORM 单页保留实时摄像头 bind 链路：VI -> VPSS(4路同源NV12) -> RAW/3x TRANSFORM -> VMIX -> OSD -> VO。"
+    - "TRANSFORM 输出端口绑定改为实际存在的 output，避免 bind_first_match 先探测 output0 时打印 Source module TRANSFORM has no output port。"
+    - "cleanup_live_transform_quad() 增加 TRANSFORM 输出队列 drain，释放最后几帧 output pool buffer。"
+    - "最终退出顺序改为先停 VO/display 链路，再销毁上游 TRANSFORM/VPSS，避免上游 pool 被下游持有时销毁。"
+    - "TRANSFORM bind 页跳过显式销毁 DISPLAY_OSD_OUTPUT_POOL 和 DISPLAY_VMIX_OUTPUT_POOL，等待 pipeline cleanup 释放 display 链路最后帧，避免 pool reject 噪声。"
+    - "README 和 effect_manifest.json 补充动态 LUT、四路帧计数、CPU/GPU/RGA 和 VO 抓帧说明。"
+  changed_files:
+    alldemo:
+      - "src/alldemo.c"
+      - "README.md"
+      - "assets/effect_manifest.json"
+      - "docs/AI团队/demo需求/PRODUCT-TRANSFORM-CUSTOMER-PAGE.yaml"
+      - "docs/AI团队/demo需求/SRS-TRANSFORM-CUSTOMER-PAGE-001.yaml"
+      - "docs/AI团队/demo实现/IMPL-TRANSFORM-CUSTOMER-PAGE-20260518-001.yaml"
+      - "docs/AI团队/demo验收/ACCEPT-TRANSFORM-CUSTOMER-PAGE-20260518-001.yaml"
+      - "docs/问题记录/20260518-1719-transform-bind-page-holds-display-output-pools-on-shutdown.md"
+  implementation_notes:
+    - "本页继续使用真实 bind 链路，不降级为 CPU 合成页。"
+    - "DISPLAY_VMIX/OSD 输出池 7/8 在 TRANSFORM 页不显式 destroy，是为了避免 VO/OSD/VMIX 最新帧释放顺序导致误报；最终由 MEDIA_SYS_Exit 的 pipeline/buffer manager cleanup 释放。"
+    - "本需求不改 rktohi TRANSFORM 源码，只改 alldemo 页面编排和文档。"
+  issue_record:
+    - "docs/问题记录/20260518-1719-transform-bind-page-holds-display-output-pools-on-shutdown.md"
+  validation_artifacts:
+    - "/tmp/alldemo_transform_srs001_baseline.log"
+    - "/tmp/alldemo_transform_srs001_final4.log"
+    - "vo_captures/transform_vo_000150.bmp"
+    - "vo_captures/transform_vo_000300.bmp"

@@ -1,0 +1,37 @@
+acceptance_record:
+  requirement_id: "SRS-CSC-CL-CUSTOMER-PAGE-001"
+  case_name: "CSC_CL_CUSTOMER_PAGE"
+  date: "2026-05-18"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "git -C /userdata/rktohi diff --check -- src/module/csc_cl/csc_cl.c src/module/osd/osd.c src/common/format/format_utils.c"
+      result: "pass"
+    - command: "git diff --check"
+      result: "pass"
+    - command: "cmake --build build --target media_static media -j"
+      cwd: "/userdata/rktohi"
+      result: "pass"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 3s 9s stdbuf -oL -eL ./scripts/run_alldemo.sh --only CSC_CL > /tmp/alldemo_csc_cl_srs001_final2.log 2>&1"
+      cwd: "/userdata/alldemo"
+      result: "pass_with_timeout_interrupt"
+    - command: "stdbuf -oL -eL ./scripts/run_alldemo.sh --only CSC_CL > /tmp/alldemo_csc_cl_srs001_ctrlc.log 2>&1, then send Ctrl+C"
+      cwd: "/userdata/alldemo"
+      result: "pass_clean_shutdown"
+  observed_runtime:
+    bind_chain:
+      - "VI_0.output -> CSC_CL_76.input"
+      - "CSC_CL_76.output0 -> OSD_81.input"
+      - "OSD_81.output0 -> VO_0.input0"
+    frame_counts:
+      - "CSC_CL vi_frames=151 csc_frames=151 osd_frames=150 cpu=19% gpu=2% cl=0.32/0.89ms"
+      - "CSC_CL vi_frames=397 csc_frames=397 osd_frames=397 cpu=17% gpu=2% cl=0.32/0.83ms"
+    capture:
+      - "vo_captures/csc_cl_vo_000150.bmp"
+  negative_checks:
+    - "grep count for CL 图像失败, -34, bind failed, setup failed, 拒绝销毁, VO capture failed was 0."
+    - "pgrep found no residual alldemo/run_alldemo process after timeout interrupt and Ctrl+C run."
+  acceptance_limits:
+    - "自动抓帧证明页面链路和落盘能力；最终视觉审美仍需现场人员看屏幕或 BMP。"

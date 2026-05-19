@@ -16,7 +16,9 @@ description: Implementation workflow for confirmed /userdata/alldemo demo requir
 - 需求来自 `$alldemo-requirements-boundary`，或用户明确给出了足够清楚的范围。
 - 已确认 case 名称、触发方式、目标画面、数据来源、中文说明和验收条件。
 - 已确认不做范围，尤其是否允许改 `/userdata/rktohi`、是否进入默认轮播。
+- 如果是缺陷整改，已读取对应 `docs/缺陷报告/DEFECT-*.md`，并确认问题描述和大概解决方案。
 - 已检查当前 `README.md`、`assets/effect_manifest.json`、`src/alldemo.c` 和相关 `rktohi` demo。
+- 已把 `docs/AI团队/srs_status.yaml` 当作只读任务状态参考；实现工程师不直接改集中状态或缺陷索引。
 - 如果需要共享模块能力，先在 `/userdata/rktohi` 改库并构建，再通过 `scripts/run_alldemo.sh` 或明确同步头文件/库产物；不要复制 `rktohi/src` 实现源码。
 
 缺少会影响实现或验收的关键信息时，退回 `$alldemo-requirements-boundary`。
@@ -35,6 +37,10 @@ description: Implementation workflow for confirmed /userdata/alldemo demo requir
 
 - 默认一轮只实现一个 case。用户要求多个 case 时，按需求边界拆分并逐个验证。
 - 页面应有完整展示闭环：输入、处理、输出、中文数据流、关键参数或效果理由、CPU/GPU/RGA/FPS/帧耗时。
+- 实时算法能力页优先尝试 `3840x2160` VI 输入；达不到时使用 1080P 并在流程图标注。无需体现能力的稳定展示页可使用小分辨率。
+- 页面模板应尽量统一：标题、主画面、流程图、说明区和指标区保持固定位置。
+- 每页必须有清晰中文数据流，优先流程图；实时双路对比统一上下布局。
+- 客户演示页不要保留小字英文调试说明。
 - 优先复用已有 helper、模块链路和页面风格；不要为了单页引入第二套渲染框架。
 - 比较类页面保持等尺寸窗格、清晰标签和一致输入来源。
 - 运行状态必须诚实。素材循环、参考输出、CPU fallback、资源缺失或未验证状态不能伪装成实时模块成功。
@@ -50,7 +56,9 @@ description: Implementation workflow for confirmed /userdata/alldemo demo requir
 4. 更新素材清单、README 或脚本，使用户能复现。
 5. 如果同步了 `rktohi` 产物，确认 `alldemo` 已重新链接，因为本工程静态链接 `lib/libmedia.a`。
 6. 运行最小验证。
-7. 输出实现总结，并交给 `$alldemo-software-acceptance`。
+7. 如果是缺陷整改，在实现总结中列出缺陷报告路径和整改方式。
+8. 输出实现总结，并交给 `$alldemo-software-acceptance`。
+9. 验收完成后由 `$alldemo-task-manager` 读取 IMPL/ACCEPT/DEFECT 证据并更新 `srs_status.yaml`。
 
 ## 6. 推荐验证
 
@@ -90,6 +98,8 @@ implementation_summary:
     - ""
   known_risks:
     - ""
+  defect_reports:
+    - ""
   next_skill: "alldemo-software-acceptance"
 ```
 
@@ -99,4 +109,5 @@ implementation_summary:
 - 不要复制 `/userdata/rktohi/src` 到本工程。
 - 不要把只通过静态检查的页面说成已现场验收。
 - 不要把产品主观效果判断写成软件验收结论。
+- 不要直接修改 `docs/AI团队/srs_status.yaml` 或 `docs/缺陷报告/INDEX.md`。
 - 不要提交或回滚用户已有的无关改动。

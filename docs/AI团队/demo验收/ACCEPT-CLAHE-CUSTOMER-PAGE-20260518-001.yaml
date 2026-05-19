@@ -1,0 +1,46 @@
+acceptance_record:
+  requirement_id: "SRS-CLAHE-CUSTOMER-PAGE-001"
+  case_name: "CLAHE_CUSTOMER_PAGE"
+  date: "2026-05-18"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "git -C /userdata/rktohi diff --check -- src/module/clahe/clahe.c"
+      result: "pass"
+    - command: "cmake --build build --target media_static media -j"
+      cwd: "/userdata/rktohi"
+      result: "pass"
+    - command: "git diff --check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass_synced_libmedia_a"
+    - command: "timeout -s INT -k 3s 9s stdbuf -oL -eL ./scripts/run_alldemo.sh --only CLAHE > /tmp/alldemo_clahe_srs001_final.log 2>&1"
+      cwd: "/userdata/alldemo"
+      result: "pass_functional_probe"
+    - command: "stdbuf -oL -eL ./scripts/run_alldemo.sh --only CLAHE > /tmp/alldemo_clahe_srs001_ctrlc.log 2>&1, then send Ctrl+C"
+      cwd: "/userdata/alldemo"
+      result: "pass_clean_shutdown"
+  observed_runtime:
+    bind_chain:
+      - "VI_0.output -> VPSS_63.input"
+      - "VPSS_63.output0 -> VMIX_RGA_80.input0"
+      - "VPSS_63.output1 -> CLAHE_69.input"
+      - "CLAHE_69.output -> VMIX_RGA_80.input1"
+      - "VMIX_RGA_80.output0 -> OSD_81.input"
+      - "OSD_81.output0 -> VO_0.input0"
+    frame_counts:
+      - "CLAHE vi_frames=150 clahe_out_frames=150 clip=1.57 cpu=20% gpu=20% rga=9%"
+      - "CLAHE vi_frames=334 clahe_out_frames=334 clip=1.58 cpu=21% gpu=22% rga=9%"
+    capture:
+      - "vo_captures/clahe_vo_000150.bmp"
+      - "vo_captures/clahe_vo_000300.bmp"
+  negative_checks:
+    - "grep count for CLAHE CL image failures, VMIX CL -34, bind failed, setup failed, VO capture failed, 拒绝销毁, and generic 失败 patterns was 0 in the Ctrl+C log."
+    - "pgrep found no residual alldemo/run_alldemo process after Ctrl+C."
+    - "Ctrl+C log showed OSD/VMIX_RGA/CLAHE/VPSS removed and pools 8/7/6/15/14/13/1/2 destroyed without rejection."
+  acceptance_limits:
+    - "Runtime proof covers the chain, metrics, capture, and clean shutdown; final customer-facing visual judgment still needs screen/BMP review."

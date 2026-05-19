@@ -1,0 +1,43 @@
+acceptance_record:
+  requirement_id: "SRS-MCF-FUSION-CL-CUSTOMER-PAGE-001"
+  case_name: "MCF_FUSION_CL_CUSTOMER_PAGE"
+  date: "2026-05-18"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "git diff --check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 15s 20s stdbuf -oL -eL ./scripts/run_alldemo.sh --only MCF_FUSION_CL > /tmp/alldemo_mcf_fusion_cl_srs001_fix2_20s.log 2>&1"
+      cwd: "/userdata/alldemo"
+      result: "pass_functional_probe_timeout_expected"
+    - command: "pgrep -af '[b]uild/alldemo|[r]un_alldemo'"
+      cwd: "/userdata/alldemo"
+      result: "pass_no_residual_process"
+  observed_runtime:
+    processing_chain:
+      - "mcf_fusion sample color.jpg + mono.jpg -> MEDIA_MCF_FUSION_CL -> cached NV12 page -> VO_0.input0"
+      - "reference.jpg remains fallback if live OpenCL processing is unavailable."
+    frame_counts:
+      - "MCF_FUSION_CL frames=300 sample=1/3 updates=4 mode=opencl cache=hit cpu=14% gpu=0% rga=0% cl=15.14/3.27/11.88ms"
+      - "MCF_FUSION_CL frames=510 sample=3/3 updates=6 mode=opencl cache=hit cpu=15% gpu=0% rga=0% cl=15.14/3.27/11.87ms"
+    cache_events:
+      - "MCF_FUSION_CL frames=0 sample=1/3 updates=1 mode=opencl cache=refresh cpu=0% gpu=0% rga=0% cl=15.37/3.49/11.87ms"
+      - "MCF_FUSION_CL frames=90 sample=2/3 updates=2 mode=opencl cache=refresh cpu=16% gpu=0% rga=0% cl=15.13/3.25/11.87ms"
+      - "MCF_FUSION_CL frames=450 sample=3/3 updates=6 mode=opencl cache=refresh cpu=17% gpu=0% rga=0% cl=15.14/3.27/11.87ms"
+    capture:
+      - "vo_captures/mcf_fusion_cl_vo_000150.bmp md5=d1beb1335f0bee67874e3a866397785e"
+      - "vo_captures/mcf_fusion_cl_vo_000300.bmp md5=9b6ede155f6660bc28f04a4feedd09d8"
+      - "vo_captures/mcf_fusion_cl_vo_000450.bmp md5=ae276be20ea52efa11a10314240d18c5"
+  negative_checks:
+    - "grep count for 拒绝销毁, VO capture failed, bind failed, failed, 失败 was 0 in /tmp/alldemo_mcf_fusion_cl_srs001_fix2_20s.log."
+    - "pgrep found no residual alldemo/run_alldemo process after timeout-triggered INT."
+    - "Cleanup log showed MCF_FUSION_CL_114 removed, pools 12/11/10/1 destroyed, pipeline destroyed, and buffer manager cleaned up."
+  acceptance_limits:
+    - "Runtime proof covers live OpenCL mode, frame progress, cache behavior, CL timing logs, captures, log cleanliness, and clean shutdown."
+    - "Final customer-facing visual judgment still needs screen/BMP review."

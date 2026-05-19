@@ -1,0 +1,36 @@
+implementation_record:
+  requirement_id: "SRS-PANO-CUSTOMER-PAGE-001"
+  case_name: "PANO_CUSTOMER_PAGE"
+  date: "2026-05-18"
+  status: "Implemented"
+  summary:
+    - "PANO 单页保留 sample2 六路相机输入和 PTO 标定文件。"
+    - "默认客户页不自动启动 live PANO worker，避免 Ctrl+C/timeout 时卡在 MEDIA_PANO_Stop/Destroy。"
+    - "新增 ALLDEMO_PANO_LIVE=1 显式开关，用于后续单独验证 live PANO 模块路径。"
+    - "默认客户页生成 1920x960 reference-strip NV12 全景预览，保证页面有稳定输出。"
+    - "live 模式下 PANO 输出由 8378x4190 全域输出降为完整全景域映射到 1920x960 预览输出，LUT 从约 561MB 降到约 29MB。"
+    - "PANO 单页新增整页 NV12 cache，按输出生成状态刷新；输出不变时直接 memcpy 缓存页。"
+    - "主循环新增 PANO frames/output/mode/cache/preview/domain/CPU/GPU/RGA 日志。"
+    - "README 和 effect_manifest.json 补充默认 reference-strip、可选 live 模块、页面缓存、运行指标和 VO 抓帧说明。"
+  changed_files:
+    alldemo:
+      - "src/alldemo.c"
+      - "README.md"
+      - "assets/effect_manifest.json"
+      - "docs/AI团队/demo需求/PRODUCT-PANO-CUSTOMER-PAGE.yaml"
+      - "docs/AI团队/demo需求/SRS-PANO-CUSTOMER-PAGE-001.yaml"
+      - "docs/AI团队/demo实现/IMPL-PANO-CUSTOMER-PAGE-20260518-001.yaml"
+      - "docs/AI团队/demo验收/ACCEPT-PANO-CUSTOMER-PAGE-20260518-001.yaml"
+      - "docs/问题记录/20260518-1750-pano-customer-page-hangs-cleanup-with-live-worker-and-full-domai.md"
+  implementation_notes:
+    - "默认日志 mode=reference-strip；这不是 live PANO 模块输出。"
+    - "显式 live 模式仍保留在 ALLDEMO_PANO_LIVE=1，但已知 stop/join 清理问题未在本需求内修复。"
+    - "验收命令使用 ./build/alldemo --only PANO，避免 wrapper timeout 信号转发差异影响清理日志判断。"
+  issue_record:
+    - "docs/问题记录/20260518-1750-pano-customer-page-hangs-cleanup-with-live-worker-and-full-domai.md"
+  validation_artifacts:
+    - "/tmp/alldemo_pano_srs001_baseline.log"
+    - "/tmp/alldemo_pano_srs001_direct_reference.log"
+    - "vo_captures/pano_vo_000150.bmp"
+    - "vo_captures/pano_vo_000300.bmp"
+    - "vo_captures/pano_vo_000450.bmp"

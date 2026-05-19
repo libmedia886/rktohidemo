@@ -1,0 +1,33 @@
+implementation_record:
+  requirement_id: "SRS-EDOF-CL-CUSTOMER-PAGE-001"
+  case_name: "EDOF_CL_CUSTOMER_PAGE"
+  date: "2026-05-18"
+  status: "Implemented"
+  summary:
+    - "EDOF_CL 单页保留三组 mfi_whu 近焦/远焦/参考融合样张输入。"
+    - "默认客户页不自动启动 live EDOF_CL OpenCL worker，避免慢速 GPU worker 在 Ctrl+C/timeout 时拖住清理。"
+    - "新增 ALLDEMO_EDOF_CL_LIVE=1 显式开关，用于后续单独验证 live 模块路径。"
+    - "EDOF_CL 单页新增整页 NV12 cache，按当前样张索引刷新；样张不变时直接 memcpy 缓存页，避免每帧重绘三张大图。"
+    - "主循环新增 EDOF_CL frames/sample/updates/mode/cache/CPU/GPU/RGA 日志。"
+    - "README 和 effect_manifest.json 补充默认 reference 模式、可选 live OpenCL、页面缓存、运行指标和 VO 抓帧说明。"
+  changed_files:
+    alldemo:
+      - "src/alldemo.c"
+      - "README.md"
+      - "assets/effect_manifest.json"
+      - "docs/AI团队/demo需求/PRODUCT-EDOF-CL-CUSTOMER-PAGE.yaml"
+      - "docs/AI团队/demo需求/SRS-EDOF-CL-CUSTOMER-PAGE-001.yaml"
+      - "docs/AI团队/demo实现/IMPL-EDOF-CL-CUSTOMER-PAGE-20260518-001.yaml"
+      - "docs/AI团队/demo验收/ACCEPT-EDOF-CL-CUSTOMER-PAGE-20260518-001.yaml"
+      - "docs/问题记录/20260518-1736-edof-cl-customer-page-stalls-shutdown-with-live-opencl-and-redra.md"
+  implementation_notes:
+    - "本页客户默认模式展示 reference fusion sample，日志 mode=reference；这比默认启动慢速 OpenCL worker 更适合现场循环演示。"
+    - "页面缓存键为 edof_pair_index；每 3 秒切换样张时重新绘制整页。"
+    - "本需求不改 rktohi 源码，不优化 EDOF_CL 内核或线程取消。"
+  issue_record:
+    - "docs/问题记录/20260518-1736-edof-cl-customer-page-stalls-shutdown-with-live-opencl-and-redra.md"
+  validation_artifacts:
+    - "/tmp/alldemo_edof_cl_srs001_baseline.log"
+    - "/tmp/alldemo_edof_cl_srs001_direct_16s.log"
+    - "vo_captures/edof_cl_vo_000150.bmp"
+    - "vo_captures/edof_cl_vo_000300.bmp"

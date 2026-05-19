@@ -1,0 +1,71 @@
+software_requirement_specification:
+  requirement_id: "SRS-THERMAL-CUSTOMER-PAGE-001"
+  case_name: "THERMAL_CUSTOMER_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-THERMAL-CUSTOMER-PAGE.yaml"
+  user_value: "客户默认轮播逐页优化时，THERMAL 页需要稳定展示伪彩模式对比，并提供可复看的页面抓帧证据。"
+  scope:
+    - "保持 THERMAL 在客户默认页表中，不改变默认顺序。"
+    - "THERMAL 使用 /userdata/rktohi/demo/thermal/1.png 和 2.png 作为样张输入。"
+    - "单页展示 16 种伪彩色表，当前时刻所有格子使用同一源图。"
+    - "源图按 3 秒周期切换，切换时刷新 16 模式页面。"
+    - "THERMAL 页面按源图索引缓存整页 NV12 渲染结果；源图不变时主循环直接拷贝缓存，避免每帧重算 16 个格子。"
+    - "主循环输出 THERMAL frames、asset、modes、cache、CPU/GPU/RGA 日志。"
+    - "THERMAL 运行后调用 maybe_capture_module_vo_frame() 生成 vo_captures/thermal_vo_*.bmp。"
+    - "更新 effect manifest 中 THERMAL 的效果描述，突出 16 模式、3 秒切换、页面缓存、运行指标和 VO 抓帧。"
+    - "更新 README 的 THERMAL 单页说明，明确输入样张、伪彩对比、缓存和抓帧证据。"
+  non_scope:
+    - "不修改 rktohi THERMAL 算法或 public API。"
+    - "不复制 rktohi/src 到 alldemo。"
+    - "不把 THERMAL 描述成温度测量、目标识别或热源检测算法。"
+    - "不把自动抓帧等同于人工视觉验收。"
+  target_screen:
+    layout: "竖屏单模块页；中部 4x4 网格显示 16 种伪彩模式，顶部为中文数据流和原因说明。"
+    input_source: "/userdata/rktohi/demo/thermal/1.png 和 /userdata/rktohi/demo/thermal/2.png。"
+    output_view: "16 个格子同源，仅色表不同；源图每 3 秒切换。"
+    overlay_text:
+      - "标题显示 THERMAL 热成像伪彩模式对比。"
+      - "显示同一张红外灰度图表示温度强弱，不同色表只改变显示颜色。"
+      - "显示每 3 秒切换下一张 rktohi 样张。"
+      - "显示 CPU/GPU/RGA 和页面运行状态。"
+    runtime_metrics:
+      - "FPS"
+      - "frame_time"
+      - "CPU"
+      - "GPU"
+      - "RGA"
+      - "THERMAL frames"
+      - "source asset index"
+      - "cache state"
+      - "mode count"
+  implementation_boundary:
+    alldemo_files:
+      - "src/alldemo.c"
+      - "README.md"
+      - "assets/effect_manifest.json"
+      - "docs/AI团队/demo需求/PRODUCT-THERMAL-CUSTOMER-PAGE.yaml"
+      - "docs/AI团队/demo需求/SRS-THERMAL-CUSTOMER-PAGE-001.yaml"
+    rktohi_dependency: "只读取 rktohi demo thermal 图片作为样张；本需求不改 rktohi 源码。"
+    copied_artifacts_only: true
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 在 /userdata/alldemo 通过。"
+    - "./scripts/run_alldemo.sh --asset-check 可以执行通过。"
+    - "timeout -s INT -k 5s 12s stdbuf -oL -eL ./scripts/run_alldemo.sh --only THERMAL 能启动目标页，日志出现 THERMAL frames、asset、modes、cache 和 CPU/GPU/RGA。"
+    - "运行日志中 THERMAL frames 至少达到 150，并生成 vo_captures/thermal_vo_000150.bmp。"
+    - "运行日志中 拒绝销毁、VO capture failed、bind failed、failed、失败 计数为 0。"
+    - "退出日志显示 DISPLAY_POOL、pipeline 和 buffer manager 清理完成，退出后无残留 alldemo 进程。"
+    - "README 和 assets/effect_manifest.json 的 THERMAL 描述不再停留在泛化 pseudo thermal color map。"
+  validation_plan:
+    build:
+      - "git diff --check"
+      - "cmake --build build -j"
+    run:
+      - "./scripts/run_alldemo.sh --asset-check"
+      - "timeout -s INT -k 5s 12s stdbuf -oL -eL ./scripts/run_alldemo.sh --only THERMAL"
+      - "grep for 拒绝销毁, VO capture failed, bind failed, failed, 失败"
+      - "ls -lt vo_captures/thermal_vo_*.bmp"
+      - "pgrep -af 'alldemo|run_alldemo'"
+  open_questions:
+    - "仍需要产品或现场人员看实际屏幕/抓帧，判断 16 色表名称和色彩差异是否足够直观。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

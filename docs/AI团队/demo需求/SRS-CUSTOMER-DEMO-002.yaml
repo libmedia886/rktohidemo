@@ -1,0 +1,68 @@
+software_requirement_specification:
+  requirement_id: "SRS-CUSTOMER-DEMO-002"
+  case_name: "CUSTOMER_DEMO_ITERATION_002"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-CUSTOMER-DEMO-ITERATION-002.yaml"
+  user_value: "客户演示轮播需要逐页变得更容易理解、更稳定；本轮让 VMIX 成为可讲解的实时合成页，并消除 RESIZE_RGA 阻断轮播的运行缺陷。"
+  scope:
+    - "将 VMIX 加入客户默认页表、工程页表和 --only 列表说明。"
+    - "实现 --only VMIX 实时 bind 链路：VI -> VPSS(4路480x480同源输入) -> VMIX(input0..3) -> OSD -> VO。"
+    - "VMIX 页面显示四路输入边框、alpha 标签、中文数据流、合成原因、VI/VMIX 帧计数和 CPU/GPU/RGA 状态。"
+    - "VMIX 页面周期抓取 VO 输出帧到 vo_captures/vmix_vo_*.bmp，作为后续产品复看的证据。"
+    - "修复 RESIZE_RGA bind 输入尺寸：input_width/input_height 必须是 CAM_W/CAM_H，crop 宽高只作为源裁剪窗口。"
+    - "run_alldemo.sh 在 src、CMakeLists.txt、include/media_api.h 或 lib/libmedia.a 比 build/alldemo 新时自动重新构建。"
+    - "更新 README 和 assets/effect_manifest.json，使用户看到的说明和真实实现一致。"
+  non_scope:
+    - "不修改 /userdata/rktohi 源码。"
+    - "不改变 VMIX 底层库能力或 API。"
+    - "不在本轮重新设计其它客户页的视觉布局。"
+    - "不把 NPU、AVM、SVM3D 等联调入口加入客户默认轮播。"
+    - "不把自动运行证明等同于人工屏幕视觉验收。"
+  target_screen:
+    layout: "竖屏单模块页；VMIX 四路 480x480 输入以不同 x/y 位置叠放，使用不同 alpha，底部说明区显示数据流和原因。"
+    input_source: "实时摄像头 /dev/video-camera0，经 VI 和 VPSS 生成四路同尺寸 NV12 输入。"
+    output_view: "VMIX 合成输出叠加 OSD 后送到 VO；客户默认轮播中 VMIX 排在 VPSS 后。"
+    overlay_text:
+      - "顶部显示 VMIX、页码、客户演示模式和运行指标。"
+      - "画面上标出 IN0..IN3 和对应 alpha。"
+      - "底部中文说明 VMIX 做位置、层级和 alpha 混合。"
+      - "底部中文数据流必须和真实 bind 链路一致。"
+    runtime_metrics:
+      - "FPS"
+      - "frame_time"
+      - "CPU"
+      - "GPU"
+      - "RGA"
+      - "VI frames"
+      - "VMIX output frames"
+  implementation_boundary:
+    alldemo_files:
+      - "src/alldemo.c"
+      - "README.md"
+      - "assets/effect_manifest.json"
+      - "scripts/run_alldemo.sh"
+      - "docs/问题记录/20260518-1414-resize-rga-bind-input-width-inferred-from-crop.md"
+      - "docs/问题记录/INDEX.md"
+    rktohi_dependency: "使用当前同步到 alldemo 的 include/media_api.h、lib/libmedia.a、lib/libmedia.so；本轮不修改 rktohi。"
+    copied_artifacts_only: true
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以重新编译并链接 build/alldemo。"
+    - "./scripts/run_alldemo.sh --asset-check 可以执行通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only VMIX 能启动目标页，日志出现 VMIX 帧计数/alpha layout 信息，退出后无残留 alldemo 进程。"
+    - "VMIX 运行后生成 vo_captures/vmix_vo_*.bmp 抓帧文件。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only RESIZE_RGA 不再出现 Width mismatch 或 VI -> RESIZE_RGA bind failed。"
+    - "README 默认客户演示页表包含 VMIX，且 --only VMIX 说明真实数据流。"
+    - "assets/effect_manifest.json 中 VMIX 描述为硬件合成布局和 alpha 混合，不再描述为 Vulkan compositor path。"
+  validation_plan:
+    build:
+      - "git diff --check"
+      - "cmake --build build -j"
+    run:
+      - "./scripts/run_alldemo.sh --asset-check"
+      - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only VMIX"
+      - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only RESIZE_RGA"
+      - "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo'"
+  open_questions:
+    - "仍需要产品或现场人员看实际屏幕，判断 VMIX 页面视觉效果是否足够直观。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

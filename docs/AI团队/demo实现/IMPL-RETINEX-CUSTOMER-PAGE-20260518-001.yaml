@@ -1,0 +1,33 @@
+implementation_record:
+  requirement_id: "SRS-RETINEX-CUSTOMER-PAGE-001"
+  case_name: "RETINEX_CUSTOMER_PAGE"
+  date: "2026-05-18"
+  status: "Implemented"
+  summary:
+    - "RETINEX 单页保持实时摄像头输入，使用 VI -> VPSS 分出 RAW 和增强两路。"
+    - "显示链路改为 VPSS(output0) -> VMIX_RGA(input0)，VPSS(output1) -> RETINEX -> VMIX_RGA(input1) -> OSD -> VO，避免第二个 OpenCL consumer 导入失败。"
+    - "页面底部显示中文数据流、gain、threshold、log range、VI/RETINEX 帧计数和 CPU/GPU/RGA 状态。"
+    - "maybe_capture_vo_channel_frame() 已支持 RETINEX，运行生成 vo_captures/retinex_vo_*.bmp。"
+    - "rktohi 侧修正 RETINEX OpenCL/EGL sharing context、处理线程 eglMakeCurrent 和初始化线程解绑。"
+  changed_files:
+    alldemo:
+      - "src/alldemo.c"
+      - "README.md"
+      - "assets/effect_manifest.json"
+      - "docs/AI团队/demo需求/PRODUCT-RETINEX-CUSTOMER-PAGE.yaml"
+      - "docs/AI团队/demo需求/SRS-RETINEX-CUSTOMER-PAGE-001.yaml"
+    rktohi:
+      - "/userdata/rktohi/src/module/retinex/retinex.c"
+    synced_artifacts:
+      - "lib/libmedia.a"
+  implementation_notes:
+    - "RETINEX 自身需要 EGL-sharing OpenCL context；默认 OpenCL context 会在 dma-buf import 时触发 -34。"
+    - "VMIX OpenCL 不作为本页显示合成后级，客户页使用 VMIX_RGA 做上下对比合成。"
+    - "alldemo 只同步 rktohi 构建产物，不复制 rktohi/src 实现源码。"
+  issue_record:
+    - "docs/问题记录/20260518-1634-retinex-bind-page-fails-when-egl-context-is-not-shared-and-vmix-.md"
+  validation_artifacts:
+    - "/tmp/alldemo_retinex_srs001_after_context_rga.log"
+    - "/tmp/alldemo_retinex_srs001_ctrlc.log"
+    - "vo_captures/retinex_vo_000150.bmp"
+    - "vo_captures/retinex_vo_000300.bmp"

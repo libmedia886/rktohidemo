@@ -1,0 +1,38 @@
+product_brief:
+  case_name: "TRANSFORM_CUSTOMER_PAGE"
+  target_user: "到现场观看 AllDemo 的客户和售前演示人员"
+  demo_goal: "把 TRANSFORM 页讲成可看懂的几何变换能力展示：实时摄像头输入经过 VPSS 分成四路同源画面，一路 RAW 直通，三路进入 TRANSFORM，分别展示畸变矫正、旋转缩放和透视变换。"
+  first_screen_message: "客户一眼看到同一画面在不同 XY LUT 下发生的几何变化，知道这是可实时更新 LUT 的图像变换能力。"
+  must_show:
+    - "TRANSFORM 保持在默认客户演示页表内。"
+    - "TRANSFORM 单页使用实时摄像头输入，不使用静态占位图。"
+    - "屏幕上显示 RAW、UNDISTORT、ROTATE ZOOM、PERSPECTIVE 四格等源画面。"
+    - "ROTATE ZOOM 路运行中动态更新 XY LUT。"
+    - "屏幕上显示中文数据流、为什么这样做、四路帧计数、LUT 更新序号和 CPU/GPU/RGA 状态。"
+    - "运行后保存 TRANSFORM 页面 VO 抓帧，供产品复看页面效果。"
+  should_show:
+    - "客户能理解四格差异只来自几何 LUT，不来自不同输入。"
+    - "README 和 effect manifest 应明确 VI->VPSS->RAW/TRANSFORM->VMIX->OSD->VO 数据流。"
+    - "短运行验证应看到四路帧计数同步增长。"
+  avoid_showing:
+    - "不要只写 same-source LUT warp，必须说明四种展示模式、动态 LUT、计数和抓帧。"
+    - "不要把 TRANSFORM 描述成颜色处理或卷积处理。"
+    - "不复制 rktohi/src 到 alldemo；alldemo 只消费重建后的库和头文件产物。"
+  input_source_preference: "live_camera"
+  visual_layout: "竖屏单模块页；中部 2x2 四格展示 RAW/UNDISTORT/ROTATE ZOOM/PERSPECTIVE，底部显示中文数据流、运行指标和 LUT 序号。"
+  comparison_rule: "四格画面必须来自 VPSS 同源同尺寸输入，显示差异只由 TRANSFORM LUT 决定。"
+  overlay_text:
+    data_flow: "数据流：VI 采集 NV12，VPSS 分成四路；RAW 直通，其余三路进入 TRANSFORM 后合成显示。"
+    rationale: "同源画面通过不同 XY LUT 展示畸变矫正、旋转缩放和透视变换，适合标定和几何校正演示。"
+    runtime_metrics: "CPU/GPU/RGA/FPS/frame time/VI frames/RAW/UNDISTORT/ROTATE ZOOM/PERSPECTIVE/LUT index"
+  acceptance_feel:
+    - "客户能看懂四个几何变换模式的差异。"
+    - "演示人员能用抓帧复看说明文字、四格布局和指标是否清楚。"
+    - "TRANSFORM 页面能短运行并干净退出。"
+  product_defects:
+    - id: "PROD-TRANSFORM-001"
+      description: "TRANSFORM 页面已有四路展示，但缺少独立 SRS/验收记录，旧抓帧不是当前页证据，退出时 display/transform 输出池会出现拒绝销毁。"
+      expected_change: "补足产品/SRS/实现/验收记录，刷新 VO 抓帧，并修正退出清理顺序和输出队列 drain。"
+      severity: "Major"
+  product_verdict: "Implemented"
+  next_skill: "alldemo-runtime-acceptance"

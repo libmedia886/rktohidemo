@@ -1,0 +1,37 @@
+product_brief:
+  case_name: "CSC_CL_CUSTOMER_PAGE"
+  target_user: "到现场观看 AllDemo 的客户和售前演示人员"
+  demo_goal: "把 CSC_CL 页作为客户默认轮播中的 GPU/OpenCL 颜色矩阵转换能力讲清楚：实时摄像头 NV12 经 OpenCL 转 ARGB，经 OSD 叠加说明后直送 VO，并显示 kernel/queue 耗时。"
+  first_screen_message: "客户看到一条完整 GPU 颜色转换链路，屏幕上明确标出 NV12、ARGB、OpenCL、OSD/VO 和实时性能。"
+  must_show:
+    - "CSC_CL 保持在默认客户演示页表内。"
+    - "CSC_CL 单页使用实时摄像头输入，不使用静态占位图。"
+    - "屏幕上显示 NV12 -> ARGB -> OSD -> VO 的 OpenCL 颜色转换链路。"
+    - "屏幕上显示 CSC_CL/OSD 帧计数、kernel/queue 耗时和 CPU/GPU/RGA 状态。"
+    - "运行后保存 CSC_CL 页面 VO 抓帧，供产品复看页面效果。"
+  should_show:
+    - "客户能理解 CSC_CL 与 CSC_RGA 的区别：本页强调 GPU/OpenCL 矩阵转换和耗时指标。"
+    - "README 和 effect manifest 应说明 OpenCL 颜色矩阵转换、OSD 叠加和 VO 抓帧。"
+    - "短运行验证应看到 CSC_CL/OSD 帧计数同步增长。"
+  avoid_showing:
+    - "不要把 CSC_CL 简写成泛化 color conversion path，必须说明 OpenCL/GPU 和 NV12/ARGB 显示链路。"
+    - "不要把 CSC_CL 与 CSC_RGA 的硬件路径混在一起。"
+    - "不复制 rktohi/src 到 alldemo；若底层格式能力不足，只补 rktohi 库并同步产物。"
+  input_source_preference: "live_camera"
+  visual_layout: "继续使用竖屏单模块页；上部显示转换后上屏结果，下部显示 NV12/ARGB 流程卡片、kernel/queue 条、真实 bind 链路和运行指标。"
+  comparison_rule: "CSC_CL 不是左右对比页；本页以数据流、格式路径和 GPU 耗时作为效果判断。"
+  overlay_text:
+    data_flow: "数据流：VI -> CSC_CL(NV12->ARGB) -> OSD(ARGB叠加) -> VO"
+    rationale: "颜色转换是逐像素矩阵计算，GPU并行处理可减少CPU压力。"
+    runtime_metrics: "CPU/GPU/RGA/FPS/frame time/CSC_CL frames/kernel ms/queue ms"
+  acceptance_feel:
+    - "客户能看懂颜色格式转换发生在 GPU/OpenCL 上。"
+    - "演示人员能用抓帧复看流程卡片和耗时条是否清楚。"
+    - "CSC_CL 页面能短运行并干净退出。"
+  product_defects:
+    - id: "PROD-CSC-CL-001"
+      description: "CSC_CL 页面已有实时链路和性能说明，但缺少独立页面 SRS 和页面抓帧证据，manifest 描述仍过于泛化。"
+      expected_change: "CSC_CL 纳入 VO 抓帧，文档描述改为 OpenCL NV12/ARGB 颜色矩阵转换和 OSD/VO 显示链路。"
+      severity: "Minor"
+  product_verdict: "Need Implementation"
+  next_skill: "alldemo-requirements-boundary"

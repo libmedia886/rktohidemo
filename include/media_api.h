@@ -691,6 +691,8 @@ int MEDIA_BLEND_PYR_SetAttr(int grp_id, const MEDIA_BLEND_PYR_ATTR *attr);
 int MEDIA_BLEND_PYR_DestroyGrp(int grp_id);
 int MEDIA_BLEND_PYR_Enable(int grp_id);
 int MEDIA_BLEND_PYR_Disable(int grp_id);
+int MEDIA_BLEND_PYR_GetFrame(int grp_id, MEDIA_BUFFER *buf, int timeout_ms);
+int MEDIA_BLEND_PYR_ReleaseFrame(int grp_id, MEDIA_BUFFER buf);
 
 // BLEND_PYR Mask 设置 (MPI 接口)
 int MEDIA_BLEND_PYR_SetMask(int grp_id, MEDIA_BUFFER *mask_buf);

@@ -1,0 +1,56 @@
+software_requirement_specification:
+  requirement_id: "SRS-VI-CUSTOMER-PAGE-001"
+  case_name: "VI_CUSTOMER_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-VI-CUSTOMER-PAGE.yaml"
+  user_value: "客户默认轮播逐页优化时，VI 页需要作为实时摄像头输入基线，证明后续页面的源数据链路真实可靠。"
+  scope:
+    - "保持 VI 在客户默认页表中，不改变默认顺序。"
+    - "VI 单页输入分辨率恢复为原稳定 640x640。"
+    - "VI 单页显示链路恢复为：VI -> VMIX -> OSD -> VO。"
+    - "把 VI 纳入 VO 抓帧支持范围，输出 vo_captures/vi_vo_*.bmp。"
+    - "更新 README 和 effect manifest 中 VI 的展示说明。"
+    - "补充 VI 页 Product/SRS/Implementation/Acceptance 记录。"
+  non_scope:
+    - "不修改 /userdata/rktohi 源码。"
+    - "不修改 MEDIA_VI API 或底层 VI 模块行为。"
+    - "不改变摄像头设备或默认轮播顺序。"
+    - "不把其它算法能力页一起切到 4K 或 1080P。"
+    - "本次不继续默认启用 VI 大分辨率路径；4K/1080P 另按问题记录验证。"
+    - "不把自动抓帧等同于人工视觉验收。"
+  target_screen:
+    layout: "竖屏单模块页；主画面显示实时摄像头输入，下方显示 bind 数据流和运行指标。"
+    input_source: "实时摄像头 /dev/video-camera0，输入 640x640 NV12。"
+    output_view: "VI 输入经 VMIX 和 OSD 输出到 VO。"
+    overlay_text:
+      - "标题显示 VI 和客户演示页码。"
+      - "显示 VI -> VMIX -> OSD -> VO 的真实 bind 链路。"
+      - "显示 FPS、frame time、CPU/GPU/RGA 状态。"
+  implementation_boundary:
+    alldemo_files:
+      - "src/alldemo.c"
+      - "README.md"
+      - "assets/effect_manifest.json"
+      - "docs/AI团队/demo需求/PRODUCT-VI-CUSTOMER-PAGE.yaml"
+      - "docs/AI团队/demo需求/SRS-VI-CUSTOMER-PAGE-001.yaml"
+    rktohi_dependency: "使用当前已同步的 media_api.h、libmedia.a 和 libmedia.so；本需求不修改 rktohi。"
+    copied_artifacts_only: true
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以重新编译并链接 build/alldemo。"
+    - "./scripts/run_alldemo.sh --asset-check 可以执行通过。"
+    - "timeout -s INT -k 8s 8s ./scripts/run_alldemo.sh --only VI 能启动 VI 页。"
+    - "日志出现 VI bind flow: VI0.output -> RESIZE_RGA61.input0; RESIZE_RGA61.output0 -> VMIX80.input0; VMIX80.output0 -> OSD81.input; OSD81.output0 -> VO0.input0。"
+    - "运行后生成 vo_captures/vi_vo_*.bmp 抓帧文件。"
+    - "退出后无残留 alldemo/run_alldemo 进程。"
+  validation_plan:
+    build:
+      - "git diff --check"
+      - "cmake --build build -j"
+    run:
+      - "./scripts/run_alldemo.sh --asset-check"
+      - "timeout -s INT -k 8s 8s ./scripts/run_alldemo.sh --only VI"
+      - "pgrep -af '[b]uild/alldemo|[r]un_alldemo'"
+  open_questions:
+    - "仍需要产品或现场人员看实际屏幕/抓帧，判断 VI 页说明是否足够直观。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

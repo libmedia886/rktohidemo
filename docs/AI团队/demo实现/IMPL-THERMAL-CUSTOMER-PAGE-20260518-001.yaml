@@ -1,0 +1,34 @@
+implementation_record:
+  requirement_id: "SRS-THERMAL-CUSTOMER-PAGE-001"
+  case_name: "THERMAL_CUSTOMER_PAGE"
+  date: "2026-05-18"
+  status: "Implemented"
+  summary:
+    - "THERMAL 单页保留 rktohi thermal 样张输入，一屏展示 16 种伪彩色表。"
+    - "新增 draw_showcase_page_refs()，让主循环可以用同一组 display_refs 绘制到实际 VO buffer 或 THERMAL 页面缓存。"
+    - "THERMAL 单页新增整页 NV12 cache，按当前源图索引刷新；源图不变时直接 memcpy 缓存页，避免每帧重算 16 个伪彩格。"
+    - "主循环新增 THERMAL frames/asset/modes/cache/CPU/GPU/RGA 日志。"
+    - "README 和 effect_manifest.json 补充 16 模式、3 秒源图切换、页面缓存、运行指标和 VO 抓帧说明。"
+    - "补充产品、SRS、实现、验收和问题记录文档。"
+  changed_files:
+    alldemo:
+      - "src/alldemo.c"
+      - "README.md"
+      - "assets/effect_manifest.json"
+      - "docs/AI团队/demo需求/PRODUCT-THERMAL-CUSTOMER-PAGE.yaml"
+      - "docs/AI团队/demo需求/SRS-THERMAL-CUSTOMER-PAGE-001.yaml"
+      - "docs/AI团队/demo实现/IMPL-THERMAL-CUSTOMER-PAGE-20260518-001.yaml"
+      - "docs/AI团队/demo验收/ACCEPT-THERMAL-CUSTOMER-PAGE-20260518-001.yaml"
+      - "docs/问题记录/20260518-1727-thermal-page-per-frame-redraw-misses-short-run-capture.md"
+  implementation_notes:
+    - "THERMAL 当前是页面展示类能力，不启动 rktohi THERMAL 模块链路；它展示的是同源热图的伪彩色表映射。"
+    - "缓存粒度选择整页 NV12，而不是每个格子单独缓存，是为了最小化主循环改动并保留原有中文标题、页脚和布局。"
+    - "缓存键为 frame/(FPS*3) 对应的源图索引；样张切换时重新绘制整页。"
+    - "本需求不改 rktohi 源码，只改 alldemo 页面编排、日志和文档。"
+  issue_record:
+    - "docs/问题记录/20260518-1727-thermal-page-per-frame-redraw-misses-short-run-capture.md"
+  validation_artifacts:
+    - "/tmp/alldemo_thermal_srs001_baseline.log"
+    - "/tmp/alldemo_thermal_srs001_fix1.log"
+    - "vo_captures/thermal_vo_000150.bmp"
+    - "vo_captures/thermal_vo_000300.bmp"

@@ -1,0 +1,22 @@
+acceptance_report:
+  case_name: "VMIX_CUSTOMER_PAGE"
+  requirement_id: "SRS-VMIX-CUSTOMER-PAGE-001"
+  verdict: "Pass With Risks"
+  evidence:
+    - command: "timeout -s INT -k 8s 8s stdbuf -oL -eL ./scripts/run_alldemo.sh --only VMIX"
+      result: "Passed"
+      summary: "VMIX 单页启动到真实 bind 链路；日志出现 VI0.output -> VPSS63.input、VPSS outputs0..3 -> VMIX80 inputs0..3、VMIX80.output0 -> OSD81.input、OSD81.output0 -> VO0.input0；VMIX vi_frames/vmix_frames 指标增长；生成 vo_captures/vmix_vo_000150.bmp。"
+    - command: "md5sum vo_captures/vmix_vo_000150.bmp"
+      result: "Passed"
+      summary: "58ef4212a87e396cdac280f4b9cb9733。"
+    - command: "grep -c '拒绝销毁\\|VO capture failed\\|bind failed\\|failed\\|失败' /tmp/alldemo_vmix_page_srs001.log"
+      result: "Passed"
+      summary: "计数为 0。"
+    - command: "pgrep -af '[b]uild/alldemo|[r]un_alldemo'"
+      result: "Passed"
+      summary: "退出后无残留进程。"
+  software_issues: []
+  not_verified:
+    - "未做人工屏幕视觉验收，产品仍需复看 VMIX alpha 合成和文字密度是否清楚。"
+    - "未完整跑完客户默认轮播所有页面。"
+  next_skill: "alldemo-product-manager"

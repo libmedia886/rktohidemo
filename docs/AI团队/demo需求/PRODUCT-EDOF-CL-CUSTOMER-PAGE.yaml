@@ -1,0 +1,39 @@
+product_brief:
+  case_name: "EDOF_CL_CUSTOMER_PAGE"
+  target_user: "到现场观看 AllDemo 的客户和售前演示人员"
+  demo_goal: "把 EDOF_CL 页讲成可理解的扩展景深展示：近焦图和远焦图来自同一场景，右侧融合结果保留两张输入中更清晰的区域。"
+  first_screen_message: "客户一眼看到 INPUT A、INPUT B 和 OUTPUT 三栏，知道 EDOF_CL 的价值是把不同焦平面的清晰区域融合到一张更清晰的图。"
+  must_show:
+    - "EDOF_CL 保持在默认客户演示页表内。"
+    - "页面使用 assets/loop/edof/mfi_whu 的 a.jpg、b.jpg、fused.png 三组样张。"
+    - "单页显示近焦输入、远焦输入和融合输出三栏对比。"
+    - "样张每 3 秒切换一组。"
+    - "默认客户页使用参考融合输出，保证现场展示和 Ctrl+C 清理稳定。"
+    - "运行日志输出 EDOF_CL 帧数、样张索引、更新次数、mode、cache 状态和 CPU/GPU/RGA 状态。"
+    - "运行后保存 EDOF_CL 页面 VO 抓帧，供产品复看页面效果。"
+  should_show:
+    - "客户能理解输出不是简单叠图，而是保留近景/远景清晰区域的融合结果。"
+    - "README 和 effect manifest 应明确默认 reference 模式、可选 live OpenCL 验证、页面缓存和抓帧证据。"
+    - "短运行验证应看到 150/300 帧抓帧和完整清理日志。"
+  avoid_showing:
+    - "不要默认启动慢速 EDOF_CL OpenCL worker，导致客户页退出卡死。"
+    - "不要每帧重绘三张大图，导致 SIGINT 后不能及时进入清理。"
+    - "不要把参考融合样张说成实时摄像头输出。"
+  input_source_preference: "loop_image_pairs"
+  visual_layout: "竖屏单模块页；上方中文数据流和原因说明，中部 INPUT A/INPUT B/OUTPUT 三栏对比，底部展示重点和运行状态。"
+  comparison_rule: "三栏必须来自同一组样张；左上/右上是不同焦平面输入，底部输出是融合结果。"
+  overlay_text:
+    data_flow: "数据流：近焦图 + 远焦图进入 EDOF_CL 融合流程，右侧显示清晰融合结果。"
+    rationale: "根据清晰度权重融合近景和远景，扩展景深。"
+    runtime_metrics: "CPU/GPU/RGA/FPS/frame time/sample index/mode/cache state"
+  acceptance_feel:
+    - "客户能看懂输入和输出的清晰区域差异。"
+    - "演示人员能用抓帧复看三栏布局、中文说明和指标是否清楚。"
+    - "EDOF_CL 页面能短运行并干净退出。"
+  product_defects:
+    - id: "PROD-EDOF-CL-001"
+      description: "EDOF_CL 页面缺少独立产品/SRS/验收记录；基线短运行缺帧数日志和完整清理证据，默认 live OpenCL 加每帧重绘不适合客户展示。"
+      expected_change: "默认客户页切到稳定 reference 模式，增加页面缓存和运行日志，补文档和抓帧验收。"
+      severity: "Major"
+  product_verdict: "Implemented"
+  next_skill: "alldemo-runtime-acceptance"

@@ -1,0 +1,40 @@
+acceptance_record:
+  requirement_id: "SRS-THERMAL-CUSTOMER-PAGE-001"
+  case_name: "THERMAL_CUSTOMER_PAGE"
+  date: "2026-05-18"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "git diff --check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 5s 12s stdbuf -oL -eL ./scripts/run_alldemo.sh --only THERMAL > /tmp/alldemo_thermal_srs001_fix1.log 2>&1"
+      cwd: "/userdata/alldemo"
+      result: "pass_functional_probe_timeout_expected"
+    - command: "pgrep -af '[b]uild/alldemo|[r]un_alldemo'"
+      cwd: "/userdata/alldemo"
+      result: "pass_no_residual_process"
+  observed_runtime:
+    processing_chain:
+      - "rktohi thermal PNG sample -> 16 pseudo-color palettes -> cached NV12 page -> VO_0.input0"
+    frame_counts:
+      - "THERMAL frames=150 asset=2/2 modes=16 cache=hit cpu=15% gpu=0% rga=0%"
+      - "THERMAL frames=300 asset=2/2 modes=16 cache=hit cpu=15% gpu=0% rga=0%"
+    cache_events:
+      - "THERMAL frames=1 asset=1/2 modes=16 cache=refresh cpu=0% gpu=0% rga=0%"
+      - "THERMAL frames=91 asset=2/2 modes=16 cache=refresh cpu=15% gpu=0% rga=0%"
+      - "THERMAL frames=181 asset=1/2 modes=16 cache=refresh cpu=15% gpu=0% rga=0%"
+    capture:
+      - "vo_captures/thermal_vo_000150.bmp md5=8a3734b27a6dd2fa0e3009694491a441"
+      - "vo_captures/thermal_vo_000300.bmp md5=681a40a31fc94015a871d78174c8a78c"
+  negative_checks:
+    - "grep count for 拒绝销毁, VO capture failed, bind failed, failed, 失败 was 0 in /tmp/alldemo_thermal_srs001_fix1.log."
+    - "pgrep found no residual alldemo/run_alldemo process after timeout-triggered INT."
+    - "Cleanup log showed DISPLAY_POOL id=1 destroyed, pipeline destroyed, and buffer manager cleaned up."
+  acceptance_limits:
+    - "Runtime proof covers frame progress, cache behavior, captures, log cleanliness, and clean shutdown; final customer-facing visual judgment still needs screen/BMP review."

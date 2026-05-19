@@ -1,0 +1,26 @@
+acceptance_report:
+  case_name: "VI_CUSTOMER_PAGE_RESTORE_640_INPUT"
+  requirement_id: "SRS-VI-CUSTOMER-PAGE-001"
+  date: "2026-05-19"
+  verdict: "Pass With Risks"
+  validation_commands:
+    - command: "git diff --check -- src/alldemo.c README.md assets/effect_manifest.json docs/AI团队/demo需求/PRODUCT-VI-CUSTOMER-PAGE.yaml docs/AI团队/demo需求/SRS-VI-CUSTOMER-PAGE-001.yaml docs/AI团队/srs_status.yaml"
+      result: "Passed"
+    - command: "cmake --build build -j4"
+      result: "Passed"
+    - command: "timeout -s INT -k 5s 8s ./build/alldemo --only VI"
+      result: "Passed By Runtime Probe"
+  observed_runtime:
+    - "此前 MEDIA_VI_SetAttr 可配置 /dev/video-camera0 为 3840x2160@30fps，但现场确认无画面。"
+    - "1920x1080 回落路径启动 VI 时 QBUF 失败。"
+    - "当前已恢复为原 640x640 输入和 VI -> VMIX -> OSD -> VO 显示链路。"
+    - "实际 bind 链路为 VI_0.output -> VMIX_80.input0 -> OSD_81.input -> OSD_81.output0 -> VO_0.input0。"
+    - "日志显示 VI frames 持续增长到 211，退出时 VI、OSD、VMIX、VO 和 pool 清理完成。"
+    - "运行时生成 /userdata/alldemo/vo_captures/vi_vo_000150.bmp，source=OSD。"
+    - "运行后无残留 alldemo/run_alldemo/wbc_h264_record 进程。"
+  issue_records:
+    - "docs/问题记录/20260519-0927-vi-4k-bind-page-vo-capture-has-no-output-frame.md"
+    - "docs/问题记录/20260519-0933-vi-4k-input-bind-path-has-no-screen-output.md"
+  acceptance_limits:
+    - "4K 路径无画面、1080P 路径 QBUF 失败，均已按问题记录保留。"
+    - "恢复 640x640 后日志和抓帧已确认；屏幕视觉效果仍需用户现场复看。"

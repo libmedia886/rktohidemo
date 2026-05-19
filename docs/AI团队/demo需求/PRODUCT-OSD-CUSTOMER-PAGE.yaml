@@ -1,0 +1,38 @@
+product_brief:
+  case_name: "OSD_CUSTOMER_PAGE"
+  target_user: "到现场观看 AllDemo 的客户和售前演示人员"
+  demo_goal: "把 OSD 页作为客户默认轮播中的独立能力页讲清楚：它不是普通文字贴图，而是实时视频上的动态 region 叠加、层级、透明度和开关控制。"
+  first_screen_message: "客户看到实时摄像头画面上有动态目标框、扫描线、状态条和告警块，并能从中文说明理解两级 OSD 的作用。"
+  must_show:
+    - "OSD 保持在默认客户演示页表内。"
+    - "OSD 单页使用实时摄像头输入，不使用静态占位图。"
+    - "屏幕上显示动态 region 坐标、zorder、alpha、enabled 告警开关。"
+    - "屏幕上显示真实数据流：VI -> OSD -> VMIX -> 页面OSD -> VO。"
+    - "屏幕上显示 LIVE_OSD 和 PAGE_OSD 两级帧计数，以及 CPU/GPU/RGA 状态。"
+    - "运行后保存 OSD 页面 VO 抓帧，供产品复看页面效果。"
+  should_show:
+    - "客户能看出 OSD 是叠加层能力，不是把整帧重新渲染出来。"
+    - "说明文字应突出“只更新叠加区域，不需要 CPU 逐像素重画整帧视频”。"
+    - "README 和 effect manifest 的 OSD 描述应和真实两级 OSD 链路一致。"
+  avoid_showing:
+    - "不要把 OSD 只描述成 HUD boxes，避免用户误以为只是 UI 绘制。"
+    - "不要让页面只靠日志证明效果，必须有屏幕可见说明和抓帧证据。"
+    - "不修改 /userdata/rktohi 源码或复制 rktohi/src 到 alldemo。"
+  input_source_preference: "live_camera"
+  visual_layout: "继续使用竖屏单模块页；上部显示实时视频和 live OSD 动态区域，下部说明两级 OSD 链路、region 参数和运行指标。"
+  comparison_rule: "OSD 不是左右对比页；本页以动态 region、层级和透明度变化作为效果判断。"
+  overlay_text:
+    data_flow: "数据流：VI -> OSD(动态region) -> VMIX -> 页面OSD(说明层) -> VO"
+    rationale: "OSD只更新叠加区域，不需要CPU逐像素重画整帧视频。"
+    runtime_metrics: "CPU/GPU/RGA/FPS/frame time/LIVE_OSD frames/PAGE_OSD frames"
+  acceptance_feel:
+    - "客户不用看日志也能理解 OSD 模块的实时叠加能力。"
+    - "演示人员能用抓帧复看页面是否清楚、文字是否遮挡。"
+    - "OSD 页面仍能短运行并干净退出。"
+  product_defects:
+    - id: "PROD-OSD-001"
+      description: "OSD 页面已有实时链路，但 manifest/复看证据不够完整，后续逐页产品复看缺少 OSD 抓帧。"
+      expected_change: "OSD 文档描述升级为两级 OSD 动态 region 展示，并纳入 VO 抓帧证据。"
+      severity: "Minor"
+  product_verdict: "Need Implementation"
+  next_skill: "alldemo-requirements-boundary"

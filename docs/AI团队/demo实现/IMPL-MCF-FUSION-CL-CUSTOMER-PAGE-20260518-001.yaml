@@ -1,0 +1,30 @@
+implementation_record:
+  requirement_id: "SRS-MCF-FUSION-CL-CUSTOMER-PAGE-001"
+  case_name: "MCF_FUSION_CL_CUSTOMER_PAGE"
+  date: "2026-05-18"
+  status: "Implemented"
+  summary:
+    - "MCF_FUSION_CL 单页保留三组 color/mono/reference 样张输入。"
+    - "默认优先启动 MEDIA_MCF_FUSION_CL live OpenCL 模块，输出成功后覆盖 reference 融合图；模块失败时保留 reference fallback。"
+    - "MCF_FUSION_CL 单页新增整页 NV12 cache，按当前样张索引刷新；样张不变时直接 memcpy 缓存页，避免每帧重绘三张大图。"
+    - "主循环新增 MCF_FUSION_CL frames/sample/updates/mode/cache/CPU/GPU/RGA/CL total-stats-fusion 日志。"
+    - "README 和 effect_manifest.json 补充 OpenCL 输出、reference fallback、页面缓存、运行指标和 VO 抓帧说明。"
+  changed_files:
+    alldemo:
+      - "src/alldemo.c"
+      - "README.md"
+      - "assets/effect_manifest.json"
+      - "docs/AI团队/demo需求/PRODUCT-MCF-FUSION-CL-CUSTOMER-PAGE.yaml"
+      - "docs/AI团队/demo需求/SRS-MCF-FUSION-CL-CUSTOMER-PAGE-001.yaml"
+      - "docs/AI团队/demo实现/IMPL-MCF-FUSION-CL-CUSTOMER-PAGE-20260518-001.yaml"
+      - "docs/AI团队/demo验收/ACCEPT-MCF-FUSION-CL-CUSTOMER-PAGE-20260518-001.yaml"
+  implementation_notes:
+    - "缓存键为 mcf_pair_index；每 3 秒切换样张时先更新 live/reference 输出，再刷新整页缓存。"
+    - "日志中的 cl 字段顺序为 total/stats/fusion ms。"
+    - "本需求不改 rktohi 源码，不优化 MCF_FUSION_CL 内核。"
+  validation_artifacts:
+    - "/tmp/alldemo_mcf_fusion_cl_srs001_baseline.log"
+    - "/tmp/alldemo_mcf_fusion_cl_srs001_fix2_20s.log"
+    - "vo_captures/mcf_fusion_cl_vo_000150.bmp"
+    - "vo_captures/mcf_fusion_cl_vo_000300.bmp"
+    - "vo_captures/mcf_fusion_cl_vo_000450.bmp"

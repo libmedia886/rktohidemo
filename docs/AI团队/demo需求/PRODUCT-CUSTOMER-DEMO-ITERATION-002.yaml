@@ -1,0 +1,41 @@
+product_brief:
+  case_name: "CUSTOMER_DEMO_ITERATION_002"
+  target_user: "到现场观看 AllDemo 的客户和售前演示人员"
+  demo_goal: "继续逐页优化客户演示轮播；本轮把 VMIX 从工程能力说明优化成客户能看懂的实时合成页面，并修复 RESIZE_RGA 阻断默认轮播的问题。"
+  first_screen_message: "客户进入默认轮播后，可以在 VPSS 后看到 VMIX 四路实时输入叠放和 alpha 混合效果，后续 RESIZE_RGA 页面也能继续稳定播放。"
+  must_show:
+    - "VMIX 进入默认客户演示页表，位置在 VPSS 之后、OSD 之前。"
+    - "VMIX 单页使用实时摄像头输入，经 VPSS 生成四路 480x480 NV12 后绑定到 VMIX input0..3。"
+    - "VMIX 屏幕上显示中文数据流、alpha/层级说明、VI/VMIX 帧计数和 CPU/GPU/RGA 状态。"
+    - "RESIZE_RGA 在默认轮播和 --only RESIZE_RGA 中不再因为输入宽度从 crop 推断而绑定失败。"
+    - "运行脚本在 src、CMake、media_api.h 或 libmedia.a 更新后能自动重新构建 build/alldemo。"
+  should_show:
+    - "VMIX 画面应该让客户直接看到多路画面合成，而不是只看到静态说明或工程占位。"
+    - "README 和 effect manifest 的 VMIX 描述应和真实链路一致。"
+    - "保留可抓帧证据，方便后续产品复看每页效果。"
+  avoid_showing:
+    - "不要把 VMIX 继续描述成 Vulkan compositor path。"
+    - "不要把 RESIZE_RGA 的 crop 尺寸误当成输入端口尺寸。"
+    - "不要修改 /userdata/rktohi 源码或复制 rktohi/src 到 alldemo。"
+  input_source_preference: "live_camera"
+  visual_layout: "继续使用一页一个模块的竖屏展示；VMIX 主画面展示四路实时输入的不同位置、层级和 alpha 混合，底部显示中文说明与运行指标。"
+  comparison_rule: "本轮 VMIX 不是左右对比页；重点是四路输入的布局和叠层关系，四路输入尺寸保持一致。"
+  overlay_text:
+    data_flow: "数据流：VI -> VPSS(4路480x480) -> VMIX(input0..3) -> OSD -> VO"
+    rationale: "VMIX负责位置、层级和alpha混合；VPSS只负责准备四路同尺寸输入。"
+    runtime_metrics: "CPU/GPU/RGA/FPS/frame time/VI frames/VMIX output frames"
+  acceptance_feel:
+    - "客户可以不用解释工程细节就看出 VMIX 正在做多路合成。"
+    - "默认轮播不会在 RESIZE_RGA 页面提前退出。"
+    - "实现和文档都能支持后续继续逐页优化。"
+  product_defects:
+    - id: "PROD-CUSTOMER-DEMO-002-001"
+      description: "VMIX 原先在 manifest 中描述为 Vulkan compositor path，且未进入客户默认轮播，客户无法直接看到硬件合成/alpha 演示价值。"
+      expected_change: "VMIX 作为默认客户页显示实时四路输入、alpha 标签、中文数据流和指标。"
+      severity: "Major"
+    - id: "BUG-CUSTOMER-DEMO-002-001"
+      description: "RESIZE_RGA 单页在 bind 模式下把 crop 宽高推断成输入端口尺寸，默认轮播到该页会绑定失败并退出。"
+      expected_change: "RESIZE_RGA 输入端口尺寸固定为 VI 全帧尺寸，crop 只作为处理窗口。"
+      severity: "Major"
+  product_verdict: "Need Software Acceptance"
+  next_skill: "alldemo-requirements-boundary"

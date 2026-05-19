@@ -1,0 +1,42 @@
+acceptance_record:
+  requirement_id: "SRS-PANO-CUSTOMER-PAGE-001"
+  case_name: "PANO_CUSTOMER_PAGE"
+  date: "2026-05-18"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "git diff --check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 10s 18s stdbuf -oL -eL ./build/alldemo --only PANO > /tmp/alldemo_pano_srs001_direct_reference.log 2>&1"
+      cwd: "/userdata/alldemo"
+      result: "pass_functional_probe_timeout_expected"
+    - command: "pgrep -af '[b]uild/alldemo|[r]un_alldemo'"
+      cwd: "/userdata/alldemo"
+      result: "pass_no_residual_process"
+  observed_runtime:
+    processing_chain:
+      - "sample2 camera_0..camera_5 -> 1920x960 reference-strip NV12 preview -> cached NV12 page -> VO_0.input0"
+      - "ALLDEMO_PANO_LIVE=1 remains available for explicit live PANO module testing."
+    frame_counts:
+      - "PANO frames=300 output=1/1 mode=reference-strip cache=hit pano=1920x960 domain=8378x4189 cpu=15% gpu=0% rga=0%"
+      - "PANO frames=480 output=1/1 mode=reference-strip cache=hit pano=1920x960 domain=8378x4189 cpu=15% gpu=0% rga=0%"
+    cache_events:
+      - "PANO frames=0 output=1/1 mode=reference-strip cache=refresh pano=1920x960 domain=8378x4189 cpu=0% gpu=0% rga=0%"
+      - "PANO frames=150 output=1/1 mode=reference-strip cache=hit pano=1920x960 domain=8378x4189 cpu=15% gpu=0% rga=0%"
+    capture:
+      - "vo_captures/pano_vo_000150.bmp md5=3035dff574d192f8bebd9bace4c0f621"
+      - "vo_captures/pano_vo_000300.bmp md5=3035dff574d192f8bebd9bace4c0f621"
+      - "vo_captures/pano_vo_000450.bmp md5=3035dff574d192f8bebd9bace4c0f621"
+  negative_checks:
+    - "grep count for 拒绝销毁, VO capture failed, bind failed, failed, 失败 was 0 in /tmp/alldemo_pano_srs001_direct_reference.log."
+    - "pgrep found no residual alldemo/run_alldemo process after timeout-triggered INT."
+    - "Cleanup log showed DISPLAY_POOL id=1 destroyed, pipeline destroyed, and buffer manager cleaned up."
+  acceptance_limits:
+    - "Runtime proof covers default reference-strip mode, frame progress, cache behavior, captures, log cleanliness, and clean shutdown."
+    - "ALLDEMO_PANO_LIVE=1 live module cleanup remains unaccepted and must be handled as a separate module/runtime issue."

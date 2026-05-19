@@ -1,0 +1,78 @@
+software_requirement_specification:
+  requirement_id: "SRS-CONV-CL-CUSTOMER-PAGE-001"
+  case_name: "CONV_CL_CUSTOMER_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-CONV-CL-CUSTOMER-PAGE.yaml"
+  user_value: "客户默认轮播逐页优化时，CONV_CL 页需要稳定展示真实 GPU 卷积输出，并提供可复看的页面抓帧证据。"
+  scope:
+    - "保持 CONV_CL 在客户默认页表中，不改变默认顺序。"
+    - "CONV_CL 使用实时摄像头输入：VI 获取 NV12 帧，页面侧转换为 RGBA 后送入 MEDIA_CONV_CL。"
+    - "页面使用单个 CONV_CL 组顺序加载 SHARPEN、EDGE、EMBOSS、BLUR 四个 3x3 卷积核。"
+    - "页面将四个真实 CONV_CL 输出合成为 2x2 四格，等源展示卷积差异。"
+    - "页面显示中文数据流、为什么这样做、四个卷积核输出帧计数、CPU/GPU/RGA 和 OpenCL kernel/queue 耗时。"
+    - "CONV_CL 主循环输出 vi_frames、SHARPEN、EDGE、EMBOSS、BLUR、CPU/GPU/RGA 和 CL 耗时日志。"
+    - "CONV_CL 运行后调用 maybe_capture_module_vo_frame() 生成 vo_captures/conv_cl_vo_*.bmp。"
+    - "更新 effect manifest 中 CONV_CL 的效果描述，突出单实例四核顺序 OpenCL 卷积、运行指标和 VO 抓帧。"
+    - "更新 README 的 CONV_CL 单页说明，明确四路并发 bind 链路被单实例顺序四核页面替代。"
+    - "修正 CONV_CL 页面退出时的相机池清理顺序，确保 Ctrl+C 无 pool 拒绝销毁。"
+    - "在 rktohi CONV_CL 模块中将 conv_table 高频更新日志改为 CONV_CL_LOG_TABLE_UPDATE=1 才打印，避免客户页刷屏。"
+  non_scope:
+    - "不改变 MEDIA_CONV_CL public API。"
+    - "不把 CONV_CL 卷积核固定为边缘检测语义；页面只选择四个演示用核。"
+    - "不复制 rktohi/src 到 alldemo。"
+    - "不把自动抓帧等同于人工视觉验收。"
+    - "不在本需求内修复板端四个 CONV_CL 并发 EGLImage import 限制。"
+  target_screen:
+    layout: "竖屏单模块页；中部 2x2 四格显示 SHARPEN、EDGE、EMBOSS、BLUR，顶部和底部为中文数据流、原因说明和运行指标。"
+    input_source: "实时摄像头 /dev/video-camera0。"
+    output_view: "四格均为 MEDIA_CONV_CL 输出，来自同源实时 RGBA staging 输入。"
+    overlay_text:
+      - "标题显示 CONV_CL：四种卷积核同屏比较。"
+      - "显示 数据流：VI采集NV12 -> RGBA staging -> 单个CONV_CL顺序加载四个核 -> 页面合成 -> VO。"
+      - "显示 SHARPEN/EDGE/EMBOSS/BLUR 输出帧计数。"
+      - "显示 CPU/GPU/RGA 和 OpenCL kernel/queue 耗时。"
+    runtime_metrics:
+      - "FPS"
+      - "frame_time"
+      - "CPU"
+      - "GPU"
+      - "RGA"
+      - "VI frames"
+      - "SHARPEN frames"
+      - "EDGE frames"
+      - "EMBOSS frames"
+      - "BLUR frames"
+      - "OpenCL kernel/queue ms"
+  implementation_boundary:
+    alldemo_files:
+      - "src/alldemo.c"
+      - "README.md"
+      - "assets/effect_manifest.json"
+      - "docs/AI团队/demo需求/PRODUCT-CONV-CL-CUSTOMER-PAGE.yaml"
+      - "docs/AI团队/demo需求/SRS-CONV-CL-CUSTOMER-PAGE-001.yaml"
+    rktohi_files:
+      - "/userdata/rktohi/src/module/conv_cl/conv_cl.c"
+    rktohi_dependency: "使用 run_alldemo.sh 同步后的 media_api.h、libmedia.a 和 libmedia.so；alldemo 只消费构建产物。"
+    copied_artifacts_only: true
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 在 /userdata/alldemo 通过。"
+    - "./scripts/run_alldemo.sh --asset-check 可以执行通过并同步 rktohi 产物。"
+    - "timeout -s INT -k 5s 15s stdbuf -oL -eL ./scripts/run_alldemo.sh --only CONV_CL 能启动目标页，日志出现四个效果计数、CPU/GPU/RGA 和 CL 耗时，四个效果计数同步增长。"
+    - "运行后生成 vo_captures/conv_cl_vo_*.bmp 抓帧文件。"
+    - "运行日志中 clCreateFromEGLImageKHR、set_param conv_table 刷屏、VO capture failed、拒绝销毁 计数为 0。"
+    - "退出日志显示 CONV_CL、VO、VI 和相关 pool 清理完成，无残留 alldemo 进程。"
+    - "README 和 assets/effect_manifest.json 的 CONV_CL 描述不再停留在 edge / sharpen / blur tiles。"
+  validation_plan:
+    build:
+      - "cmake --build build -j in /userdata/rktohi"
+      - "./scripts/run_alldemo.sh --asset-check"
+      - "cmake --build build -j in /userdata/alldemo"
+      - "git diff --check"
+    run:
+      - "timeout -s INT -k 5s 15s stdbuf -oL -eL ./scripts/run_alldemo.sh --only CONV_CL"
+      - "grep for clCreateFromEGLImageKHR, set_param conv_table, 拒绝销毁"
+      - "ls -lt vo_captures/conv_cl_vo_*.bmp"
+  open_questions:
+    - "仍需要产品或现场人员看实际屏幕/抓帧，判断四格说明和视觉差异是否足够直观。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

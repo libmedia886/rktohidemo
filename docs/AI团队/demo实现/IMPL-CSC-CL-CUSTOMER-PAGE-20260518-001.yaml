@@ -1,0 +1,30 @@
+implementation_record:
+  requirement_id: "SRS-CSC-CL-CUSTOMER-PAGE-001"
+  case_name: "CSC_CL_CUSTOMER_PAGE"
+  date: "2026-05-18"
+  status: "Implemented"
+  summary:
+    - "CSC_CL 单页改为实时 bind 链路：VI -> CSC_CL(NV12->ARGB8888) -> OSD(ARGB8888) -> VO。"
+    - "页面 OSD 在 ARGB 输出上叠加中文数据流、OpenCL 矩阵转换说明、kernel/queue 耗时条、CSC_CL/OSD 帧计数和 CPU/GPU/RGA 状态。"
+    - "maybe_capture_vo_channel_frame() 支持 CSC_CL ARGB 抓帧，生成 vo_captures/csc_cl_vo_*.bmp。"
+    - "rktohi 侧补齐 CSC_CL 处理线程 EGL context handling，并给 OSD 增加 ARGB8888 格式能力。"
+  changed_files:
+    alldemo:
+      - "src/alldemo.c"
+      - "README.md"
+      - "assets/effect_manifest.json"
+      - "docs/AI团队/demo需求/PRODUCT-CSC-CL-CUSTOMER-PAGE.yaml"
+      - "docs/AI团队/demo需求/SRS-CSC-CL-CUSTOMER-PAGE-001.yaml"
+    rktohi:
+      - "/userdata/rktohi/src/module/csc_cl/csc_cl.c"
+      - "/userdata/rktohi/src/module/osd/osd.c"
+      - "/userdata/rktohi/src/common/format/format_utils.c"
+  implementation_notes:
+    - "两级 CSC_CL 或 CSC_CL -> VMIX 的 ARGB dma-buf 二次 OpenCL/EGL import 会触发 -34；最终页面避免第二个 GPU consumer，改由 OSD/VO ARGB 路径显示。"
+    - "alldemo 继续只同步 rktohi 产物，不复制 rktohi/src 到 alldemo。"
+  issue_record:
+    - "docs/问题记录/20260518-1610-csc-cl-argb-dma-buf-cannot-be-reimported-by-second-gpu-stage.md"
+  validation_artifacts:
+    - "/tmp/alldemo_csc_cl_srs001_final2.log"
+    - "/tmp/alldemo_csc_cl_srs001_ctrlc.log"
+    - "vo_captures/csc_cl_vo_000150.bmp"

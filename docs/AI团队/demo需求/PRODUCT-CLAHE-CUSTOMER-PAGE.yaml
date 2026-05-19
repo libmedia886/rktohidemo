@@ -1,0 +1,37 @@
+product_brief:
+  case_name: "CLAHE_CUSTOMER_PAGE"
+  target_user: "到现场观看 AllDemo 的客户和售前演示人员"
+  demo_goal: "把 CLAHE 页作为客户默认轮播中的局部对比度增强能力讲清楚：实时摄像头画面被 VPSS 分为原始和增强两路，CLAHE 做局部增强，VMIX_RGA 完成同屏合成，并展示 clip limit、tile grid 和运行指标。"
+  first_screen_message: "客户一眼看到原始输入和 CLAHE 增强输出的差异，知道增强来自局部直方图均衡而不是普通亮度拉伸。"
+  must_show:
+    - "CLAHE 保持在默认客户演示页表内。"
+    - "CLAHE 单页使用实时摄像头输入，不使用静态占位图。"
+    - "屏幕上显示 RAW 原始输入与 CLAHE 增强输出两路等尺寸对比。"
+    - "屏幕上显示 clip limit、8x8 tile grid、CLAHE 帧计数和 CPU/GPU/RGA 状态。"
+    - "运行后保存 CLAHE 页面 VO 抓帧，供产品复看页面效果。"
+  should_show:
+    - "客户能理解 CLAHE 用于暗部/局部细节增强，并通过 clip limit 控制噪声放大。"
+    - "README 和 effect manifest 应明确 RAW vs CLAHE 对比、动态 clip limit 和 VO 抓帧。"
+    - "短运行验证应看到 VI/CLAHE 帧计数同步增长。"
+  avoid_showing:
+    - "不要只写 local contrast enhancement，必须说明原图对比、clip limit 和 tile grid。"
+    - "不要把 CLAHE 与 RETINEX 的光照校正混为同一页。"
+    - "不复制 rktohi/src 到 alldemo；alldemo 只消费重建后的库和头文件产物。"
+  input_source_preference: "live_camera"
+  visual_layout: "竖屏单模块页；上方显示原始输入，下方显示 CLAHE 增强输出，底部显示中文数据流、clip limit 条、真实 bind 链路和运行指标。"
+  comparison_rule: "CLAHE 是上下对比页；两路画面必须保持等尺寸，差异只来自 CLAHE 增强。"
+  overlay_text:
+    data_flow: "数据流：VI -> VPSS；RAW 路进 VMIX_RGA，增强路进 CLAHE 后进 VMIX_RGA，再经 OSD/VO 显示。"
+    rationale: "按 8x8 小块增强暗部细节，clip limit 限制噪声被过度放大。"
+    runtime_metrics: "CPU/GPU/RGA/FPS/frame time/VI frames/CLAHE frames/clip limit"
+  acceptance_feel:
+    - "客户能看懂上下两幅图的增强对比。"
+    - "演示人员能用抓帧复看说明文字、等尺寸视窗和动态参数是否清楚。"
+    - "CLAHE 页面能短运行并干净退出。"
+  product_defects:
+    - id: "PROD-CLAHE-001"
+      description: "CLAHE 页面已有实时对比链路，但缺少独立页面 SRS、VO 抓帧证据，manifest 描述过于泛化。"
+      expected_change: "CLAHE 纳入 VO 抓帧，文档描述改为 RAW vs CLAHE、动态 clip limit、8x8 tile grid、VMIX_RGA 合成和运行指标。"
+      severity: "Minor"
+  product_verdict: "Implemented"
+  next_skill: "alldemo-runtime-acceptance"

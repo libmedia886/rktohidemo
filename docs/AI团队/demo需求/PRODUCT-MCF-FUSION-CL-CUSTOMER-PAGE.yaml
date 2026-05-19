@@ -1,0 +1,39 @@
+product_brief:
+  case_name: "MCF_FUSION_CL_CUSTOMER_PAGE"
+  target_user: "到现场观看 AllDemo 的客户和售前演示人员"
+  demo_goal: "把 MCF_FUSION_CL 页讲成可理解的彩色/单色细节融合能力展示：彩色图提供色彩，单色图提供高频细节，输出是保留彩色观感的细节增强图。"
+  first_screen_message: "客户一眼看到 COLOR INPUT、MONO DETAIL 和 MCF OUTPUT 三栏，知道该能力用于把单色细节注入彩色图。"
+  must_show:
+    - "MCF_FUSION_CL 保持在默认客户演示页表内。"
+    - "页面使用 assets/loop/mcf_fusion 下的 color.jpg、mono.jpg、reference.jpg 三组样张。"
+    - "单页显示彩色输入、单色细节输入和融合输出三栏对比。"
+    - "样张每 3 秒切换一组。"
+    - "默认优先调用 MEDIA_MCF_FUSION_CL OpenCL 模块生成输出；如果 live 路径失败，保留 reference 输出避免空白。"
+    - "运行日志输出 MCF_FUSION_CL 帧数、样张索引、更新次数、mode、cache 状态、CPU/GPU/RGA 和 CL total/stats/fusion 耗时。"
+    - "运行后保存 MCF_FUSION_CL 页面 VO 抓帧，供产品复看页面效果。"
+  should_show:
+    - "客户能理解色彩来自 COLOR INPUT，纹理增强来自 MONO DETAIL。"
+    - "短运行验证能看到 mode=opencl、CL 耗时和 150/300/450 抓帧。"
+    - "README 和 effect manifest 应明确 OpenCL 输出、reference fallback、页面缓存、运行指标和抓帧证据。"
+  avoid_showing:
+    - "不要只显示参考融合图，必须说明 live OpenCL 优先和 fallback 边界。"
+    - "不要每帧重绘三张大图，导致 CPU 浪费或验证时间不稳定。"
+    - "不要把 MCF 描述成多焦点融合；它是彩色/单色细节融合。"
+  input_source_preference: "loop_color_mono_pairs"
+  visual_layout: "竖屏单模块页；上方中文数据流和原因说明，中部 COLOR INPUT/MONO DETAIL/MCF OUTPUT 三栏对比，底部展示重点和运行状态。"
+  comparison_rule: "三栏必须来自同一组样张；输出应优先为 OpenCL 模块融合结果，模块不可用时才使用 reference。"
+  overlay_text:
+    data_flow: "数据流：彩色图 + 单色细节图进入 MCF_FUSION_CL，输出彩色细节增强图。"
+    rationale: "GPU 在 Y 通道注入单色高频细节，保留彩色观感。"
+    runtime_metrics: "CPU/GPU/RGA/FPS/frame time/sample index/mode/cache state/CL total/stats/fusion"
+  acceptance_feel:
+    - "客户能看懂输入和输出的纹理增强差异。"
+    - "演示人员能用抓帧复看三栏布局、中文说明和指标是否清楚。"
+    - "MCF_FUSION_CL 页面能短运行并干净退出。"
+  product_defects:
+    - id: "PROD-MCF-FUSION-CL-001"
+      description: "MCF_FUSION_CL 页面已有展示和当前抓帧能力，但缺少独立产品/SRS/验收记录，缺少每秒运行日志和页面缓存。"
+      expected_change: "增加页面缓存、运行日志、manifest/README 说明和完整 SRS/验收记录。"
+      severity: "Major"
+  product_verdict: "Implemented"
+  next_skill: "alldemo-runtime-acceptance"

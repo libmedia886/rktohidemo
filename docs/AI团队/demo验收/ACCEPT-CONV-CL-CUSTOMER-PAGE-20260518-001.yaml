@@ -1,0 +1,45 @@
+acceptance_record:
+  requirement_id: "SRS-CONV-CL-CUSTOMER-PAGE-001"
+  case_name: "CONV_CL_CUSTOMER_PAGE"
+  date: "2026-05-18"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "cmake --build build -j"
+      cwd: "/userdata/rktohi"
+      result: "pass"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass_sync_and_rebuild"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "git diff --check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "git diff --check"
+      cwd: "/userdata/rktohi"
+      result: "pass"
+    - command: "timeout -s INT -k 5s 15s stdbuf -oL -eL ./scripts/run_alldemo.sh --only CONV_CL > /tmp/alldemo_conv_cl_srs001_final.log 2>&1"
+      cwd: "/userdata/alldemo"
+      result: "pass_functional_probe_timeout_expected"
+  observed_runtime:
+    processing_chain:
+      - "VI_0.output -> CPU copy"
+      - "NV12 -> RGBA conversion in alldemo"
+      - "RGBA -> CONV_CL_68.input"
+      - "CONV_CL_68.output0 -> CPU page compositor"
+      - "2x2 SHARPEN/EDGE/EMBOSS/BLUR page -> DISPLAY_POOL frame -> VO_0.input0"
+    frame_counts:
+      - "CONV_CL vi_frames=149 SHARPEN=149 EDGE=149 EMBOSS=149 BLUR=149 cpu=18% gpu=13% rga=0% cl=5.01/6.62ms mode=single-sequential"
+      - "CONV_CL vi_frames=209 SHARPEN=209 EDGE=209 EMBOSS=209 BLUR=209 cpu=19% gpu=12% rga=0% cl=4.97/6.63ms mode=single-sequential"
+    capture:
+      - "vo_captures/conv_cl_vo_000150.bmp"
+      - "md5: 94a9fb06999f57677520b6c10a1373df"
+      - "BMP header begins with BM and reports 1080x1920 24-bit payload."
+  negative_checks:
+    - "grep count for clCreateFromEGLImageKHR was 0 in /tmp/alldemo_conv_cl_srs001_final.log."
+    - "grep count for set_param conv_table was 0 in /tmp/alldemo_conv_cl_srs001_final.log."
+    - "grep count for pool_id=.*拒绝 was 0 in /tmp/alldemo_conv_cl_srs001_final.log."
+    - "Timeout-triggered INT cleanup removed CONV_CL_68, destroyed pools 6/7/1, destroyed pipeline, and cleaned buffer manager."
+  acceptance_limits:
+    - "Runtime proof covers the chain, metrics, capture, log cleanliness, and clean shutdown; final customer-facing visual judgment still needs screen/BMP review."

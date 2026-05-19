@@ -1,0 +1,33 @@
+implementation_record:
+  requirement_id: "SRS-CLAHE-CUSTOMER-PAGE-001"
+  case_name: "CLAHE_CUSTOMER_PAGE"
+  date: "2026-05-18"
+  status: "Implemented"
+  summary:
+    - "CLAHE 单页保持实时摄像头输入，使用 VI -> VPSS 分出 RAW 和增强两路。"
+    - "显示链路改为 VPSS(output0) -> VMIX_RGA(input0)，VPSS(output1) -> CLAHE -> VMIX_RGA(input1) -> OSD -> VO，避免第二个 OpenCL consumer 导入失败。"
+    - "页面底部显示中文数据流、8x8 tile grid、动态 clip limit、VI/CLAHE 帧计数和 CPU/GPU/RGA 状态。"
+    - "maybe_capture_vo_channel_frame() 支持 CLAHE，生成 vo_captures/clahe_vo_*.bmp。"
+    - "rktohi 侧修正 CLAHE OpenCL/EGL sharing context、处理线程 eglMakeCurrent、初始化线程解绑，以及 bind 输出路径的 module frame_count。"
+  changed_files:
+    alldemo:
+      - "src/alldemo.c"
+      - "README.md"
+      - "assets/effect_manifest.json"
+      - "docs/AI团队/demo需求/PRODUCT-CLAHE-CUSTOMER-PAGE.yaml"
+      - "docs/AI团队/demo需求/SRS-CLAHE-CUSTOMER-PAGE-001.yaml"
+    rktohi:
+      - "/userdata/rktohi/src/module/clahe/clahe.c"
+    synced_artifacts:
+      - "lib/libmedia.a"
+  implementation_notes:
+    - "CLAHE 自身需要 EGL-sharing OpenCL context；如果回退默认 context，dma-buf import 会报 -34。"
+    - "VMIX OpenCL 无法稳定导入 VPSS/CLAHE 输出 dma-buf，客户页使用 VMIX_RGA 做上下对比合成。"
+    - "alldemo 只同步 rktohi 构建产物，不复制 rktohi/src 实现源码。"
+  issue_record:
+    - "docs/问题记录/20260518-1627-clahe-bind-page-fails-when-opencl-output-feeds-vmix-opencl.md"
+  validation_artifacts:
+    - "/tmp/alldemo_clahe_srs001_final.log"
+    - "/tmp/alldemo_clahe_srs001_ctrlc.log"
+    - "vo_captures/clahe_vo_000150.bmp"
+    - "vo_captures/clahe_vo_000300.bmp"

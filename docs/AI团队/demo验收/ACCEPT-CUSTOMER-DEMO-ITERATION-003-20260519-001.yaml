@@ -1,0 +1,35 @@
+id: ACCEPT-CUSTOMER-DEMO-ITERATION-003-20260519-001
+source_implementation: IMPL-CUSTOMER-DEMO-ITERATION-003-20260519-001
+date: 2026-05-19
+status: Passed
+checks:
+  - name: format_check
+    command: git diff --check -- src/alldemo.c
+    result: Passed
+  - name: build
+    command: cmake --build build -j4
+    result: Passed
+  - name: vmix_page
+    command: timeout -s INT -k 5s 12s ./scripts/run_alldemo.sh --only VMIX
+    result: Passed
+    evidence: vo_captures/vmix_vo_000150.bmp
+  - name: osd_page
+    command: timeout -s INT -k 5s 12s ./scripts/run_alldemo.sh --only OSD
+    result: Passed
+    evidence: vo_captures/osd_vo_000150.bmp, vo_captures/osd_vo_000300.bmp
+  - name: rga_page_full_cycle
+    command: timeout -s INT -k 5s 25s ./scripts/run_alldemo.sh --only RGA
+    result: Passed
+    evidence: observed COPY, CROP_ZOOM, FLIP_H, FLIP_V, ROTATE90, ROTATE180, ROTATE270; vo_captures/rga_vo_000600.bmp
+  - name: csc_cl_scaled_page
+    command: timeout -s INT -k 5s 12s ./scripts/run_alldemo.sh --only CSC_CL
+    result: Passed
+    evidence: RGA output 960x960 ARGB bound to VO; vo_captures/csc_cl_vo_000300.bmp header is 960x960
+  - name: process_cleanup
+    command: pgrep -af "alldemo|run_alldemo|wbc_h264_record"
+    result: Passed
+    evidence: no residual process after targeted runs
+residual_risks:
+  - Full default auto-loop was not run through every page in this pass.
+  - 4K camera input policy is documented and labeled, but target pages still require separate 4K capability validation before switching live input to 3840x2160.
+  - Realtime two-way comparison layout consistency remains tracked by DEFECT-CUSTOMER-DEMO-20260519-007.

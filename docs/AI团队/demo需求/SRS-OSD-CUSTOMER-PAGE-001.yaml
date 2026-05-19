@@ -1,0 +1,63 @@
+software_requirement_specification:
+  requirement_id: "SRS-OSD-CUSTOMER-PAGE-001"
+  case_name: "OSD_CUSTOMER_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-OSD-CUSTOMER-PAGE.yaml"
+  user_value: "客户默认轮播逐页优化时，OSD 页需要清楚表达实时叠加层能力，并提供可复看的页面抓帧证据。"
+  scope:
+    - "保持 OSD 在客户默认页表中，不改变默认顺序。"
+    - "保持现有 OSD bind 链路：VI -> LIVE_OSD -> VMIX -> DISPLAY_OSD -> VO。"
+    - "把 OSD 纳入 maybe_capture_vo_channel_frame() 支持范围，输出 vo_captures/osd_vo_*.bmp。"
+    - "更新 effect manifest 中 OSD 的效果描述，突出两级 OSD、动态 region、alpha、zorder 和 enabled。"
+    - "更新 README 的 OSD 单页说明，明确 live OSD 和页面 OSD 的分工。"
+    - "补充实现和软件验收记录，作为后续逐页优化模板。"
+  non_scope:
+    - "不修改 /userdata/rktohi 源码。"
+    - "不改变 MEDIA_OSD API 或底层 OSD 模块行为。"
+    - "不重新设计 OSD 页面布局，不改变 region 数量和动画参数。"
+    - "不把自动抓帧等同于人工视觉验收。"
+  target_screen:
+    layout: "竖屏单模块页；上部为实时视频加 live OSD 动态区域，下部为页面 OSD 说明、链路卡片、region 参数和指标。"
+    input_source: "实时摄像头 /dev/video-camera0。"
+    output_view: "OSD 处理后的视频经 VMIX 和页面 OSD 输出到 VO。"
+    overlay_text:
+      - "标题显示 OSD 和客户演示页码。"
+      - "说明 live OSD 叠加目标框、扫描线、状态条和告警块。"
+      - "说明 display/page OSD 叠加中文说明和运行指标。"
+      - "显示真实 bind 链路和 LIVE_OSD/PAGE_OSD 帧计数。"
+    runtime_metrics:
+      - "FPS"
+      - "frame_time"
+      - "CPU"
+      - "GPU"
+      - "RGA"
+      - "LIVE_OSD frames"
+      - "PAGE_OSD frames"
+  implementation_boundary:
+    alldemo_files:
+      - "src/alldemo.c"
+      - "README.md"
+      - "assets/effect_manifest.json"
+      - "docs/AI团队/demo需求/PRODUCT-OSD-CUSTOMER-PAGE.yaml"
+      - "docs/AI团队/demo需求/SRS-OSD-CUSTOMER-PAGE-001.yaml"
+    rktohi_dependency: "使用当前已同步的 media_api.h、libmedia.a 和 libmedia.so；本需求不修改 rktohi。"
+    copied_artifacts_only: true
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以重新编译并链接 build/alldemo。"
+    - "./scripts/run_alldemo.sh --asset-check 可以执行通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only OSD 能启动目标页，日志出现 OSD 帧计数和两级 OSD bind 链路，退出后无残留 alldemo 进程。"
+    - "OSD 运行后生成 vo_captures/osd_vo_*.bmp 抓帧文件。"
+    - "README 的 OSD 描述包含 live OSD 和页面 OSD 的分工。"
+    - "assets/effect_manifest.json 的 OSD 描述不再停留在泛化 HUD 描述。"
+  validation_plan:
+    build:
+      - "git diff --check"
+      - "cmake --build build -j"
+    run:
+      - "./scripts/run_alldemo.sh --asset-check"
+      - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only OSD"
+      - "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo'"
+  open_questions:
+    - "仍需要产品或现场人员看实际屏幕/抓帧，判断 OSD 文案和 region 是否足够直观。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"
