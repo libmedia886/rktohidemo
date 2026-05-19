@@ -155,8 +155,10 @@
 #define PANO_INPUT_COUNT 6
 #define PANO_DOMAIN_W 8378
 #define PANO_DOMAIN_H 4189
-#define PANO_STITCH_W 1920
-#define PANO_STITCH_H 960
+#define PANO_LUT_W 1920
+#define PANO_LUT_H 960
+#define PANO_STITCH_W PANO_DOMAIN_W
+#define PANO_STITCH_H ALIGN_UP(PANO_DOMAIN_H, 2)
 #define PANO_STITCH_STRIDE ALIGN_UP(PANO_STITCH_W, 4)
 #define FPS 30
 #define CAMERA_DEVICE "/dev/video-camera0"
@@ -1360,6 +1362,119 @@ static int load_png_rgb(const char *path, image_asset_t *out) {
     return 0;
 }
 
+static uint16_t exif_read_u16(const uint8_t *p, int little_endian) {
+    if (little_endian) {
+        return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
+    }
+    return (uint16_t)(((uint16_t)p[0] << 8) | (uint16_t)p[1]);
+}
+
+static uint32_t exif_read_u32(const uint8_t *p, int little_endian) {
+    if (little_endian) {
+        return (uint32_t)p[0] |
+               ((uint32_t)p[1] << 8) |
+               ((uint32_t)p[2] << 16) |
+               ((uint32_t)p[3] << 24);
+    }
+    return ((uint32_t)p[0] << 24) |
+           ((uint32_t)p[1] << 16) |
+           ((uint32_t)p[2] << 8) |
+           (uint32_t)p[3];
+}
+
+static int exif_parse_orientation(const uint8_t *tiff, size_t tiff_len) {
+    if (!tiff || tiff_len < 8) return 1;
+
+    int little_endian;
+    if (tiff[0] == 'I' && tiff[1] == 'I') {
+        little_endian = 1;
+    } else if (tiff[0] == 'M' && tiff[1] == 'M') {
+        little_endian = 0;
+    } else {
+        return 1;
+    }
+
+    if (exif_read_u16(tiff + 2, little_endian) != 42) return 1;
+    uint32_t ifd0_off = exif_read_u32(tiff + 4, little_endian);
+    if ((size_t)ifd0_off + 2 > tiff_len) return 1;
+
+    size_t dir_off = (size_t)ifd0_off;
+    uint16_t entry_count = exif_read_u16(tiff + dir_off, little_endian);
+    dir_off += 2;
+    for (uint16_t i = 0; i < entry_count; ++i) {
+        size_t ent_off = dir_off + (size_t)i * 12;
+        if (ent_off + 12 > tiff_len) break;
+        if (exif_read_u16(tiff + ent_off, little_endian) != 0x0112) continue;
+
+        uint16_t type = exif_read_u16(tiff + ent_off + 2, little_endian);
+        uint32_t count = exif_read_u32(tiff + ent_off + 4, little_endian);
+        if (type != 3 || count < 1) return 1;
+
+        uint16_t orientation;
+        if (count == 1) {
+            orientation = exif_read_u16(tiff + ent_off + 8, little_endian);
+        } else {
+            uint32_t val_off = exif_read_u32(tiff + ent_off + 8, little_endian);
+            if ((size_t)val_off + 2 > tiff_len) return 1;
+            orientation = exif_read_u16(tiff + (size_t)val_off, little_endian);
+        }
+        return (orientation >= 1 && orientation <= 8) ? (int)orientation : 1;
+    }
+    return 1;
+}
+
+static int jpeg_read_exif_orientation(const struct jpeg_decompress_struct *cinfo) {
+    if (!cinfo) return 1;
+    for (jpeg_saved_marker_ptr marker = cinfo->marker_list; marker; marker = marker->next) {
+        if (marker->marker != JPEG_APP0 + 1) continue;
+        if (!marker->data || marker->data_length < 6) continue;
+        if (memcmp(marker->data, "Exif\0\0", 6) != 0) continue;
+        return exif_parse_orientation(marker->data + 6, (size_t)marker->data_length - 6);
+    }
+    return 1;
+}
+
+static uint8_t *orient_rgb(const uint8_t *src, int w, int h, int orientation,
+                           int *out_w, int *out_h) {
+    if (!src || w <= 0 || h <= 0 || !out_w || !out_h) return NULL;
+    if (orientation < 1 || orientation > 8) orientation = 1;
+
+    int ow = (orientation >= 5) ? h : w;
+    int oh = (orientation >= 5) ? w : h;
+    uint8_t *dst = malloc((size_t)ow * oh * 3);
+    if (!dst) return NULL;
+
+    for (int yd = 0; yd < oh; ++yd) {
+        for (int xd = 0; xd < ow; ++xd) {
+            int xs = xd;
+            int ys = yd;
+            switch (orientation) {
+                case 2: xs = w - 1 - xd; ys = yd; break;
+                case 3: xs = w - 1 - xd; ys = h - 1 - yd; break;
+                case 4: xs = xd; ys = h - 1 - yd; break;
+                case 5: xs = yd; ys = xd; break;
+                case 6: xs = yd; ys = h - 1 - xd; break;
+                case 7: xs = w - 1 - yd; ys = h - 1 - xd; break;
+                case 8: xs = w - 1 - yd; ys = xd; break;
+                default: break;
+            }
+            if (xs < 0 || xs >= w || ys < 0 || ys >= h) {
+                free(dst);
+                return NULL;
+            }
+            const uint8_t *sp = src + ((size_t)ys * w + xs) * 3;
+            uint8_t *dp = dst + ((size_t)yd * ow + xd) * 3;
+            dp[0] = sp[0];
+            dp[1] = sp[1];
+            dp[2] = sp[2];
+        }
+    }
+
+    *out_w = ow;
+    *out_h = oh;
+    return dst;
+}
+
 static int load_jpeg_rgb(const char *path, image_asset_t *out) {
     FILE *fp = fopen(path, "rb");
     if (!fp) return -1;
@@ -1369,11 +1484,13 @@ static int load_jpeg_rgb(const char *path, image_asset_t *out) {
     cinfo.err = jpeg_std_error(&jerr);
     jpeg_create_decompress(&cinfo);
     jpeg_stdio_src(&cinfo, fp);
+    jpeg_save_markers(&cinfo, JPEG_APP0 + 1, 0xFFFF);
     if (jpeg_read_header(&cinfo, TRUE) != JPEG_HEADER_OK) {
         jpeg_destroy_decompress(&cinfo);
         fclose(fp);
         return -1;
     }
+    int orientation = jpeg_read_exif_orientation(&cinfo);
     cinfo.out_color_space = JCS_RGB;
     jpeg_start_decompress(&cinfo);
 
@@ -1401,6 +1518,18 @@ static int load_jpeg_rgb(const char *path, image_asset_t *out) {
     jpeg_finish_decompress(&cinfo);
     jpeg_destroy_decompress(&cinfo);
     fclose(fp);
+    if (orientation >= 2 && orientation <= 8) {
+        int oriented_w = width;
+        int oriented_h = height;
+        uint8_t *oriented = orient_rgb(rgb, width, height, orientation,
+                                       &oriented_w, &oriented_h);
+        if (oriented) {
+            free(rgb);
+            rgb = oriented;
+            width = oriented_w;
+            height = oriented_h;
+        }
+    }
     out->width = width;
     out->height = height;
     out->rgb = rgb;
@@ -2869,7 +2998,7 @@ static void draw_pano_comparison(uint8_t *dst, int stride, int x, int y, int w, 
                                  const uint8_t *pano_out) {
     int gap = 10;
     int label_h = 22;
-    int top_h = (h * 2) / 5;
+    int top_h = (h * 24) / 100;
     int bottom_h = h - top_h - gap;
     int cols = 3;
     int rows = 2;
@@ -2898,8 +3027,15 @@ static void draw_pano_comparison(uint8_t *dst, int stride, int x, int y, int w, 
     stroke_rect_nv12(dst, stride, x, oy, w, bottom_h, 1, 80, 255, 180);
     if (pano_out) {
         int fx = 0, fy = 0, fw = 0, fh = 0;
-        if (draw_camera_tile_fit_rect(dst, stride, x + 4, oy + 4,
-                                      w - 8, bottom_h - label_h - 8,
+        int view_margin_x = w > 220 ? 80 : 4;
+        int view_x = x + view_margin_x;
+        int view_w = w - view_margin_x * 2;
+        if (view_w <= 0) {
+            view_x = x + 4;
+            view_w = w - 8;
+        }
+        if (draw_camera_tile_fit_rect(dst, stride, view_x, oy + 4,
+                                      view_w, bottom_h - label_h - 8,
                                       pano_out, PANO_STITCH_W, PANO_STITCH_H, PANO_STITCH_STRIDE,
                                       &fx, &fy, &fw, &fh) == 0) {
             stroke_rect_nv12(dst, stride, fx, fy, fw, fh, 1, 120, 255, 210);
@@ -3074,8 +3210,8 @@ static void draw_pano_showcase(uint8_t *dst, int stride, int x, int y, int w, in
 
     draw_showcase_header(dst, stride, x, y, w,
                          "PANO：六路输入全景拼接",
-                         "数据流：6张标定图 + PTO标定 -> PANO -> 1920x960全景预览输出。",
-                         "为什么这样做：PTO查表映射完整全景域，再输出客户页预览，适合多摄像头环视。");
+                         "数据流：6张标定图 + PTO标定 -> PANO -> 完整全景预览。",
+                         "为什么这样做：模块输出完整全景域，页面内按比例缩小到显示框。");
     draw_pano_comparison(dst, stride, x, compare_y, w, compare_h, pano_out);
     draw_showcase_footer(dst, stride, x, y + h - bottom_h, w,
                          "展示重点：上方是六路输入，下方是同一标定文件拼接后的全景结果。");
@@ -10319,8 +10455,8 @@ static int setup_live_pano(void) {
     attr.crop_y = 0;
     attr.crop_width = PANO_DOMAIN_W;
     attr.crop_height = PANO_DOMAIN_H;
-    attr.lut_width = PANO_STITCH_W;
-    attr.lut_height = PANO_STITCH_H;
+    attr.lut_width = PANO_LUT_W;
+    attr.lut_height = PANO_LUT_H;
     attr.output_pool_id = OSD_OUTPUT_POOL;
     attr.input_depth = g_pano_sample.input_count;
     attr.output_depth = 1;
@@ -11511,6 +11647,7 @@ int main(int argc, char **argv) {
     int edof_live_requested = edof_live_env && strcmp(edof_live_env, "0") != 0;
     const char *pano_live_env = getenv("ALLDEMO_PANO_LIVE");
     int pano_live_requested = pano_live_env && strcmp(pano_live_env, "0") != 0;
+    int pano_live_disabled = pano_live_env && strcmp(pano_live_env, "0") == 0;
 
     if (!solid_test && only_tile && strcasecmp(only_tile, "NPU") == 0) {
         int npu_ret = run_only_npu_vdec_demo(dstride, display_size);
@@ -11591,10 +11728,13 @@ int main(int argc, char **argv) {
     }
     int live_pano_ok = 0;
     if (!solid_test && only_tile && strcasecmp(only_tile, "PANO") == 0 &&
-        loaded_pano_sample > 0 && pano_live_requested && setup_live_pano() == 0) {
+        loaded_pano_sample > 0 && !pano_live_disabled && setup_live_pano() == 0) {
         live_pano_ok = 1;
     } else if (!solid_test && only_tile && strcasecmp(only_tile, "PANO") == 0 &&
                loaded_pano_sample > 0) {
+        if (pano_live_requested) {
+            fprintf(stderr, "warning: PANO live module unavailable, falling back to reference preview\n");
+        }
         set_tile_status("PANO", TILE_LOOP);
     }
     int live_stereo_ok = 0;

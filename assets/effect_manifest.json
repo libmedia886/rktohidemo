@@ -39,7 +39,7 @@
     {"name": "STEREO_3D", "source": "camera", "effect": "VPSS raw plus 90-degree rotated branch merged by STEREO_3D without color tint"},
     {"name": "VMIX", "source": "camera 3840x2160 via VPSS 4x 480x480 NV12 outputs", "effect": "hardware compositor layout and alpha blending with live frame counters, CPU/GPU/RGA status, and VO capture"},
     {"name": "VMIX_RGA", "source": "all tile streams", "effect": "RGA compositor path"},
-    {"name": "PANO", "source": "assets/loop/pano/sample2/camera_0.jpg..camera_5.jpg + calib_file.pto", "effect": "six-image panorama reference-strip preview by default, optional ALLDEMO_PANO_LIVE=1 PTO module preview from full 8378x4189 domain to 1920x960, cached NV12 page render, CPU/GPU/RGA logs, and VO capture"},
+    {"name": "PANO", "source": "assets/loop/pano/sample2/camera_0.jpg..camera_5.jpg + calib_file.pto", "effect": "six-image PTO module output at the full 8378x4190 panorama domain, scaled down by the page into the display frame, cached NV12 page render, EXIF-aware JPEG input loading, CPU/GPU/RGA logs, and VO capture; ALLDEMO_PANO_LIVE=0 keeps the fallback reference preview available"},
     {"name": "AVM", "source": "assets/loop/avm_inputs/*.jpg", "effect": "2D surround view"},
     {"name": "SVM3D", "source": "assets/svm3d/svm_3d_assets.json", "effect": "3D surround-view sweep"},
     {"name": "NPU", "source": "assets/loop/npu/bus_640x640.h264", "effect": "VDEC + RGA + YOLOv5 detection boxes"},

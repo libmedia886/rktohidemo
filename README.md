@@ -96,7 +96,7 @@ cmake --build build -j
 `MCF_FUSION_CL` 单独模式使用 `assets/loop/mcf_fusion` 的彩色图、单色细节图和参考融合图做对比，每 3 秒切换一组；程序优先调用 `MEDIA_MCF_FUSION_CL` 的 OpenCL 模块生成输出，如果当前 GPU/OpenCL 路径初始化失败则保留参考融合结果上屏，避免展示页空白。页面按样张索引缓存整页 NV12 结果，日志输出帧数、样张索引、更新次数、模式、cache 状态、CPU/GPU/RGA 和 CL total/stats/fusion 耗时，并保存 `vo_captures/mcf_fusion_cl_vo_*.bmp` 供复看。
 `DUALVIEW` 单独模式参考 `/userdata/rktohi/demo/dualview` 示例生成两路 RGB888 输入：input0 纯红、input1 纯蓝，主画面同时显示 input0、input1、side-by-side 输出和 line-by-line 输出，不占用摄像头；屏幕上显示中文数据流和实测 FPS/CPU/GPU/RGA 指标。
 `STEREO_3D` 单独模式使用实时摄像头输入，走 `VI -> VPSS(2路同源NV12：一路原图、一路VPSS旋转90度) -> STEREO_3D(SIDE_BY_SIDE合并) -> VMIX -> OSD -> VO` bind 链路；不再做蓝/红颜色 tint，屏幕显示一个合并输出，并显示帧计数和 CPU/GPU/RGA 占用率。STEREO_3D 尚未纳入本轮 4K 输入通过列表，需先修复 STEREO_3D 输出帧不增长问题。
-`PANO` 单独模式使用 `assets/loop/pano/sample2` 的六张图片和 PTO 标定文件，主画面显示六路输入图和 panorama 输出，不占用摄像头；默认客户页用六路样张生成稳定的 1920x960 reference-strip 全景预览，避免 live PANO worker 在 Ctrl+C 清理时卡住。需要验证真实模块路径时可显式设置 `ALLDEMO_PANO_LIVE=1`，模块按 PTO 将完整全景域映射为 1920x960 NV12 预览输出。页面按输出生成状态缓存整页 NV12 结果，日志输出帧数、输出状态、模式、cache 状态、预览尺寸、全景域尺寸和 CPU/GPU/RGA 指标，并保存 `vo_captures/pano_vo_*.bmp` 供复看。
+`PANO` 单独模式使用 `assets/loop/pano/sample2` 的六张图片和 PTO 标定文件，主画面显示六路输入图和 panorama 输出，不占用摄像头；默认客户页走真实 PANO 模块路径，按 PTO 输出完整全景域 8378x4190 NV12，再由页面缩小到显示框，并按 JPEG EXIF orientation 修正输入方向。需要临时回到 reference-strip 兜底预览时可显式设置 `ALLDEMO_PANO_LIVE=0`。页面按输出生成状态缓存整页 NV12 结果，日志输出帧数、输出状态、模式、cache 状态、预览尺寸、完整全景域和 CPU/GPU/RGA 指标，并保存 `vo_captures/pano_vo_*.bmp` 供复看。
 `NPU` 单独模式保留为联调入口，链路目标是 `H264文件 -> VDEC -> RGA(NV12转RGB) -> NPU(YOLOv5) -> RGA(RGB转NV12) -> VMIX -> OSD -> VO`，不占用摄像头。当前设备上该 H264 样例会触发 VDEC `info_change`，尚未纳入第一版展示闭环；演示前不要把它放进默认轮播。
 
 ## 快速自检
