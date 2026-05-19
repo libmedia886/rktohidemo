@@ -15,14 +15,14 @@ changes:
   - defect: DEFECT-CUSTOMER-DEMO-20260519-003
     summary: 默认轮播对 RGA 页面按完整 7 个操作周期延长停留时间。
   - defect: DEFECT-CUSTOMER-DEMO-20260519-004
-    summary: CSC_CL 增加 RGA 放大节点，显示从 640x640 小窗口扩大为 960x960。
+    summary: CSC_CL 增加 RGA 放大节点；初版扩大到 960x960，后续已统一为 1080x1920 全屏显示。
   - defect: DEFECT-CUSTOMER-DEMO-20260519-005
     summary: 已先统一四个目标页的说明区和流程表达，其余页继续跟进。
   - defect: DEFECT-CUSTOMER-DEMO-20260519-006
     summary: 已先补齐四个目标页的数据流和分辨率说明。
 implementation_notes:
   - VI 和默认轮播实时摄像头页已升级为 3840x2160 输入，后级按页面能力缩放到原处理/显示尺寸。
-  - CSC_CL 的 960x960 是显示放大；本轮 4K 输入能力通过 VI 3840x2160 -> RESIZE_RGA 640x640 -> CSC_CL buffer 流转验证。
+  - CSC_CL 当前链路已更新为 VI 3840x2160 -> CSC_CL 4K -> RESIZE_RGA 1080x1920 -> OSD -> VO，算法先处理 4K，最后再缩放显示。
   - 实时双路对比统一上下布局仍作为独立遗留项跟踪。
 files_changed:
   - src/alldemo.c

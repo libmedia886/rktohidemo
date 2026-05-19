@@ -26,21 +26,22 @@ acceptance_record:
       result: "pass_clean_shutdown"
   observed_runtime:
     bind_chain:
-      - "VI_0.output -> VPSS_63.input"
-      - "VPSS_63.output0 -> VMIX_RGA_80.input0"
-      - "VPSS_63.output1 -> CLAHE_69.input"
-      - "CLAHE_69.output -> VMIX_RGA_80.input1"
+      - "VI_0.output -> CLAHE_69.input"
+      - "CLAHE_69.output -> RESIZE_RGA_116.input0"
+      - "RESIZE_RGA_116.output0 is 1080x608 stride=1088, preserving the 16:9 VI/CLAHE aspect ratio."
+      - "2026-05-19 runtime probe reached vi/clahe/resize 212/212/212 with passthrough 0/1 switching."
+      - "RESIZE_RGA_116.output0 -> VMIX_RGA_80.input0"
       - "VMIX_RGA_80.output0 -> OSD_81.input"
       - "OSD_81.output0 -> VO_0.input0"
     frame_counts:
-      - "CLAHE vi_frames=150 clahe_out_frames=150 clip=1.57 cpu=20% gpu=20% rga=9%"
-      - "CLAHE vi_frames=334 clahe_out_frames=334 clip=1.58 cpu=21% gpu=22% rga=9%"
+      - "CLAHE vi_frames=149 clahe_out_frames=149 resize_frames=149 passthrough=0 clip=1.57 cpu=46% gpu=0% rga=18%"
+      - "CLAHE vi_frames=119 clahe_out_frames=119 resize_frames=119 passthrough=1 clip=1.55 cpu=47% gpu=27% rga=17%"
     capture:
       - "vo_captures/clahe_vo_000150.bmp"
       - "vo_captures/clahe_vo_000300.bmp"
   negative_checks:
     - "grep count for CLAHE CL image failures, VMIX CL -34, bind failed, setup failed, VO capture failed, 拒绝销毁, and generic 失败 patterns was 0 in the Ctrl+C log."
     - "pgrep found no residual alldemo/run_alldemo process after Ctrl+C."
-    - "Ctrl+C log showed OSD/VMIX_RGA/CLAHE/VPSS removed and pools 8/7/6/15/14/13/1/2 destroyed without rejection."
+    - "Timeout cleanup log showed OSD/VMIX_RGA/RESIZE_RGA/CLAHE removed and pools 8/7/6/15/1/2 destroyed without rejection."
   acceptance_limits:
     - "Runtime proof covers the chain, metrics, capture, and clean shutdown; final customer-facing visual judgment still needs screen/BMP review."

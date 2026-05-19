@@ -23,21 +23,20 @@ acceptance_record:
       result: "pass_clean_shutdown"
   observed_runtime:
     bind_chain:
-      - "VI_0.output -> VPSS_63.input"
-      - "VPSS_63.output0 -> VMIX_RGA_80.input0"
-      - "VPSS_63.output1 -> RETINEX_73.input0"
-      - "RETINEX_73.output0 -> VMIX_RGA_80.input1"
+      - "2026-05-19 superseded chain: VI_0.output -> RETINEX_73.input0"
+      - "RETINEX_73.output0 -> RESIZE_RGA_116.input0"
+      - "RESIZE_RGA_116.output0 -> VMIX_RGA_80.input0"
       - "VMIX_RGA_80.output0 -> OSD_81.input"
       - "OSD_81.output0 -> VO_0.input0"
     frame_counts:
-      - "RETINEX vi_frames=150 retinex_frames=150 gain=20.0 threshold=0.5 cpu=21% gpu=20% rga=9%"
-      - "RETINEX vi_frames=396 retinex_frames=396 gain=20.0 threshold=0.5 cpu=21% gpu=17% rga=9%"
+      - "2026-05-19 runtime probe: RETINEX vi_frames=212 retinex_frames=212 resize_frames=212 passthrough=0 gain=20.0 threshold=0.5 cpu=49% gpu=0% rga=17%"
+      - "passthrough_mode switched 1/0 every second, replacing the previous VPSS dual-branch compare path."
     capture:
       - "vo_captures/retinex_vo_000150.bmp"
       - "vo_captures/retinex_vo_000300.bmp"
   negative_checks:
     - "grep count for RETINEX CL image failures, -34, bind failed, setup failed, VO capture failed, 拒绝销毁, and generic 失败 patterns was 0 in the Ctrl+C log."
     - "pgrep found no residual alldemo/run_alldemo process after Ctrl+C."
-    - "Ctrl+C log showed OSD/VMIX_RGA/RETINEX/VPSS removed and pools 8/7/6/14/13/1/2 destroyed without rejection."
+    - "Ctrl+C log showed RESIZE_RGA/OSD/VMIX_RGA/RETINEX removed and pools 8/7/6/1/2 destroyed without rejection."
   acceptance_limits:
     - "Runtime proof covers the chain, metrics, capture, and clean shutdown; final customer-facing visual judgment still needs screen/BMP review."

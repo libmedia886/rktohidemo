@@ -4,8 +4,8 @@ implementation_record:
   date: "2026-05-18"
   status: "Implemented"
   summary:
-    - "RETINEX 单页保持实时摄像头输入，使用 VI -> VPSS 分出 RAW 和增强两路。"
-    - "显示链路改为 VPSS(output0) -> VMIX_RGA(input0)，VPSS(output1) -> RETINEX -> VMIX_RGA(input1) -> OSD -> VO，避免第二个 OpenCL consumer 导入失败。"
+    - "RETINEX 单页已由后续整改改为 CLAHE 风格：VI 3840x2160 -> RETINEX 3840x2160 -> RESIZE_RGA 1080x608 -> VMIX_RGA -> OSD -> VO。"
+    - "RETINEX 运行时每 1 秒切换 passthrough 原图和增强输出，避免 VPSS 双路 4K 对比造成卡顿。"
     - "页面底部显示中文数据流、gain、threshold、log range、VI/RETINEX 帧计数和 CPU/GPU/RGA 状态。"
     - "maybe_capture_vo_channel_frame() 已支持 RETINEX，运行生成 vo_captures/retinex_vo_*.bmp。"
     - "rktohi 侧修正 RETINEX OpenCL/EGL sharing context、处理线程 eglMakeCurrent 和初始化线程解绑。"

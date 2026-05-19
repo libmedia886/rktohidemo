@@ -740,6 +740,7 @@ typedef struct {
     float threshold;     // 阈值
     float log_min;       // 对数最小值
     float log_max;       // 对数最大值
+    int passthrough;     // 运行时直通模式（仅 scale_count=1）
 } MEDIA_RETINEX_ATTR;
 
 int MEDIA_RETINEX_CreateGrp(int grp, const MEDIA_RETINEX_ATTR *attr);
@@ -749,6 +750,7 @@ int MEDIA_RETINEX_Start(int grp);
 int MEDIA_RETINEX_Stop(int grp);
 int MEDIA_RETINEX_GetFrame(int grp, MEDIA_BUFFER *buf, int timeout_ms);
 int MEDIA_RETINEX_ReleaseFrame(int grp, MEDIA_BUFFER buf);
+int MEDIA_RETINEX_SetPassthrough(int grp, int enable);
 
 
 // ThermalColor (热成像颜色映射）
@@ -894,6 +896,7 @@ typedef struct {
     float beta1;                /* CAP beta1 */
     float beta2;                /* CAP beta2 */
     float depth_scale;          /* depth 缩放 */
+    int passthrough;            /* 运行时直通模式 */
 } MEDIA_CAP_DEHAZE_ATTR;
 
 int MEDIA_CAP_DEHAZE_CreateGrp(int grp, const MEDIA_CAP_DEHAZE_ATTR *attr);
@@ -905,6 +908,7 @@ int MEDIA_CAP_DEHAZE_Disable(int grp);
 int MEDIA_CAP_DEHAZE_SendFrame(int grp, MEDIA_BUFFER buf, int timeout_ms);
 int MEDIA_CAP_DEHAZE_GetFrame(int grp, MEDIA_BUFFER *buf, int timeout_ms);
 int MEDIA_CAP_DEHAZE_ReleaseFrame(int grp, MEDIA_BUFFER buf);
+int MEDIA_CAP_DEHAZE_SetPassthrough(int grp, int enable);
 
 // DCP_FAST_DEHAZE (使用 OpenCL/CPU 的 DCP_FAST 去雾模块)
 typedef struct {
@@ -922,6 +926,7 @@ typedef struct {
     int guided_radius;          /* 引导滤波半径 */
     float guided_eps;           /* 引导滤波 epsilon */
     float refine_scale;         /* transmission refine 缩放 */
+    int passthrough;            /* 运行时直通模式 */
 } MEDIA_DCP_FAST_DEHAZE_ATTR;
 
 int MEDIA_DCP_FAST_DEHAZE_CreateGrp(int grp, const MEDIA_DCP_FAST_DEHAZE_ATTR *attr);
@@ -933,6 +938,7 @@ int MEDIA_DCP_FAST_DEHAZE_Disable(int grp);
 int MEDIA_DCP_FAST_DEHAZE_SendFrame(int grp, MEDIA_BUFFER buf, int timeout_ms);
 int MEDIA_DCP_FAST_DEHAZE_GetFrame(int grp, MEDIA_BUFFER *buf, int timeout_ms);
 int MEDIA_DCP_FAST_DEHAZE_ReleaseFrame(int grp, MEDIA_BUFFER buf);
+int MEDIA_DCP_FAST_DEHAZE_SetPassthrough(int grp, int enable);
 
 // CONV_CL (使用 OpenCL GPU 的卷积模块）
 typedef struct {
@@ -977,6 +983,7 @@ typedef struct {
     float clip_limit;
     float highlight_protect_start;
     float highlight_protect_strength;
+    int passthrough;
 } MEDIA_CLAHE_ATTR;
 
 int MEDIA_CLAHE_CreateGrp(int grp, const MEDIA_CLAHE_ATTR *attr);
@@ -989,6 +996,7 @@ int MEDIA_CLAHE_GetFrame(int grp, MEDIA_BUFFER *buf, int timeout_ms);
 int MEDIA_CLAHE_ReleaseFrame(int grp, MEDIA_BUFFER buf);
 int MEDIA_CLAHE_SetClipLimit(int grp, float clip_limit);
 int MEDIA_CLAHE_SetHighlightProtect(int grp, float start, float strength);
+int MEDIA_CLAHE_SetPassthrough(int grp, int enable);
 
 // EDOF_CL (使用 OpenCL GPU 的双输入扩景深融合模块)
 typedef struct {

@@ -1,32 +1,32 @@
 product_brief:
   case_name: "RETINEX_CUSTOMER_PAGE"
   target_user: "到现场观看 AllDemo 的客户和售前演示人员"
-  demo_goal: "把 RETINEX 页作为客户默认轮播中的光照校正能力讲清楚：实时摄像头画面被 VPSS 分为原始和增强两路，RETINEX 做背光/阴影细节增强，VMIX_RGA 完成同屏合成，并展示 gain、threshold、log range 和运行指标。"
-  first_screen_message: "客户一眼看到原始输入和 RETINEX 增强输出的差异，知道这是光照不均场景下的细节恢复能力。"
+  demo_goal: "把 RETINEX 页作为客户默认轮播中的光照校正能力讲清楚：实时 4K 摄像头画面直接进入 RETINEX，页面每 1 秒在 passthrough 原图和增强输出之间切换，并展示 gain、threshold、log range 和运行指标。"
+  first_screen_message: "客户看到同一画面在原图和 RETINEX 增强之间交替，知道这是光照不均场景下的细节恢复能力。"
   must_show:
     - "RETINEX 保持在默认客户演示页表内。"
     - "RETINEX 单页使用实时摄像头输入，不使用静态占位图。"
-    - "屏幕上显示 RAW 原始输入与 RETINEX 增强输出两路等尺寸对比。"
+    - "屏幕上显示 RETINEX passthrough 原图与增强输出的 1 秒交替对比。"
     - "屏幕上显示 gain、threshold、log range、RETINEX 帧计数和 CPU/GPU/RGA 状态。"
     - "运行后保存 RETINEX 页面 VO 抓帧，供产品复看页面效果。"
   should_show:
     - "客户能理解 RETINEX 用于背光、阴影、局部光照不均的细节增强。"
-    - "README 和 effect manifest 应明确 RAW vs RETINEX 对比、VMIX_RGA 合成、参数指标和 VO 抓帧。"
+    - "README 和 effect manifest 应明确 passthrough vs RETINEX 增强、参数指标和 VO 抓帧。"
     - "短运行验证应看到 VI/RETINEX 帧计数同步增长。"
   avoid_showing:
     - "不要只写 original video and Retinex output comparison，必须说明光照校正场景、参数和数据流。"
     - "不要把 RETINEX 与 CLAHE 的局部直方图增强混为同一页。"
     - "不复制 rktohi/src 到 alldemo；alldemo 只消费重建后的库和头文件产物。"
   input_source_preference: "live_camera"
-  visual_layout: "竖屏单模块页；上方显示原始输入，下方显示 RETINEX 增强输出，底部显示中文数据流、参数条、真实 bind 链路和运行指标。"
-  comparison_rule: "RETINEX 是上下对比页；两路画面必须保持等尺寸，差异只来自 RETINEX 光照校正。"
+  visual_layout: "竖屏单模块页；中部显示单路 1080x608 画面，1 秒原图直通、1 秒 RETINEX 增强，底部显示中文数据流、参数条、真实 bind 链路和运行指标。"
+  comparison_rule: "RETINEX 使用单路交替对比；同一显示窗口每 1 秒切换原图和增强，避免双路 4K 对比造成卡顿。"
   overlay_text:
-    data_flow: "数据流：VI -> VPSS；RAW 路进 VMIX_RGA，增强路进 RETINEX 后进 VMIX_RGA，再经 OSD/VO 显示。"
+    data_flow: "数据流：VI 3840x2160 -> RETINEX passthrough/增强 -> RESIZE_RGA 1080x608 -> VMIX_RGA -> OSD/VO。"
     rationale: "压低不均匀光照影响，让阴影和背光区域细节更清楚。"
     runtime_metrics: "CPU/GPU/RGA/FPS/frame time/VI frames/RETINEX frames/gain/threshold/log range"
   acceptance_feel:
-    - "客户能看懂上下两幅图的光照校正对比。"
-    - "演示人员能用抓帧复看说明文字、等尺寸视窗和参数是否清楚。"
+    - "客户能看懂同一窗口里原图和增强的交替光照校正效果。"
+    - "演示人员能用抓帧复看说明文字、显示窗口和参数是否清楚。"
     - "RETINEX 页面能短运行并干净退出。"
   product_defects:
     - id: "PROD-RETINEX-001"

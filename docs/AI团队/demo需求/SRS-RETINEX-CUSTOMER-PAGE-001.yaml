@@ -5,11 +5,11 @@ software_requirement_specification:
   user_value: "客户默认轮播逐页优化时，RETINEX 页需要清楚表达光照校正能力，并提供可复看的页面抓帧证据。"
   scope:
     - "保持 RETINEX 在客户默认页表中，不改变默认顺序。"
-    - "RETINEX bind 链路使用实时摄像头：VI -> VPSS；VPSS 原始路进 VMIX_RGA input0，VPSS 增强路进 RETINEX 后进 VMIX_RGA input1，再经 DISPLAY_OSD -> VO。"
+    - "RETINEX bind 链路使用实时摄像头：VI 3840x2160 -> RETINEX 3840x2160 -> RESIZE_RGA 1080x608 -> VMIX_RGA -> DISPLAY_OSD -> VO。"
     - "RETINEX 主循环调用 maybe_capture_vo_channel_frame()，输出 vo_captures/retinex_vo_*.bmp。"
-    - "页面 OSD 显示 RAW vs RETINEX、gain、threshold、log range、VI/RETINEX 帧计数和 CPU/GPU/RGA 状态。"
-    - "更新 effect manifest 中 RETINEX 的效果描述，突出光照校正、VMIX_RGA 对比合成、运行指标和 VO 抓帧。"
-    - "更新 README 的 RETINEX 单页说明，明确上下等尺寸对比、参数、帧计数和抓帧证据。"
+    - "页面 OSD 显示 1 秒 passthrough 原图、1 秒增强输出交替状态、gain、threshold、log range、VI/RETINEX/RESIZE 帧计数和 CPU/GPU/RGA 状态。"
+    - "更新 effect manifest 中 RETINEX 的效果描述，突出光照校正、passthrough/增强切换、运行指标和 VO 抓帧。"
+    - "更新 README 的 RETINEX 单页说明，明确单路交替对比、参数、帧计数和抓帧证据。"
     - "rktohi 侧只允许修正 RETINEX EGL/OpenCL context 和处理线程绑定等支撑客户页运行的库问题。"
     - "补充实现、验收和问题记录，作为后续逐页优化模板。"
   non_scope:
@@ -18,12 +18,12 @@ software_requirement_specification:
     - "不把 RETINEX 与 CLAHE、CAP_DEHAZE 合并为一个需求。"
     - "不把自动抓帧等同于人工视觉验收。"
   target_screen:
-    layout: "竖屏单模块页；上部为 RAW 原始输入，下部为 RETINEX 增强输出，底部为中文数据流、参数条、真实 bind 链路和运行指标。"
+    layout: "竖屏单模块页；中部为单路 RETINEX 输出，1 秒原图直通、1 秒增强交替显示，底部为中文数据流、参数条、真实 bind 链路和运行指标。"
     input_source: "实时摄像头 /dev/video-camera0。"
-    output_view: "VPSS 双路输出经 VMIX_RGA 上下排列，第二路经过 RETINEX 光照校正。"
+    output_view: "单路 RETINEX 输出经 RESIZE_RGA 等比例缩放到 1080x608 后进入 VMIX_RGA；画面每 1 秒在 passthrough 原图和增强输出之间切换。"
     overlay_text:
       - "标题显示 RETINEX 和客户演示页码。"
-      - "显示 上：VI原始输入 / 下：RETINEX增强输出。"
+      - "显示 当前：RETINEX直通原图 / 当前：RETINEX增强输出。"
       - "显示 GAIN 20.0、THRESHOLD 0.5、LOG -3.0..8.5。"
       - "显示真实 bind 链路和 VI/RETINEX 帧计数。"
     runtime_metrics:
@@ -54,7 +54,7 @@ software_requirement_specification:
     - "cmake --build build -j 在 /userdata/alldemo 通过。"
     - "./scripts/run_alldemo.sh --asset-check 可以执行通过并同步必要 libmedia 产物。"
     - "timeout -s INT -k 3s 9s stdbuf -oL -eL ./scripts/run_alldemo.sh --only RETINEX 能启动目标页，日志出现 RETINEX vi_frames/retinex_frames、gain、threshold、CPU/GPU/RGA 信息，retinex_frames 随 VI 增长。"
-    - "真实 Ctrl+C 运行能完整断开 VI/VPSS/RETINEX/VMIX_RGA/OSD/VO，销毁所有相关 pool，并且退出后无残留 alldemo 进程。"
+    - "真实 Ctrl+C 运行能完整断开 VI/RETINEX/RESIZE_RGA/VMIX_RGA/OSD/VO，销毁所有相关 pool，并且退出后无残留 alldemo 进程。"
     - "RETINEX 运行后生成 vo_captures/retinex_vo_*.bmp 抓帧文件。"
     - "运行日志中 -34、bind failed、RETINEX bind display setup failed、VO capture failed、拒绝销毁 计数为 0。"
     - "README 和 assets/effect_manifest.json 的 RETINEX 描述不再停留在泛化 original/Retinex comparison。"

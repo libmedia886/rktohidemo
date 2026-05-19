@@ -4,9 +4,9 @@ implementation_record:
   date: "2026-05-18"
   status: "Implemented"
   summary:
-    - "CLAHE 单页保持实时摄像头输入，使用 VI -> VPSS 分出 RAW 和增强两路。"
-    - "显示链路改为 VPSS(output0) -> VMIX_RGA(input0)，VPSS(output1) -> CLAHE -> VMIX_RGA(input1) -> OSD -> VO，避免第二个 OpenCL consumer 导入失败。"
-    - "页面底部显示中文数据流、8x8 tile grid、动态 clip limit、VI/CLAHE 帧计数和 CPU/GPU/RGA 状态。"
+    - "CLAHE 单页保持实时摄像头 3840x2160 输入，链路改为 VI -> CLAHE -> RESIZE_RGA -> VMIX_RGA -> OSD -> VO，不再使用 VPSS 分路。后置 RESIZE_RGA 输出 1080x608，保持 16:9 比例。"
+    - "页面每 1 秒调用 MEDIA_CLAHE_SetPassthrough() 切换 passthrough 原图和 CLAHE 正常增强，替代原 RAW/增强双路对比。"
+    - "页面底部显示中文数据流、8x8 tile grid、动态 clip limit、passthrough 状态、VI/CLAHE/RESIZE 帧计数和 CPU/GPU/RGA 状态。"
     - "maybe_capture_vo_channel_frame() 支持 CLAHE，生成 vo_captures/clahe_vo_*.bmp。"
     - "rktohi 侧修正 CLAHE OpenCL/EGL sharing context、处理线程 eglMakeCurrent、初始化线程解绑，以及 bind 输出路径的 module frame_count。"
   changed_files:
