@@ -11,3 +11,5 @@
 | DEFECT-CUSTOMER-DEMO-20260519-007 | Fixed | Product Defect | 实时对比页 | 实时对比页面上下/左右布局不统一 |
 | DEFECT-CUSTOMER-DEMO-20260519-008 | In Progress | Product Defect | 默认轮播实时摄像头页 | 数据流仍未清楚说明4K输入、处理顺序和缩放位置 |
 | DEFECT-CUSTOMER-DEMO-20260519-009 | Fixed | Product Defect | OSD | OSD VI OSD 单个实时主画面已改为1080x608 |
+| DEFECT-CUSTOMER-DEMO-20260519-010 | Fixed | Product Defect | RGA / RESIZE_RGA | 单实时主画面已改为1080x608 |
+| DEFECT-CUSTOMER-DEMO-20260519-011 | Partially Fixed | Product Defect / Performance Risk | CAP_DEHAZE | 已改为4K先算法后缩放，仍有4K增强阶段丢帧风险 |

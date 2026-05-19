@@ -116,6 +116,8 @@
 #define VI_BIG_VIEW_FRAME_SIZE (VI_BIG_VIEW_STRIDE * VI_BIG_VIEW_H * 3 / 2)
 #define VI_BIG_VIEW_X 0
 #define VI_BIG_VIEW_Y 320
+#define DEHAZE_RGB4K_STRIDE ALIGN_UP(VI_BIG_W * 3, 64)
+#define DEHAZE_RGB4K_FRAME_SIZE (DEHAZE_RGB4K_STRIDE * VI_BIG_H)
 #define VPSS_TILE_W 480
 #define VPSS_TILE_H 480
 #define VPSS_TILE_NV12_STRIDE CAM_STRIDE
@@ -382,6 +384,8 @@ static const char *g_clahe_mix_module = "VMIX";
 static const char *g_bind_retinex_in_port = NULL;
 static const char *g_bind_retinex_src_port = NULL;
 static const char *g_retinex_mix_module = "VMIX";
+static const char *g_bind_dehaze_in_port = NULL;
+static const char *g_bind_dehaze_src_port = NULL;
 static const char *g_conv_cl_mix_module = "VMIX";
 static const char *g_bind_vmix_in_port = NULL;
 static const char *g_bind_vmix_src_port = NULL;
@@ -1164,7 +1168,9 @@ static void maybe_capture_vo_channel_frame(const char *only_tile, int frame, int
     int is_resize_rga = strcasecmp(only_tile, "RESIZE_RGA") == 0;
     int is_csc_cl = strcasecmp(only_tile, "CSC_CL") == 0;
     int is_clahe = strcasecmp(only_tile, "CLAHE") == 0;
-    if (!is_retinex && !is_conv_cl && !is_transform && !is_stereo && !is_vmix && !is_vi && !is_vpss && !is_osd && !is_rga && !is_resize_rga && !is_csc_cl && !is_clahe) return;
+    int is_cap_dehaze = strcasecmp(only_tile, "CAP_DEHAZE") == 0;
+    int is_dcp_dehaze = strcasecmp(only_tile, "DCP_FAST_DEHAZE") == 0;
+    if (!is_retinex && !is_conv_cl && !is_transform && !is_stereo && !is_vmix && !is_vi && !is_vpss && !is_osd && !is_rga && !is_resize_rga && !is_csc_cl && !is_clahe && !is_cap_dehaze && !is_dcp_dehaze) return;
     if (frame <= 0) return;
     if ((frame % (FPS * VO_CAPTURE_SECONDS)) != 0) return;
 
@@ -1203,6 +1209,12 @@ static void maybe_capture_vo_channel_frame(const char *only_tile, int frame, int
     } else if (is_clahe) {
         label = "CLAHE";
         prefix = "clahe";
+    } else if (is_cap_dehaze) {
+        label = "CAP_DEHAZE";
+        prefix = "cap_dehaze";
+    } else if (is_dcp_dehaze) {
+        label = "DCP_FAST_DEHAZE";
+        prefix = "dcp_fast_dehaze";
     }
     MEDIA_BUFFER buf = {-1, -1};
     int source = 0;
@@ -4191,7 +4203,7 @@ static int update_rga_bind_flow_overlay(int op_index, int frame) {
     const rga_demo_op_t *op = &g_rga_demo_ops[op_index];
 
     snprintf(op_line, sizeof(op_line), "当前RGA操作：%s", op->label);
-    snprintf(bind_line, sizeof(bind_line), "流程图：VI 3840x2160 -> RGA硬件变换/缩放到640x640 -> VMIX固定位置 -> OSD说明 -> VO");
+    snprintf(bind_line, sizeof(bind_line), "流程图：VI 3840x2160 -> RGA硬件变换 -> 1080x608显示帧 -> VMIX固定位置 -> OSD说明 -> VO");
 
     if (update_osd_rect_region(4, panel_x, panel_y, 964, 458, 5, 10, 18, 225) != 0) return -1;
     if (update_osd_utf8_text_region(5, 86, 1056, 31, 160, 255, 220,
@@ -4244,7 +4256,7 @@ static int update_resize_bind_flow_overlay(resize_demo_params_t p, int frame) {
     if (box_w < 40) box_w = 40;
     if (box_h < 40) box_h = 40;
 
-    snprintf(crop_line, sizeof(crop_line), "CROP X=%d Y=%d W=%d H=%d -> OUT 640x640",
+    snprintf(crop_line, sizeof(crop_line), "CROP X=%d Y=%d W=%d H=%d -> OUT 1080x608",
              p.crop_x, p.crop_y, p.crop_w, p.crop_h);
     snprintf(zoom_line, sizeof(zoom_line), "ZOOM %.2fX", (float)CAM_W / (float)p.crop_w);
     snprintf(bind_line, sizeof(bind_line), "VI0.%s -> RESIZE_RGA%d.%s  |  RESIZE_RGA%d.%s -> VMIX%d.%s  |  OSD%d.%s -> VO0.%s",
@@ -4275,7 +4287,7 @@ static int update_resize_bind_flow_overlay(resize_demo_params_t p, int frame) {
     if (update_osd_rect_region(10, 458, 1190, 496, 224, 10, 22, 38, 235) != 0) return -1;
 
     if (update_osd_utf8_text_region(11, 112, 1208, 22, 160, 255, 220,
-                                    "原始640x640取景", masks[3], sizeof(masks[3]), 1024, 96) != 0) return -1;
+                                    "4K等比例取景", masks[3], sizeof(masks[3]), 1024, 96) != 0) return -1;
     if (update_osd_utf8_text_region(12, 484, 1214, 27, 160, 255, 220,
                                     "输出：裁剪区域被放大铺满", masks[4], sizeof(masks[4]), 1024, 96) != 0) return -1;
     if (update_osd_text_region(13, 484, 1278, 2, 255, 230, 120,
@@ -5131,9 +5143,9 @@ static void fill_live_rga_attr(MEDIA_RGA_GRP_ATTR *attr, const rga_demo_op_t *op
     attr->inputs[0].crop_w = (op->crop_w * g_camera_input_w) / CAM_W;
     attr->inputs[0].crop_h = (op->crop_h * g_camera_input_h) / CAM_H;
     attr->outputs[0].port_id = 0;
-    attr->outputs[0].width = CAM_W;
-    attr->outputs[0].height = CAM_H;
-    attr->outputs[0].stride = CAM_STRIDE;
+    attr->outputs[0].width = VI_BIG_VIEW_W;
+    attr->outputs[0].height = VI_BIG_VIEW_H;
+    attr->outputs[0].stride = VI_BIG_VIEW_STRIDE;
     attr->outputs[0].format = MEDIA_FORMAT_NV12;
     attr->outputs[0].pool_id = DISPLAY_VMIX_INPUT_POOL;
     attr->outputs[0].rotate = op->rotate;
@@ -5174,14 +5186,20 @@ static int set_live_rga_op(int op_index, int frame) {
     if (op_index < 0 || op_index >= (int)ARRAY_SIZE(g_rga_demo_ops)) return -1;
     fill_live_rga_attr(&attr, &g_rga_demo_ops[op_index]);
     if (op_index == 1) {
-        int max_square = g_camera_input_w < g_camera_input_h ? g_camera_input_w : g_camera_input_h;
-        int crop = max_square / 2 + (rga_wave_i(frame * 3, max_square / 4) & ~1);
-        int max_x = g_camera_input_w - crop;
-        int max_y = g_camera_input_h - crop;
+        int max_h = g_camera_input_h;
+        int min_h = max_h / 2;
+        int crop_h = min_h + (rga_wave_i(frame * 3, max_h / 4) & ~1);
+        int crop_w = (crop_h * 16 / 9) & ~1;
+        if (crop_w > g_camera_input_w) {
+            crop_w = g_camera_input_w & ~1;
+            crop_h = ((crop_w * 9 / 16) & ~1);
+        }
+        int max_x = g_camera_input_w - crop_w;
+        int max_y = g_camera_input_h - crop_h;
         attr.inputs[0].crop_x = rga_wave_i(frame * 5, max_x) & ~1;
         attr.inputs[0].crop_y = rga_wave_i(frame * 4, max_y) & ~1;
-        attr.inputs[0].crop_w = crop;
-        attr.inputs[0].crop_h = crop;
+        attr.inputs[0].crop_w = crop_w;
+        attr.inputs[0].crop_h = crop_h;
     }
     return MEDIA_RGA_SetGrpAttr(LIVE_RGA_GRP, &attr);
 }
@@ -6536,6 +6554,102 @@ static int bind_vi_retinex_vmix_osd_vo(void) {
     return 0;
 }
 
+static int bind_vi_dehaze_vmix_osd_vo(int use_dcp) {
+    const char *dehaze_module = use_dcp ? "DCP_FAST_DEHAZE" : "CAP_DEHAZE";
+    const int dehaze_grp = use_dcp ? LIVE_DCP_DEHAZE_GRP : LIVE_CAP_DEHAZE_GRP;
+    const char *out_ports[] = {"output0", "output"};
+    const char *vi_out_ports[] = {"output", "output0"};
+    const char *in_ports[] = {"input0", "input"};
+    const char *osd_in_ports[] = {"input", "input0"};
+    g_bind_vi_src_port = NULL;
+    g_bind_csc_front_in_port = NULL;
+    g_bind_csc_front_src_port = NULL;
+    g_bind_dehaze_in_port = NULL;
+    g_bind_dehaze_src_port = NULL;
+    g_bind_compare_effect_resize_in_port = NULL;
+    g_bind_compare_effect_resize_src_port = NULL;
+    g_bind_vmix_in_port = NULL;
+    g_bind_vmix_src_port = NULL;
+    g_bind_osd_in_port = NULL;
+    g_bind_osd_src_port = NULL;
+    g_bind_vo_in_port = NULL;
+
+    if (bind_first_match("VI", 0, vi_out_ports, (int)ARRAY_SIZE(vi_out_ports),
+                         "CSC_RGA", LIVE_CSC_RGA_GRP, in_ports, (int)ARRAY_SIZE(in_ports),
+                         &g_bind_vi_src_port, &g_bind_csc_front_in_port) != 0) {
+        fprintf(stderr, "bind failed: VI -> CSC_RGA(dehaze)\n");
+        return -1;
+    }
+    if (bind_first_match("CSC_RGA", LIVE_CSC_RGA_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
+                         dehaze_module, dehaze_grp, in_ports, (int)ARRAY_SIZE(in_ports),
+                         &g_bind_csc_front_src_port, &g_bind_dehaze_in_port) != 0) {
+        fprintf(stderr, "bind failed: CSC_RGA -> %s\n", dehaze_module);
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+        return -1;
+    }
+    if (bind_first_match(dehaze_module, dehaze_grp, out_ports, (int)ARRAY_SIZE(out_ports),
+                         "RESIZE_RGA", LIVE_COMPARE_EFFECT_RESIZE_GRP,
+                         in_ports, (int)ARRAY_SIZE(in_ports),
+                         &g_bind_dehaze_src_port, &g_bind_compare_effect_resize_in_port) != 0) {
+        fprintf(stderr, "bind failed: %s -> RESIZE_RGA\n", dehaze_module);
+        MEDIA_SYS_UnBind("CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_src_port,
+                         dehaze_module, dehaze_grp, g_bind_dehaze_in_port);
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+        return -1;
+    }
+    if (bind_first_match("RESIZE_RGA", LIVE_COMPARE_EFFECT_RESIZE_GRP,
+                         out_ports, (int)ARRAY_SIZE(out_ports),
+                         "VMIX", DISPLAY_VMIX_GRP, in_ports, (int)ARRAY_SIZE(in_ports),
+                         &g_bind_compare_effect_resize_src_port, &g_bind_vmix_in_port) != 0) {
+        fprintf(stderr, "bind failed: RESIZE_RGA(dehaze) -> VMIX\n");
+        MEDIA_SYS_UnBind(dehaze_module, dehaze_grp, g_bind_dehaze_src_port,
+                         "RESIZE_RGA", LIVE_COMPARE_EFFECT_RESIZE_GRP,
+                         g_bind_compare_effect_resize_in_port);
+        MEDIA_SYS_UnBind("CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_src_port,
+                         dehaze_module, dehaze_grp, g_bind_dehaze_in_port);
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+        return -1;
+    }
+    if (bind_first_match("VMIX", DISPLAY_VMIX_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
+                         "OSD", DISPLAY_OSD_GRP, osd_in_ports, (int)ARRAY_SIZE(osd_in_ports),
+                         &g_bind_vmix_src_port, &g_bind_osd_in_port) != 0) {
+        fprintf(stderr, "bind failed: VMIX -> OSD(dehaze)\n");
+        MEDIA_SYS_UnBind("RESIZE_RGA", LIVE_COMPARE_EFFECT_RESIZE_GRP,
+                         g_bind_compare_effect_resize_src_port,
+                         "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_in_port);
+        MEDIA_SYS_UnBind(dehaze_module, dehaze_grp, g_bind_dehaze_src_port,
+                         "RESIZE_RGA", LIVE_COMPARE_EFFECT_RESIZE_GRP,
+                         g_bind_compare_effect_resize_in_port);
+        MEDIA_SYS_UnBind("CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_src_port,
+                         dehaze_module, dehaze_grp, g_bind_dehaze_in_port);
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+        return -1;
+    }
+    if (bind_first_match("OSD", DISPLAY_OSD_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
+                         "VO", 0, in_ports, (int)ARRAY_SIZE(in_ports),
+                         &g_bind_osd_src_port, &g_bind_vo_in_port) != 0) {
+        fprintf(stderr, "bind failed: OSD -> VO(dehaze)\n");
+        MEDIA_SYS_UnBind("VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_src_port,
+                         "OSD", DISPLAY_OSD_GRP, g_bind_osd_in_port);
+        MEDIA_SYS_UnBind("RESIZE_RGA", LIVE_COMPARE_EFFECT_RESIZE_GRP,
+                         g_bind_compare_effect_resize_src_port,
+                         "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_in_port);
+        MEDIA_SYS_UnBind(dehaze_module, dehaze_grp, g_bind_dehaze_src_port,
+                         "RESIZE_RGA", LIVE_COMPARE_EFFECT_RESIZE_GRP,
+                         g_bind_compare_effect_resize_in_port);
+        MEDIA_SYS_UnBind("CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_src_port,
+                         dehaze_module, dehaze_grp, g_bind_dehaze_in_port);
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+        return -1;
+    }
+    return 0;
+}
+
 static int bind_vi_rga_vmix_osd_vo(void) {
     const char *out_ports[] = {"output0", "output"};
     const char *vi_out_ports[] = {"output", "output0"};
@@ -7424,6 +7538,38 @@ static void unbind_vi_retinex_vmix_osd_vo(int enabled) {
     }
 }
 
+static void unbind_vi_dehaze_vmix_osd_vo(int enabled, int use_dcp) {
+    const char *dehaze_module = use_dcp ? "DCP_FAST_DEHAZE" : "CAP_DEHAZE";
+    const int dehaze_grp = use_dcp ? LIVE_DCP_DEHAZE_GRP : LIVE_CAP_DEHAZE_GRP;
+    if (!enabled) return;
+    if (g_bind_osd_src_port && g_bind_vo_in_port) {
+        MEDIA_SYS_UnBind("OSD", DISPLAY_OSD_GRP, g_bind_osd_src_port,
+                         "VO", 0, g_bind_vo_in_port);
+    }
+    if (g_bind_vmix_src_port && g_bind_osd_in_port) {
+        MEDIA_SYS_UnBind("VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_src_port,
+                         "OSD", DISPLAY_OSD_GRP, g_bind_osd_in_port);
+    }
+    if (g_bind_compare_effect_resize_src_port && g_bind_vmix_in_port) {
+        MEDIA_SYS_UnBind("RESIZE_RGA", LIVE_COMPARE_EFFECT_RESIZE_GRP,
+                         g_bind_compare_effect_resize_src_port,
+                         "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_in_port);
+    }
+    if (g_bind_dehaze_src_port && g_bind_compare_effect_resize_in_port) {
+        MEDIA_SYS_UnBind(dehaze_module, dehaze_grp, g_bind_dehaze_src_port,
+                         "RESIZE_RGA", LIVE_COMPARE_EFFECT_RESIZE_GRP,
+                         g_bind_compare_effect_resize_in_port);
+    }
+    if (g_bind_csc_front_src_port && g_bind_dehaze_in_port) {
+        MEDIA_SYS_UnBind("CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_src_port,
+                         dehaze_module, dehaze_grp, g_bind_dehaze_in_port);
+    }
+    if (g_bind_vi_src_port && g_bind_csc_front_in_port) {
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+    }
+}
+
 static void unbind_vpss_vmix_osd_vo(int enabled) {
     if (!enabled) return;
     if (g_bind_osd_src_port && g_bind_vo_in_port) {
@@ -8067,6 +8213,9 @@ static int setup_live_resize(void) {
 static int setup_live_resize_bind_with_params(resize_demo_params_t p) {
     MEDIA_RESIZE_RGA_ATTR attr = {0};
     fill_resize_attr(&attr, p, DISPLAY_VMIX_INPUT_POOL, 4);
+    attr.out_width = VI_BIG_VIEW_W;
+    attr.out_height = VI_BIG_VIEW_H;
+    attr.out_stride = VI_BIG_VIEW_STRIDE;
 
     if (MEDIA_RESIZE_RGA_CreateGrp(LIVE_RESIZE_GRP, &attr) != 0 ||
         MEDIA_RESIZE_RGA_Start(LIVE_RESIZE_GRP) != 0 ||
@@ -9084,6 +9233,170 @@ static void cleanup_live_cap_dehaze(int enabled) {
     MEDIA_CAP_DEHAZE_DestroyGrp(LIVE_CAP_DEHAZE_GRP);
     MEDIA_POOL_Destroy(OSD_INPUT_POOL);
     MEDIA_POOL_Destroy(OSD_OUTPUT_POOL);
+}
+
+static int setup_live_cap_dehaze_bind_chain(int use_dcp) {
+    const int dehaze_grp = use_dcp ? LIVE_DCP_DEHAZE_GRP : LIVE_CAP_DEHAZE_GRP;
+    if (MEDIA_POOL_Create(WORK_POOL_RGB, DEHAZE_RGB4K_FRAME_SIZE, 2) != 0) return -1;
+    if (MEDIA_POOL_Create(WORK_POOL_OUT, DEHAZE_RGB4K_FRAME_SIZE, 2) != 0) {
+        MEDIA_POOL_Destroy(WORK_POOL_RGB);
+        return -1;
+    }
+
+    MEDIA_CSC_RGA_ATTR csc = {0};
+    csc.input_width = g_camera_input_w;
+    csc.input_height = g_camera_input_h;
+    csc.input_format = MEDIA_FORMAT_NV12;
+    csc.output_format = MEDIA_FORMAT_RGB888;
+    csc.input_depth = 4;
+    csc.output_pool_id = WORK_POOL_RGB;
+    csc.input_stride = g_camera_input_stride;
+    csc.output_stride = DEHAZE_RGB4K_STRIDE;
+    csc.csc_mode = 0;
+
+    if (MEDIA_CSC_RGA_CreateGrp(LIVE_CSC_RGA_GRP, &csc) != 0 ||
+        MEDIA_CSC_RGA_Start(LIVE_CSC_RGA_GRP) != 0 ||
+        MEDIA_CSC_RGA_Enable(LIVE_CSC_RGA_GRP) != 0) {
+        goto fail_csc;
+    }
+
+    if (use_dcp) {
+        MEDIA_DCP_FAST_DEHAZE_ATTR attr = {0};
+        attr.width = g_camera_input_w;
+        attr.height = g_camera_input_h;
+        attr.format = MEDIA_FORMAT_RGB888;
+        attr.input_depth = 1;
+        attr.output_pool_id = WORK_POOL_OUT;
+        attr.input_stride = DEHAZE_RGB4K_STRIDE;
+        attr.output_stride = DEHAZE_RGB4K_STRIDE;
+        attr.patch = 15;
+        attr.omega = 0.95f;
+        attr.t0 = 0.12f;
+        attr.airlight_percent = 0.001f;
+        attr.guided_radius = 24;
+        attr.guided_eps = 1e-3f;
+        attr.refine_scale = 0.5f;
+        attr.passthrough = 1;
+        if (MEDIA_DCP_FAST_DEHAZE_CreateGrp(dehaze_grp, &attr) != 0 ||
+            MEDIA_DCP_FAST_DEHAZE_Start(dehaze_grp) != 0 ||
+            MEDIA_DCP_FAST_DEHAZE_Enable(dehaze_grp) != 0) {
+            goto fail_dehaze;
+        }
+        set_tile_status("DCP_FAST_DEHAZE", TILE_LIVE);
+    } else {
+        MEDIA_CAP_DEHAZE_ATTR attr = {0};
+        attr.width = g_camera_input_w;
+        attr.height = g_camera_input_h;
+        attr.format = MEDIA_FORMAT_RGB888;
+        attr.input_depth = 1;
+        attr.output_pool_id = WORK_POOL_OUT;
+        attr.input_stride = DEHAZE_RGB4K_STRIDE;
+        attr.output_stride = DEHAZE_RGB4K_STRIDE;
+        attr.guided_radius = 24;
+        attr.guided_eps = 1e-3f;
+        attr.t0 = 0.12f;
+        attr.beta0 = 0.121779f;
+        attr.beta1 = 0.959710f;
+        attr.beta2 = -0.780245f;
+        attr.depth_scale = 1.0f;
+        attr.passthrough = 1;
+        if (MEDIA_CAP_DEHAZE_CreateGrp(dehaze_grp, &attr) != 0 ||
+            MEDIA_CAP_DEHAZE_Start(dehaze_grp) != 0 ||
+            MEDIA_CAP_DEHAZE_Enable(dehaze_grp) != 0) {
+            goto fail_dehaze;
+        }
+        set_tile_status("CAP_DEHAZE", TILE_LIVE);
+    }
+
+    MEDIA_RESIZE_RGA_ATTR resize = {0};
+    resize.src_x = 0;
+    resize.src_y = 0;
+    resize.src_width = g_camera_input_w;
+    resize.src_height = g_camera_input_h;
+    resize.input_width = g_camera_input_w;
+    resize.input_height = g_camera_input_h;
+    resize.input_stride = DEHAZE_RGB4K_STRIDE;
+    resize.input_format = MEDIA_FORMAT_RGB888;
+    resize.input_depth = 4;
+    resize.out_width = VI_BIG_VIEW_W;
+    resize.out_height = VI_BIG_VIEW_H;
+    resize.out_stride = VI_BIG_VIEW_STRIDE;
+    resize.output_format = MEDIA_FORMAT_NV12;
+    resize.output_pool_id = DISPLAY_VMIX_INPUT_POOL;
+    if (MEDIA_RESIZE_RGA_CreateGrp(LIVE_COMPARE_EFFECT_RESIZE_GRP, &resize) != 0 ||
+        MEDIA_RESIZE_RGA_Start(LIVE_COMPARE_EFFECT_RESIZE_GRP) != 0 ||
+        MEDIA_RESIZE_RGA_Enable(LIVE_COMPARE_EFFECT_RESIZE_GRP) != 0) {
+        goto fail_resize;
+    }
+    set_tile_status("CSC_RGA", TILE_LIVE);
+    set_tile_status("RESIZE_RGA", TILE_LIVE);
+    return 0;
+
+fail_resize:
+    MEDIA_RESIZE_RGA_Disable(LIVE_COMPARE_EFFECT_RESIZE_GRP);
+    MEDIA_RESIZE_RGA_Stop(LIVE_COMPARE_EFFECT_RESIZE_GRP);
+    MEDIA_RESIZE_RGA_DestroyGrp(LIVE_COMPARE_EFFECT_RESIZE_GRP);
+fail_dehaze:
+    if (use_dcp) {
+        MEDIA_DCP_FAST_DEHAZE_Disable(dehaze_grp);
+        MEDIA_DCP_FAST_DEHAZE_Stop(dehaze_grp);
+        MEDIA_DCP_FAST_DEHAZE_DestroyGrp(dehaze_grp);
+    } else {
+        MEDIA_CAP_DEHAZE_Disable(dehaze_grp);
+        MEDIA_CAP_DEHAZE_Stop(dehaze_grp);
+        MEDIA_CAP_DEHAZE_DestroyGrp(dehaze_grp);
+    }
+    MEDIA_CSC_RGA_Disable(LIVE_CSC_RGA_GRP);
+    MEDIA_CSC_RGA_Stop(LIVE_CSC_RGA_GRP);
+    MEDIA_CSC_RGA_DestroyGrp(LIVE_CSC_RGA_GRP);
+fail_csc:
+    MEDIA_POOL_Destroy(WORK_POOL_OUT);
+    MEDIA_POOL_Destroy(WORK_POOL_RGB);
+    return -1;
+}
+
+static void cleanup_live_cap_dehaze_bind_chain(int enabled, int use_dcp) {
+    if (!enabled) return;
+    MEDIA_CSC_RGA_Disable(LIVE_CSC_RGA_GRP);
+    MEDIA_CSC_RGA_Stop(LIVE_CSC_RGA_GRP);
+    if (use_dcp) {
+        MEDIA_DCP_FAST_DEHAZE_Disable(LIVE_DCP_DEHAZE_GRP);
+        MEDIA_DCP_FAST_DEHAZE_Stop(LIVE_DCP_DEHAZE_GRP);
+    } else {
+        MEDIA_CAP_DEHAZE_Disable(LIVE_CAP_DEHAZE_GRP);
+        MEDIA_CAP_DEHAZE_Stop(LIVE_CAP_DEHAZE_GRP);
+    }
+    MEDIA_RESIZE_RGA_Disable(LIVE_COMPARE_EFFECT_RESIZE_GRP);
+    MEDIA_RESIZE_RGA_Stop(LIVE_COMPARE_EFFECT_RESIZE_GRP);
+    for (int i = 0; i < 8; ++i) {
+        MEDIA_BUFFER buf = {-1, -1};
+        if (MEDIA_RESIZE_RGA_GetFrame(LIVE_COMPARE_EFFECT_RESIZE_GRP, &buf, 0) != 0) break;
+        MEDIA_RESIZE_RGA_ReleaseFrame(LIVE_COMPARE_EFFECT_RESIZE_GRP, buf);
+    }
+    for (int i = 0; i < 8; ++i) {
+        MEDIA_BUFFER buf = {-1, -1};
+        if (use_dcp) {
+            if (MEDIA_DCP_FAST_DEHAZE_GetFrame(LIVE_DCP_DEHAZE_GRP, &buf, 0) != 0) break;
+            MEDIA_DCP_FAST_DEHAZE_ReleaseFrame(LIVE_DCP_DEHAZE_GRP, buf);
+        } else {
+            if (MEDIA_CAP_DEHAZE_GetFrame(LIVE_CAP_DEHAZE_GRP, &buf, 0) != 0) break;
+            MEDIA_CAP_DEHAZE_ReleaseFrame(LIVE_CAP_DEHAZE_GRP, buf);
+        }
+    }
+    for (int i = 0; i < 8; ++i) {
+        MEDIA_BUFFER buf = {-1, -1};
+        if (MEDIA_CSC_RGA_GetFrame(LIVE_CSC_RGA_GRP, &buf, 0) != 0) break;
+        MEDIA_CSC_RGA_ReleaseFrame(LIVE_CSC_RGA_GRP, buf);
+    }
+    MEDIA_RESIZE_RGA_DestroyGrp(LIVE_COMPARE_EFFECT_RESIZE_GRP);
+    if (use_dcp) {
+        MEDIA_DCP_FAST_DEHAZE_DestroyGrp(LIVE_DCP_DEHAZE_GRP);
+    } else {
+        MEDIA_CAP_DEHAZE_DestroyGrp(LIVE_CAP_DEHAZE_GRP);
+    }
+    MEDIA_CSC_RGA_DestroyGrp(LIVE_CSC_RGA_GRP);
+    MEDIA_POOL_Destroy(WORK_POOL_OUT);
+    MEDIA_POOL_Destroy(WORK_POOL_RGB);
 }
 
 static int process_live_cap_dehaze(const uint8_t *src, uint8_t *dst) {
@@ -11313,12 +11626,12 @@ int main(int argc, char **argv) {
     }
     int live_transform_ok = 0;
     int live_cap_ok = 0;
-    if (!solid_test && only_tile && strcasecmp(only_tile, "CAP_DEHAZE") == 0 &&
+    if (!solid_test && !only_tile && default_page_index("CAP_DEHAZE") >= 0 &&
         setup_live_cap_dehaze() == 0) {
         live_cap_ok = 1;
     }
     int live_dcp_ok = 0;
-    if (!solid_test && only_tile && strcasecmp(only_tile, "DCP_FAST_DEHAZE") == 0 &&
+    if (!solid_test && !only_tile && default_page_index("DCP_FAST_DEHAZE") >= 0 &&
         setup_live_dcp_dehaze() == 0) {
         live_dcp_ok = 1;
     }
@@ -11454,7 +11767,9 @@ int main(int argc, char **argv) {
          strcasecmp(only_tile, "TRANSFORM") == 0 ||
          strcasecmp(only_tile, "STEREO_3D") == 0 ||
          strcasecmp(only_tile, "CLAHE") == 0 ||
-         strcasecmp(only_tile, "RETINEX") == 0);
+         strcasecmp(only_tile, "RETINEX") == 0 ||
+         strcasecmp(only_tile, "CAP_DEHAZE") == 0 ||
+         strcasecmp(only_tile, "DCP_FAST_DEHAZE") == 0);
     int use_vi_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "VI") == 0;
     int use_wbc_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "WBC") == 0;
     int use_vmix_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "VMIX") == 0;
@@ -11463,6 +11778,8 @@ int main(int argc, char **argv) {
     int use_osd_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "OSD") == 0;
     int use_clahe_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "CLAHE") == 0;
     int use_retinex_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "RETINEX") == 0;
+    int use_cap_dehaze_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "CAP_DEHAZE") == 0;
+    int use_dcp_dehaze_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "DCP_FAST_DEHAZE") == 0;
     int use_rga_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "RGA") == 0;
     int use_resize_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "RESIZE_RGA") == 0;
     int use_csc_rga_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "CSC_RGA") == 0;
@@ -11478,6 +11795,8 @@ int main(int argc, char **argv) {
     int osd_bind_display_ok = 0;
     int clahe_bind_display_ok = 0;
     int retinex_bind_display_ok = 0;
+    int cap_dehaze_bind_display_ok = 0;
+    int dcp_dehaze_bind_display_ok = 0;
     int rga_bind_display_ok = 0;
     int resize_bind_display_ok = 0;
     int csc_rga_bind_display_ok = 0;
@@ -11490,6 +11809,7 @@ int main(int argc, char **argv) {
     int live_osd_bind_ok = 0;
     int live_clahe_bind_ok = 0;
     int live_retinex_bind_ok = 0;
+    int live_dehaze_bind_ok = 0;
     int live_csc_rga_chain_ok = 0;
     int live_csc_cl_chain_ok = 0;
     int live_conv_cl_quad_ok = 0;
@@ -11505,7 +11825,9 @@ int main(int argc, char **argv) {
         ((use_wbc_bind_display || use_clahe_bind_display || use_retinex_bind_display) ? 2 : 1);
     int display_vmix_layout = use_wbc_bind_display ? DISPLAY_VMIX_LAYOUT_WBC :
         (use_vmix_bind_display ? DISPLAY_VMIX_LAYOUT_DEMO :
-         ((use_vi_big_display || use_osd_bind_display) ? DISPLAY_VMIX_LAYOUT_VI_BIG : DISPLAY_VMIX_LAYOUT_DEFAULT));
+         ((use_vi_big_display || use_osd_bind_display ||
+           use_rga_bind_display || use_resize_bind_display ||
+           use_cap_dehaze_bind_display || use_dcp_dehaze_bind_display) ? DISPLAY_VMIX_LAYOUT_VI_BIG : DISPLAY_VMIX_LAYOUT_DEFAULT));
     int defer_vmix_osd_for_csc_cl = use_csc_cl_bind_display;
     int defer_vmix_osd_for_clahe = use_clahe_bind_display;
     int defer_vmix_osd_for_retinex = use_retinex_bind_display;
@@ -11582,6 +11904,11 @@ int main(int argc, char **argv) {
             g_conv_cl_mix_module = "VMIX";
         }
     }
+    if ((use_cap_dehaze_bind_display || use_dcp_dehaze_bind_display) &&
+        display_vmix_osd_ok &&
+        setup_live_cap_dehaze_bind_chain(use_dcp_dehaze_bind_display) == 0) {
+        live_dehaze_bind_ok = 1;
+    }
     if (use_wbc_bind_display && display_vmix_osd_ok && setup_live_wbc() == 0) {
         live_wbc_ok = 1;
     }
@@ -11619,6 +11946,7 @@ int main(int argc, char **argv) {
     int camera_w = g_camera_input_w;
     int camera_h = g_camera_input_h;
     int camera_stride = g_camera_input_stride;
+    int camera_fps = (use_cap_dehaze_bind_display || use_dcp_dehaze_bind_display) ? 10 : FPS;
     int camera_v4l2_buf_cnt = 4;
     size_t camera_frame_size = (size_t)camera_stride * camera_h * 3 / 2;
     /*
@@ -11633,7 +11961,7 @@ int main(int argc, char **argv) {
         vi.width = camera_w;
         vi.height = camera_h;
         vi.stride = camera_stride;
-        vi.fps = FPS;
+        vi.fps = camera_fps;
         vi.buf_cnt = camera_v4l2_buf_cnt;
         vi.pool_id = CAMERA_POOL;
         vi.format = MEDIA_FORMAT_NV12;
@@ -11958,6 +12286,47 @@ int main(int argc, char **argv) {
         retinex_bind_display_ok = 1;
         (void)update_display_osd_text("RETINEX  4K PROCESS THEN RESIZE", "VI 4K -> RETINEX -> RESIZE -> VO");
         (void)update_retinex_compare_overlay(0, 0, 0, 0, 0);
+    }
+    if (use_cap_dehaze_bind_display || use_dcp_dehaze_bind_display) {
+        int use_dcp = use_dcp_dehaze_bind_display;
+        const char *name = use_dcp ? "DCP_FAST_DEHAZE" : "CAP_DEHAZE";
+        if (!camera_ok || !live_dehaze_bind_ok || !display_vmix_osd_ok ||
+            bind_vi_dehaze_vmix_osd_vo(use_dcp) != 0) {
+            fprintf(stderr, "%s bind display setup failed; CPU copy fallback is disabled for --only %s\n",
+                    name, name);
+            if (camera_ok) MEDIA_VI_Disable(0);
+            cleanup_live_cap_dehaze_bind_chain(live_dehaze_bind_ok, use_dcp);
+            cleanup_display_vmix_osd(display_vmix_osd_ok);
+            MEDIA_VO_Stop(0, 0);
+            MEDIA_VO_DestroyChn(0, 0);
+            MEDIA_POOL_Destroy(DISPLAY_POOL);
+            cleanup_live_stereo(live_stereo_ok);
+            cleanup_live_pano(live_pano_ok);
+            cleanup_live_dualview(live_dualview_ok);
+            cleanup_live_edof(live_edof_ok);
+            cleanup_live_retinex(live_retinex_ok);
+            cleanup_live_clahe(live_clahe_ok);
+            cleanup_live_conv_cl(live_conv_ok);
+            cleanup_live_dcp_dehaze(live_dcp_ok);
+            cleanup_live_cap_dehaze(live_cap_ok);
+            cleanup_live_transform(live_transform_ok);
+            cleanup_live_csc_rga(live_csc_rga_ok);
+            cleanup_live_rga(live_rga_ok);
+            cleanup_live_vpss(live_vpss_ok);
+            cleanup_live_resize(live_resize_ok);
+            cleanup_live_osd(live_osd_ok);
+            if (need_camera) MEDIA_POOL_Destroy(CAMERA_POOL);
+            unload_pano_sample();
+            unload_edof_pairs();
+            unload_loop_assets();
+            MEDIA_SYS_Exit();
+            return 1;
+        }
+        cap_dehaze_bind_display_ok = use_cap_dehaze_bind_display;
+        dcp_dehaze_bind_display_ok = use_dcp_dehaze_bind_display;
+        (void)update_display_osd_text(use_dcp ? "DCP_FAST_DEHAZE  4K PASS/ENHANCE" :
+                                                "CAP_DEHAZE  4K PASS/ENHANCE",
+                                      "VI 4K -> CSC_RGA RGB -> DEHAZE -> RESIZE -> VO");
     }
     if (use_rga_bind_display) {
         if (!camera_ok || !live_rga_ok || !display_vmix_osd_ok || bind_vi_rga_vmix_osd_vo() != 0) {
@@ -12827,6 +13196,68 @@ int main(int argc, char **argv) {
             usleep(1000000 / FPS);
             continue;
         }
+        if (cap_dehaze_bind_display_ok || dcp_dehaze_bind_display_ok) {
+            int use_dcp = dcp_dehaze_bind_display_ok;
+            int passthrough_mode = ((frame / FPS) % 2) == 0;
+            const char *module_name = use_dcp ? "DCP_FAST_DEHAZE" : "CAP_DEHAZE";
+            int module_grp = use_dcp ? LIVE_DCP_DEHAZE_GRP : LIVE_CAP_DEHAZE_GRP;
+            if ((frame % FPS) == 0) {
+                if (use_dcp) {
+                    (void)MEDIA_DCP_FAST_DEHAZE_SetPassthrough(module_grp, passthrough_mode);
+                } else {
+                    (void)MEDIA_CAP_DEHAZE_SetPassthrough(module_grp, passthrough_mode);
+                }
+            }
+            if ((frame % 15) == 0) {
+                uint64_t vi_count = 0;
+                uint64_t csc_count = 0;
+                uint64_t dehaze_count = 0;
+                uint64_t resize_count = 0;
+                uint64_t display_osd_count = 0;
+                char perf[180];
+                char gpu_text[24];
+                char rga_text[24];
+                update_perf_status();
+                if (MEDIA_SYS_GetModuleFrameCount("VI", 0, &vi_count) == 0) {
+                    g_health.camera_frames = (int)vi_count;
+                }
+                (void)MEDIA_SYS_GetModuleFrameCount("CSC_RGA", LIVE_CSC_RGA_GRP, &csc_count);
+                (void)MEDIA_SYS_GetModuleFrameCount(module_name, module_grp, &dehaze_count);
+                (void)MEDIA_SYS_GetModuleFrameCount("RESIZE_RGA", LIVE_COMPARE_EFFECT_RESIZE_GRP, &resize_count);
+                (void)MEDIA_SYS_GetModuleFrameCount("OSD", DISPLAY_OSD_GRP, &display_osd_count);
+                snprintf(gpu_text, sizeof(gpu_text), g_perf.gpu_available ? "%.0f%%" : "N/A",
+                         g_perf.gpu_percent);
+                snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
+                         g_perf.rga_percent);
+                snprintf(perf, sizeof(perf), "PAGE %02d/%02d %s 4K %s OUT %llu RESIZE %llu CPU %.0f%% GPU %s RGA %s",
+                         module_page_number(module_name), module_page_total(),
+                         use_dcp ? "DCP" : "CAP",
+                         passthrough_mode ? "PASS" : "ENHANCE",
+                         (unsigned long long)dehaze_count,
+                         (unsigned long long)resize_count,
+                         g_perf.cpu_percent, gpu_text, rga_text);
+                (void)update_display_osd_text(use_dcp ? "DCP_FAST_DEHAZE  4K PASS/ENHANCE" :
+                                                        "CAP_DEHAZE  4K PASS/ENHANCE",
+                                              perf);
+                if ((frame % FPS) == 0) {
+                    printf("%s vi_frames=%llu csc_frames=%llu dehaze_frames=%llu resize_frames=%llu display_osd_frames=%llu passthrough=%d cpu=%.0f%% gpu=%s rga=%s\n",
+                           module_name,
+                           (unsigned long long)vi_count,
+                           (unsigned long long)csc_count,
+                           (unsigned long long)dehaze_count,
+                           (unsigned long long)resize_count,
+                           (unsigned long long)display_osd_count,
+                           passthrough_mode,
+                           g_perf.cpu_percent,
+                           gpu_text,
+                           rga_text);
+                }
+            }
+            maybe_capture_vo_channel_frame(only_tile, frame, dstride);
+            frame++;
+            usleep(1000000 / FPS);
+            continue;
+        }
         if (rga_bind_display_ok) {
             rga_op_index = (frame / (FPS * RGA_OP_SECONDS)) % (int)ARRAY_SIZE(g_rga_demo_ops);
             if (rga_op_index != last_rga_op_index || (rga_op_index == 1 && (frame % 4) == 0)) {
@@ -12839,12 +13270,14 @@ int main(int argc, char **argv) {
             if ((frame % 15) == 0) {
                 uint64_t vi_count = 0;
                 uint64_t rga_count = 0;
+                uint64_t display_osd_count = 0;
                 char perf[160];
                 update_perf_status();
                 if (MEDIA_SYS_GetModuleFrameCount("VI", 0, &vi_count) == 0) {
                     g_health.camera_frames = (int)vi_count;
                 }
                 (void)MEDIA_SYS_GetModuleFrameCount("RGA", LIVE_RGA_GRP, &rga_count);
+                (void)MEDIA_SYS_GetModuleFrameCount("OSD", DISPLAY_OSD_GRP, &display_osd_count);
                 if (g_perf.gpu_available && g_perf.rga_available) {
                     snprintf(perf, sizeof(perf), "PAGE %02d/%02d OP %s CPU %.0f%% GPU %.0f%% RGA %.0f%%",
                              module_page_number("RGA"), module_page_total(),
@@ -12881,10 +13314,11 @@ int main(int argc, char **argv) {
                     } else {
                         snprintf(rga_text, sizeof(rga_text), "N/A");
                     }
-                    printf("RGA op=%s vi_frames=%llu rga_frames=%llu cpu=%.0f%% gpu=%s rga=%s\n",
+                    printf("RGA op=%s vi_frames=%llu rga_frames=%llu display_osd_frames=%llu cpu=%.0f%% gpu=%s rga=%s\n",
                            g_rga_demo_ops[rga_op_index].label,
                            (unsigned long long)vi_count,
                            (unsigned long long)rga_count,
+                           (unsigned long long)display_osd_count,
                            g_perf.cpu_percent,
                            gpu_text,
                            rga_text);
@@ -12906,6 +13340,7 @@ int main(int argc, char **argv) {
             if ((frame % 15) == 0) {
                 uint64_t vi_count = 0;
                 uint64_t resize_count = 0;
+                uint64_t display_osd_count = 0;
                 char perf[160];
                 float zoom = (float)CAM_W / (float)rp.crop_w;
                 update_perf_status();
@@ -12913,6 +13348,7 @@ int main(int argc, char **argv) {
                     g_health.camera_frames = (int)vi_count;
                 }
                 (void)MEDIA_SYS_GetModuleFrameCount("RESIZE_RGA", LIVE_RESIZE_GRP, &resize_count);
+                (void)MEDIA_SYS_GetModuleFrameCount("OSD", DISPLAY_OSD_GRP, &display_osd_count);
                 if (g_perf.gpu_available && g_perf.rga_available) {
                     snprintf(perf, sizeof(perf), "PAGE %02d/%02d CROP %dx%d ZOOM %.2f CPU %.0f%% GPU %.0f%% RGA %.0f%%",
                              module_page_number("RESIZE_RGA"), module_page_total(),
@@ -12943,9 +13379,10 @@ int main(int argc, char **argv) {
                              g_perf.gpu_percent);
                     snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
                              g_perf.rga_percent);
-                    printf("RESIZE_RGA vi_frames=%llu resize_frames=%llu crop=%d,%d,%d,%d cpu=%.0f%% gpu=%s rga=%s\n",
+                    printf("RESIZE_RGA vi_frames=%llu resize_frames=%llu display_osd_frames=%llu crop=%d,%d,%d,%d cpu=%.0f%% gpu=%s rga=%s\n",
                            (unsigned long long)vi_count,
                            (unsigned long long)resize_count,
+                           (unsigned long long)display_osd_count,
                            rp.crop_x, rp.crop_y, rp.crop_w, rp.crop_h,
                            g_perf.cpu_percent,
                            gpu_text,
@@ -13519,6 +13956,8 @@ int main(int argc, char **argv) {
     unbind_vpss_vmix_osd_vo(vpss_bind_display_ok);
     unbind_vi_csc_cl_chain_vmix_osd_vo(csc_cl_bind_display_ok);
     unbind_vi_csc_chain_vmix_osd_vo(csc_rga_bind_display_ok);
+    unbind_vi_dehaze_vmix_osd_vo(cap_dehaze_bind_display_ok || dcp_dehaze_bind_display_ok,
+                                 dcp_dehaze_bind_display_ok);
     unbind_vi_resize_vmix_osd_vo(resize_bind_display_ok || vi_resize_bind_display_ok);
     unbind_vi_rga_vmix_osd_vo(rga_bind_display_ok);
     unbind_vi_retinex_vmix_osd_vo(retinex_bind_display_ok);
@@ -13526,6 +13965,14 @@ int main(int argc, char **argv) {
     unbind_vi_live_osd_vmix_osd_vo(osd_bind_display_ok);
     unbind_vi_vmix_osd_vo(vi_bind_display_ok && !vi_resize_bind_display_ok);
     if (camera_ok) MEDIA_VI_Disable(0);
+    if (cap_dehaze_bind_display_ok || dcp_dehaze_bind_display_ok) {
+        usleep(1500000);
+    }
+    if (resize_bind_display_ok || rga_bind_display_ok || vi_resize_bind_display_ok) {
+        usleep(100000);
+        drain_display_osd_output();
+        drain_display_vmix_output();
+    }
     if (csc_cl_bind_display_ok || display_vmix_rga_osd_ok) {
         stop_destroy_vo_channel();
     }
@@ -13538,6 +13985,13 @@ int main(int argc, char **argv) {
     if (!csc_cl_bind_display_ok && !display_vmix_rga_osd_ok) {
         stop_destroy_vo_channel();
     }
+    cleanup_live_resize_bind(live_resize_bind_ok || live_vi_resize_bind_ok);
+    live_resize_bind_ok = 0;
+    live_vi_resize_bind_ok = 0;
+    cleanup_live_rga(live_rga_ok);
+    live_rga_ok = 0;
+    cleanup_live_cap_dehaze_bind_chain(live_dehaze_bind_ok, dcp_dehaze_bind_display_ok);
+    live_dehaze_bind_ok = 0;
     cleanup_display_vmix_osd_ex(display_vmix_osd_ok, !transform_bind_display_ok);
     display_vmix_osd_ok = 0;
     cleanup_live_wbc(live_wbc_ok);
@@ -13546,12 +14000,10 @@ int main(int argc, char **argv) {
     cleanup_live_conv_cl_quad(live_conv_cl_quad_ok);
     cleanup_live_csc_cl_chain(live_csc_cl_chain_ok);
     cleanup_live_csc_rga_chain(live_csc_rga_chain_ok);
-    cleanup_live_resize_bind(live_resize_bind_ok || live_vi_resize_bind_ok);
     cleanup_live_camera_to_cam_resize_bind(live_pre_resize_bind_ok);
     cleanup_live_osd_bind(live_osd_bind_ok);
     cleanup_live_clahe_bind(live_clahe_bind_ok);
     cleanup_live_retinex_bind(live_retinex_bind_ok);
-    cleanup_live_rga(live_rga_ok);
     cleanup_live_stereo(live_stereo_ok);
     cleanup_live_pano(live_pano_ok);
     cleanup_live_dualview(live_dualview_ok);
