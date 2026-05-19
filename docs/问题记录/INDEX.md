@@ -5,6 +5,7 @@ Update it whenever adding or editing issue notes.
 
 | Date | Status | Kind | Issue | Summary | Related |
 | --- | --- | --- | --- | --- | --- |
+| 2026-05-19 19:18:44 | resolved | runtime | [TRANSFORM four-way 4K demo stalls perspective mode](20260519-1918-transform-four-way-4k-demo-stalls-perspective-mode.md) | TRANSFORM --only previously ran three 4K transform branches in parallel, saturating GPU and starving the final PERSPECTIVE branch. |  |
 | 2026-05-19 19:07:47 | fixed | runtime | [VMIX four-input page flickers because every input independently triggers comp...](20260519-1907-vmix-four-input-page-flickers-because-every-input-independently-.md) | Four-input VMIX page flickered because VMIX cleared and emitted a frame for each input-port arrival instead of using one cadence frame. |  |
 | 2026-05-19 11:57:00 | fixed | runtime | [4K camera RGA/RESIZE_RGA crop alignment failures](20260519-1157-4k-camera-rga-resize-rga-crop-alignment-failures.md) | RGA COPY could not scale 3840x2160 to 640x640 and RESIZE_RGA rejected odd NV12 crop rectangles after 4K scaling. | PRODUCT-CUSTOMER-DEMO-ITERATION-003 |
 | 2026-05-19 11:27:29 | open | validation | [STEREO_3D 4K input has no merged frame flow](20260519-1127-stereo-3d-4k-input-has-no-merged-frame-flow.md) | STEREO_3D can bind VI 3840x2160 through VPSS 640x640 outputs, but merged_frames stays zero with repeated EGL/OpenCL image import failures. | PRODUCT-CUSTOMER-DEMO-ITERATION-003 |

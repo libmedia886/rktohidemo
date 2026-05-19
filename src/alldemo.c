@@ -4597,6 +4597,7 @@ static int update_transform_quad_overlay(uint64_t vi_count,
                                          const uint64_t resize_counts[VPSS_DEMO_OUTPUTS],
                                          int frame) {
     static uint8_t masks[40][1024 * 96];
+    int active = (frame / FPS) % VPSS_DEMO_OUTPUTS;
     char status_line[192];
     char count_line[192];
     char bind_line1[192];
@@ -4605,32 +4606,28 @@ static int update_transform_quad_overlay(uint64_t vi_count,
     char runtime[128];
 
     format_runtime_status(runtime, sizeof(runtime));
-    snprintf(status_line, sizeof(status_line), "VI=%llu  %s  LUT UPDATE=%d",
+    snprintf(status_line, sizeof(status_line), "VI=%llu  %s  MODE=%s  SWITCH=1s",
              (unsigned long long)vi_count, runtime,
-             frame);
-    snprintf(count_line, sizeof(count_line), "TRANSFORM/RESIZE  %s=%llu/%llu  %s=%llu/%llu  %s=%llu/%llu  %s=%llu/%llu",
-             g_transform_effects[0].name, (unsigned long long)counts[0],
-             (unsigned long long)resize_counts[0],
-             g_transform_effects[1].name, (unsigned long long)counts[1],
-             (unsigned long long)resize_counts[1],
-             g_transform_effects[2].name, (unsigned long long)counts[2],
-             (unsigned long long)resize_counts[2],
-             g_transform_effects[3].name, (unsigned long long)counts[3],
-             (unsigned long long)resize_counts[3]);
-    snprintf(bind_line1, sizeof(bind_line1), "VI0.%s -> VPSS%d.%s; VPSS0 -> RESIZE%d -> VMIX%d.input0 RAW",
+             g_transform_effects[active].name);
+    snprintf(count_line, sizeof(count_line), "ACTIVE %s  VPSS=%llu  TRANSFORM=%llu  RESIZE=%llu",
+             g_transform_effects[active].name,
+             (unsigned long long)counts[0],
+             (unsigned long long)counts[active],
+             (unsigned long long)resize_counts[active]);
+    snprintf(bind_line1, sizeof(bind_line1), "VI0.%s -> VPSS%d.%s -> TRANSFORM%d(mode switch) -> RESIZE%d -> VMIX%d.input0",
              g_bind_vi_src_port ? g_bind_vi_src_port : "output",
              LIVE_VPSS_GRP,
              g_bind_vpss_in_port ? g_bind_vpss_in_port : "input",
+             g_transform_quad_grps[1],
              g_transform_display_resize_grps[0],
              DISPLAY_VMIX_GRP);
-    snprintf(bind_line2, sizeof(bind_line2), "VPSS1..3 -> TRANSFORM[%d..%d] -> RESIZE[%d..%d] -> VMIX inputs1..3 -> OSD%d.%s -> VO0.%s",
-             g_transform_quad_grps[1], g_transform_quad_grps[VPSS_DEMO_OUTPUTS - 1],
-             g_transform_display_resize_grps[1], g_transform_display_resize_grps[VPSS_DEMO_OUTPUTS - 1],
+    snprintf(bind_line2, sizeof(bind_line2), "VMIX%d.output0 -> OSD%d.%s -> VO0.%s; GPU只跑一路4K LUT，避免最后模式被队列压住",
+             DISPLAY_VMIX_GRP,
              DISPLAY_OSD_GRP,
              g_bind_osd_src_port ? g_bind_osd_src_port : "output0",
              g_bind_vo_in_port ? g_bind_vo_in_port : "input0");
     snprintf(lut_line, sizeof(lut_line),
-             "四路VPSS保持3840x2160；RAW最后缩放，其余三路先用XY LUT处理4K帧，最后RESIZE_RGA缩放显示。");
+             "四种模式每秒切换：RAW、UNDISTORT、ROTATE ZOOM、PERSPECTIVE；同一路4K输入先LUT变换再缩放显示。");
 
     const int cell = VPSS_TILE_W;
     const int gap = 40;
@@ -4647,7 +4644,10 @@ static int update_transform_quad_overlay(uint64_t vi_count,
                  (unsigned long long)counts[i],
                  (unsigned long long)resize_counts[i]);
         if (update_osd_rect_region(4 + i, x + 18, y + 18, 250, 96,
-                                   5, 10, 18, 220) != 0) return -1;
+                                   i == active ? 20 : 5,
+                                   i == active ? 52 : 10,
+                                   i == active ? 42 : 18,
+                                   220) != 0) return -1;
         if (update_osd_rect_region(8 + i, x + 18, y + 18, 250, 8,
                                    colors[i][0], colors[i][1], colors[i][2], 235) != 0) return -1;
         if (update_osd_text_region(12 + i, x + 34, y + 36, i == 2 ? 1 : 2,
@@ -7131,63 +7131,33 @@ static int bind_vi_vpss_transform_vmix_osd_vo(void) {
         return -1;
     }
 
-    const char *raw_vpss_out[] = {vpss_out_ports[0]};
-    const char *raw_resize_out[] = {"output0", "output"};
-    const char *raw_vmix_in[] = {vmix_in_ports[0]};
-    if (bind_first_match("VPSS", LIVE_VPSS_GRP, raw_vpss_out, 1,
-                         "RESIZE_RGA", g_transform_display_resize_grps[0],
+    const char *single_vpss_out[] = {vpss_out_ports[0]};
+    const char *resize_out[] = {"output0", "output"};
+    const char *single_vmix_in[] = {vmix_in_ports[0]};
+    if (bind_first_match("VPSS", LIVE_VPSS_GRP, single_vpss_out, 1,
+                         "TRANSFORM", g_transform_quad_grps[1],
                          transform_in_ports, (int)ARRAY_SIZE(transform_in_ports),
                          &g_bind_vpss_transform_src_ports[0],
+                         &g_bind_transform_in_ports[0]) != 0) {
+        fprintf(stderr, "bind failed: VPSS output0 -> TRANSFORM switcher\n");
+        goto fail;
+    }
+    if (bind_first_match("TRANSFORM", g_transform_quad_grps[1],
+                         transform_out_ports, (int)ARRAY_SIZE(transform_out_ports),
+                         "RESIZE_RGA", g_transform_display_resize_grps[0],
+                         transform_in_ports, (int)ARRAY_SIZE(transform_in_ports),
+                         &g_bind_transform_src_ports[0],
                          &g_bind_transform_resize_in_ports[0]) != 0) {
-        fprintf(stderr, "bind failed: VPSS raw output -> display resize0\n");
+        fprintf(stderr, "bind failed: TRANSFORM switcher -> display resize0\n");
         goto fail;
     }
     if (bind_first_match("RESIZE_RGA", g_transform_display_resize_grps[0],
-                         raw_resize_out, (int)ARRAY_SIZE(raw_resize_out),
-                         "VMIX", DISPLAY_VMIX_GRP, raw_vmix_in, 1,
+                         resize_out, (int)ARRAY_SIZE(resize_out),
+                         "VMIX", DISPLAY_VMIX_GRP, single_vmix_in, 1,
                          &g_bind_transform_resize_src_ports[0],
                          &g_bind_transform_vmix_in_ports[0]) != 0) {
-        fprintf(stderr, "bind failed: TRANSFORM raw resize -> VMIX input0\n");
+        fprintf(stderr, "bind failed: TRANSFORM display resize -> VMIX input0\n");
         goto fail;
-    }
-
-    for (int i = 1; i < VPSS_DEMO_OUTPUTS; ++i) {
-        const char *one_vpss_out[] = {vpss_out_ports[i]};
-        if (bind_first_match("VPSS", LIVE_VPSS_GRP, one_vpss_out, 1,
-                             "TRANSFORM", g_transform_quad_grps[i],
-                             transform_in_ports, (int)ARRAY_SIZE(transform_in_ports),
-                             &g_bind_vpss_transform_src_ports[i],
-                             &g_bind_transform_in_ports[i]) != 0) {
-            fprintf(stderr, "bind failed: VPSS output%d -> TRANSFORM%d\n",
-                    i, g_transform_quad_grps[i]);
-            goto fail;
-        }
-    }
-
-    for (int i = 1; i < VPSS_DEMO_OUTPUTS; ++i) {
-        if (bind_first_match("TRANSFORM", g_transform_quad_grps[i],
-                             transform_out_ports, (int)ARRAY_SIZE(transform_out_ports),
-                             "RESIZE_RGA", g_transform_display_resize_grps[i],
-                             transform_in_ports, (int)ARRAY_SIZE(transform_in_ports),
-                             &g_bind_transform_src_ports[i],
-                             &g_bind_transform_resize_in_ports[i]) != 0) {
-            fprintf(stderr, "bind failed: TRANSFORM%d -> display resize%d\n",
-                    g_transform_quad_grps[i], i);
-            goto fail;
-        }
-    }
-
-    for (int i = 1; i < VPSS_DEMO_OUTPUTS; ++i) {
-        const char *one_vmix_in[] = {vmix_in_ports[i]};
-        if (bind_first_match("RESIZE_RGA", g_transform_display_resize_grps[i],
-                             raw_resize_out, (int)ARRAY_SIZE(raw_resize_out),
-                             "VMIX", DISPLAY_VMIX_GRP, one_vmix_in, 1,
-                             &g_bind_transform_resize_src_ports[i],
-                             &g_bind_transform_vmix_in_ports[i]) != 0) {
-            fprintf(stderr, "bind failed: TRANSFORM display resize%d -> VMIX input%d\n",
-                    i, i);
-            goto fail;
-        }
     }
 
     if (bind_first_match("VMIX", DISPLAY_VMIX_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
@@ -7213,37 +7183,23 @@ fail:
         MEDIA_SYS_UnBind("VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_src_port,
                          "OSD", DISPLAY_OSD_GRP, g_bind_osd_in_port);
     }
-    for (int i = VPSS_DEMO_OUTPUTS - 1; i >= 1; --i) {
-        if (g_bind_transform_resize_src_ports[i] && g_bind_transform_vmix_in_ports[i]) {
-            MEDIA_SYS_UnBind("RESIZE_RGA", g_transform_display_resize_grps[i],
-                             g_bind_transform_resize_src_ports[i],
-                             "VMIX", DISPLAY_VMIX_GRP,
-                             g_bind_transform_vmix_in_ports[i]);
-        }
-        if (g_bind_transform_src_ports[i] && g_bind_transform_resize_in_ports[i]) {
-            MEDIA_SYS_UnBind("TRANSFORM", g_transform_quad_grps[i],
-                             g_bind_transform_src_ports[i],
-                             "RESIZE_RGA", g_transform_display_resize_grps[i],
-                             g_bind_transform_resize_in_ports[i]);
-        }
-        if (g_bind_vpss_transform_src_ports[i] && g_bind_transform_in_ports[i]) {
-            MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP,
-                             g_bind_vpss_transform_src_ports[i],
-                             "TRANSFORM", g_transform_quad_grps[i],
-                             g_bind_transform_in_ports[i]);
-        }
-    }
     if (g_bind_transform_resize_src_ports[0] && g_bind_transform_vmix_in_ports[0]) {
         MEDIA_SYS_UnBind("RESIZE_RGA", g_transform_display_resize_grps[0],
                          g_bind_transform_resize_src_ports[0],
                          "VMIX", DISPLAY_VMIX_GRP,
                          g_bind_transform_vmix_in_ports[0]);
     }
-    if (g_bind_vpss_transform_src_ports[0] && g_bind_transform_resize_in_ports[0]) {
-        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP,
-                         g_bind_vpss_transform_src_ports[0],
+    if (g_bind_transform_src_ports[0] && g_bind_transform_resize_in_ports[0]) {
+        MEDIA_SYS_UnBind("TRANSFORM", g_transform_quad_grps[1],
+                         g_bind_transform_src_ports[0],
                          "RESIZE_RGA", g_transform_display_resize_grps[0],
                          g_bind_transform_resize_in_ports[0]);
+    }
+    if (g_bind_vpss_transform_src_ports[0] && g_bind_transform_in_ports[0]) {
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP,
+                         g_bind_vpss_transform_src_ports[0],
+                         "TRANSFORM", g_transform_quad_grps[1],
+                         g_bind_transform_in_ports[0]);
     }
     if (g_bind_vi_src_port && g_bind_vpss_in_port) {
         MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
@@ -7642,37 +7598,23 @@ static void unbind_vi_vpss_transform_vmix_osd_vo(int enabled) {
         MEDIA_SYS_UnBind("VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_src_port,
                          "OSD", DISPLAY_OSD_GRP, g_bind_osd_in_port);
     }
-    for (int i = VPSS_DEMO_OUTPUTS - 1; i >= 1; --i) {
-        if (g_bind_transform_resize_src_ports[i] && g_bind_transform_vmix_in_ports[i]) {
-            MEDIA_SYS_UnBind("RESIZE_RGA", g_transform_display_resize_grps[i],
-                             g_bind_transform_resize_src_ports[i],
-                             "VMIX", DISPLAY_VMIX_GRP,
-                             g_bind_transform_vmix_in_ports[i]);
-        }
-        if (g_bind_transform_src_ports[i] && g_bind_transform_resize_in_ports[i]) {
-            MEDIA_SYS_UnBind("TRANSFORM", g_transform_quad_grps[i],
-                             g_bind_transform_src_ports[i],
-                             "RESIZE_RGA", g_transform_display_resize_grps[i],
-                             g_bind_transform_resize_in_ports[i]);
-        }
-        if (g_bind_vpss_transform_src_ports[i] && g_bind_transform_in_ports[i]) {
-            MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP,
-                             g_bind_vpss_transform_src_ports[i],
-                             "TRANSFORM", g_transform_quad_grps[i],
-                             g_bind_transform_in_ports[i]);
-        }
-    }
     if (g_bind_transform_resize_src_ports[0] && g_bind_transform_vmix_in_ports[0]) {
         MEDIA_SYS_UnBind("RESIZE_RGA", g_transform_display_resize_grps[0],
                          g_bind_transform_resize_src_ports[0],
                          "VMIX", DISPLAY_VMIX_GRP,
                          g_bind_transform_vmix_in_ports[0]);
     }
-    if (g_bind_vpss_transform_src_ports[0] && g_bind_transform_resize_in_ports[0]) {
-        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP,
-                         g_bind_vpss_transform_src_ports[0],
+    if (g_bind_transform_src_ports[0] && g_bind_transform_resize_in_ports[0]) {
+        MEDIA_SYS_UnBind("TRANSFORM", g_transform_quad_grps[1],
+                         g_bind_transform_src_ports[0],
                          "RESIZE_RGA", g_transform_display_resize_grps[0],
                          g_bind_transform_resize_in_ports[0]);
+    }
+    if (g_bind_vpss_transform_src_ports[0] && g_bind_transform_in_ports[0]) {
+        MEDIA_SYS_UnBind("VPSS", LIVE_VPSS_GRP,
+                         g_bind_vpss_transform_src_ports[0],
+                         "TRANSFORM", g_transform_quad_grps[1],
+                         g_bind_transform_in_ports[0]);
     }
     if (g_bind_vi_src_port && g_bind_vpss_in_port) {
         MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
@@ -8916,7 +8858,7 @@ static void build_transform_quad_lut(int effect_index, int frame, float *lut) {
 static int alloc_transform_quad_luts(void) {
     size_t count = (size_t)g_camera_input_w * g_camera_input_h * 2;
     free_transform_quad_luts();
-    for (int i = 1; i < VPSS_DEMO_OUTPUTS; ++i) {
+    for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
         g_transform_quad_luts[i] = malloc(count * sizeof(float));
         if (!g_transform_quad_luts[i]) {
             free_transform_quad_luts();
@@ -8927,11 +8869,11 @@ static int alloc_transform_quad_luts(void) {
     return 0;
 }
 
-static int update_transform_rotate_lut(int frame) {
-    if (!g_transform_quad_luts[2]) return -1;
-    build_transform_quad_lut(2, frame, g_transform_quad_luts[2]);
-    return MEDIA_TRANSFORM_UpdateLut(g_transform_quad_grps[2],
-                                     g_transform_quad_luts[2],
+static int update_transform_switch_lut(int mode, int frame) {
+    if (mode < 0 || mode >= VPSS_DEMO_OUTPUTS || !g_transform_quad_luts[mode]) return -1;
+    build_transform_quad_lut(mode, frame, g_transform_quad_luts[mode]);
+    return MEDIA_TRANSFORM_UpdateLut(g_transform_quad_grps[1],
+                                     g_transform_quad_luts[mode],
                                      (size_t)g_camera_input_w * g_camera_input_h * 2 * sizeof(float));
 }
 
@@ -9028,22 +8970,16 @@ static int process_live_transform(const uint8_t *src, uint8_t *dst) {
 
 static int setup_live_transform_quad(void) {
     /*
-     * TRANSFORM is an NV12 XY-LUT warp module, so no color-space bridge is
-     * required. VPSS keeps four full-resolution camera branches. Branch 0 is
-     * the raw reference and only scales at the display edge. Branches 1..3
-     * enter independent full-resolution TRANSFORM groups using different LUTs:
-     *
-     *   RAW, UNDISTORT, ROTATE ZOOM, PERSPECTIVE
-     *
-     * The rotate/zoom LUT is updated while running; the other LUTs stay fixed.
+     * Keep the demo responsive by running one 4K TRANSFORM branch and switching
+     * its LUT once per second between RAW, UNDISTORT, ROTATE ZOOM, PERSPECTIVE.
      */
     if (alloc_transform_quad_luts() != 0) return -1;
     if (MEDIA_POOL_Create(VPSS_INPUT_POOL, live_camera_input_frame_size(), 3) != 0) goto fail_lut;
-    if (MEDIA_POOL_Create(VPSS_OUTPUT_POOL, live_camera_input_frame_size(), VPSS_DEMO_OUTPUTS) != 0) {
+    if (MEDIA_POOL_Create(VPSS_OUTPUT_POOL, live_camera_input_frame_size(), 4) != 0) {
         MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
         goto fail_lut;
     }
-    if (MEDIA_POOL_Create(TRANSFORM_OUTPUT_POOL, live_camera_input_frame_size(), VPSS_DEMO_OUTPUTS - 1) != 0) {
+    if (MEDIA_POOL_Create(TRANSFORM_OUTPUT_POOL, live_camera_input_frame_size(), 4) != 0) {
         MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
         MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
         goto fail_lut;
@@ -9055,8 +8991,8 @@ static int setup_live_transform_quad(void) {
     vpss.input_stride = g_camera_input_stride;
     vpss.input_depth = 4;
     vpss.input_format = MEDIA_FORMAT_NV12;
-    vpss.output_count = VPSS_DEMO_OUTPUTS;
-    for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
+    vpss.output_count = 1;
+    for (int i = 0; i < vpss.output_count; ++i) {
         vpss.outputs[i].output_id = i;
         vpss.outputs[i].out_width = g_camera_input_w;
         vpss.outputs[i].out_height = g_camera_input_h;
@@ -9080,68 +9016,55 @@ static int setup_live_transform_quad(void) {
     }
 
     int created = 0;
-    for (int i = 1; i < VPSS_DEMO_OUTPUTS; ++i) {
-        MEDIA_TRANSFORM_ATTR attr = {0};
-        attr.out_width = g_camera_input_w;
-        attr.out_height = g_camera_input_h;
-        attr.out_stride = g_camera_input_stride;
-        attr.format = MEDIA_FORMAT_NV12;
-        attr.input_depth = 2;
-        attr.pool_id = TRANSFORM_OUTPUT_POOL;
-        attr.in_width = g_camera_input_w;
-        attr.in_height = g_camera_input_h;
-        attr.in_stride = g_camera_input_stride;
-        attr.lut_width = g_camera_input_w;
-        attr.lut_height = g_camera_input_h;
-        attr.lut = g_transform_quad_luts[i];
-        attr.lut_size = (size_t)g_camera_input_w * g_camera_input_h * 2 * sizeof(float);
+    MEDIA_TRANSFORM_ATTR attr = {0};
+    attr.out_width = g_camera_input_w;
+    attr.out_height = g_camera_input_h;
+    attr.out_stride = g_camera_input_stride;
+    attr.format = MEDIA_FORMAT_NV12;
+    attr.input_depth = 4;
+    attr.pool_id = TRANSFORM_OUTPUT_POOL;
+    attr.in_width = g_camera_input_w;
+    attr.in_height = g_camera_input_h;
+    attr.in_stride = g_camera_input_stride;
+    attr.lut_width = g_camera_input_w;
+    attr.lut_height = g_camera_input_h;
+    attr.lut = g_transform_quad_luts[0];
+    attr.lut_size = (size_t)g_camera_input_w * g_camera_input_h * 2 * sizeof(float);
 
-        if (MEDIA_TRANSFORM_CreateGrp(g_transform_quad_grps[i], &attr) != 0 ||
-            MEDIA_TRANSFORM_Start(g_transform_quad_grps[i]) != 0) {
-            for (int j = created; j >= 1; --j) {
-                MEDIA_TRANSFORM_Stop(g_transform_quad_grps[j]);
-                MEDIA_TRANSFORM_DestroyGrp(g_transform_quad_grps[j]);
-            }
-            MEDIA_TRANSFORM_DestroyGrp(g_transform_quad_grps[i]);
-            MEDIA_VPSS_Disable(LIVE_VPSS_GRP);
-            MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
-            MEDIA_POOL_Destroy(TRANSFORM_OUTPUT_POOL);
-            MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
-            MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
-            goto fail_lut;
-        }
-        created = i;
+    if (MEDIA_TRANSFORM_CreateGrp(g_transform_quad_grps[1], &attr) != 0 ||
+        MEDIA_TRANSFORM_Start(g_transform_quad_grps[1]) != 0) {
+        MEDIA_TRANSFORM_DestroyGrp(g_transform_quad_grps[1]);
+        MEDIA_VPSS_Disable(LIVE_VPSS_GRP);
+        MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
+        MEDIA_POOL_Destroy(TRANSFORM_OUTPUT_POOL);
+        MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+        MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+        goto fail_lut;
     }
+    created = 1;
 
-    int resize_created = 0;
-    for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
-        MEDIA_RESIZE_RGA_ATTR resize = {0};
-        fill_transform_display_resize_attr(&resize);
-        if (MEDIA_RESIZE_RGA_CreateGrp(g_transform_display_resize_grps[i], &resize) != 0 ||
-            MEDIA_RESIZE_RGA_Start(g_transform_display_resize_grps[i]) != 0 ||
-            MEDIA_RESIZE_RGA_Enable(g_transform_display_resize_grps[i]) != 0) {
-            MEDIA_RESIZE_RGA_Disable(g_transform_display_resize_grps[i]);
-            MEDIA_RESIZE_RGA_Stop(g_transform_display_resize_grps[i]);
-            MEDIA_RESIZE_RGA_DestroyGrp(g_transform_display_resize_grps[i]);
-            for (int j = resize_created - 1; j >= 0; --j) {
-                MEDIA_RESIZE_RGA_Disable(g_transform_display_resize_grps[j]);
-                MEDIA_RESIZE_RGA_Stop(g_transform_display_resize_grps[j]);
-                MEDIA_RESIZE_RGA_DestroyGrp(g_transform_display_resize_grps[j]);
-            }
-            for (int j = created; j >= 1; --j) {
-                MEDIA_TRANSFORM_Stop(g_transform_quad_grps[j]);
-                MEDIA_TRANSFORM_DestroyGrp(g_transform_quad_grps[j]);
-            }
-            MEDIA_VPSS_Disable(LIVE_VPSS_GRP);
-            MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
-            MEDIA_POOL_Destroy(TRANSFORM_OUTPUT_POOL);
-            MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
-            MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
-            goto fail_lut;
+    MEDIA_RESIZE_RGA_ATTR resize = {0};
+    fill_compare_display_resize_attr(&resize);
+    resize.out_width = VI_BIG_VIEW_W;
+    resize.out_height = VI_BIG_VIEW_H;
+    resize.out_stride = VI_BIG_VIEW_STRIDE;
+    if (MEDIA_RESIZE_RGA_CreateGrp(g_transform_display_resize_grps[0], &resize) != 0 ||
+        MEDIA_RESIZE_RGA_Start(g_transform_display_resize_grps[0]) != 0 ||
+        MEDIA_RESIZE_RGA_Enable(g_transform_display_resize_grps[0]) != 0) {
+        MEDIA_RESIZE_RGA_Disable(g_transform_display_resize_grps[0]);
+        MEDIA_RESIZE_RGA_Stop(g_transform_display_resize_grps[0]);
+        MEDIA_RESIZE_RGA_DestroyGrp(g_transform_display_resize_grps[0]);
+        for (int j = created; j >= 1; --j) {
+            MEDIA_TRANSFORM_Stop(g_transform_quad_grps[j]);
+            MEDIA_TRANSFORM_DestroyGrp(g_transform_quad_grps[j]);
         }
-        resize_created++;
+        MEDIA_VPSS_Disable(LIVE_VPSS_GRP);
+        MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
+        MEDIA_POOL_Destroy(TRANSFORM_OUTPUT_POOL);
+        MEDIA_POOL_Destroy(VPSS_OUTPUT_POOL);
+        MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
+        goto fail_lut;
     }
-
     set_tile_status("VPSS", TILE_LIVE);
     set_tile_status("RESIZE_RGA", TILE_LIVE);
     set_tile_status("TRANSFORM", TILE_LIVE);
@@ -9155,13 +9078,13 @@ fail_lut:
 
 static void cleanup_live_transform_quad(int enabled) {
     if (!enabled) return;
-    for (int i = VPSS_DEMO_OUTPUTS - 1; i >= 0; --i) {
+    for (int i = 0; i < 1; ++i) {
         drain_resize_rga_output(g_transform_display_resize_grps[i]);
         MEDIA_RESIZE_RGA_Disable(g_transform_display_resize_grps[i]);
         MEDIA_RESIZE_RGA_Stop(g_transform_display_resize_grps[i]);
         MEDIA_RESIZE_RGA_DestroyGrp(g_transform_display_resize_grps[i]);
     }
-    for (int i = VPSS_DEMO_OUTPUTS - 1; i >= 1; --i) {
+    for (int i = 1; i >= 1; --i) {
         for (int j = 0; j < 8; ++j) {
             MEDIA_BUFFER buf = {-1, -1};
             if (MEDIA_TRANSFORM_GetFrame(g_transform_quad_grps[i], &buf, 0) != 0) {
@@ -9172,7 +9095,7 @@ static void cleanup_live_transform_quad(int enabled) {
         MEDIA_TRANSFORM_Stop(g_transform_quad_grps[i]);
         MEDIA_TRANSFORM_DestroyGrp(g_transform_quad_grps[i]);
     }
-    drain_live_vpss_outputs(VPSS_DEMO_OUTPUTS);
+    drain_live_vpss_outputs(1);
     MEDIA_VPSS_Disable(LIVE_VPSS_GRP);
     MEDIA_VPSS_DestroyGrp(LIVE_VPSS_GRP);
     MEDIA_POOL_Destroy(TRANSFORM_OUTPUT_POOL);
@@ -11818,12 +11741,13 @@ int main(int argc, char **argv) {
     int display_vmix_osd_ok = 0;
     int display_vmix_rga_osd_ok = 0;
     int display_vmix_inputs =
-        (use_vpss_bind_display || use_conv_cl_bind_display || use_transform_bind_display) ? VPSS_DEMO_OUTPUTS :
+        (use_vpss_bind_display || use_conv_cl_bind_display) ? VPSS_DEMO_OUTPUTS :
         ((use_wbc_bind_display || use_clahe_bind_display || use_retinex_bind_display) ? 2 : 1);
     int display_vmix_layout = use_wbc_bind_display ? DISPLAY_VMIX_LAYOUT_WBC :
         (use_vmix_bind_display ? DISPLAY_VMIX_LAYOUT_DEMO :
          ((use_vi_big_display || use_osd_bind_display ||
            use_rga_bind_display || use_resize_bind_display ||
+           use_transform_bind_display ||
            use_cap_dehaze_bind_display || use_dcp_dehaze_bind_display) ? DISPLAY_VMIX_LAYOUT_VI_BIG : DISPLAY_VMIX_LAYOUT_DEFAULT));
     int defer_vmix_osd_for_csc_cl = use_csc_cl_bind_display;
     int defer_vmix_osd_for_clahe = use_clahe_bind_display;
@@ -13572,9 +13496,10 @@ int main(int argc, char **argv) {
             continue;
         }
         if (transform_bind_display_ok) {
-            if ((frame % 3) == 0 &&
-                update_transform_rotate_lut(frame) != 0 && (frame % FPS) == 0) {
-                fprintf(stderr, "warning: TRANSFORM rotate LUT update rejected\n");
+            int transform_mode = (frame / FPS) % VPSS_DEMO_OUTPUTS;
+            if ((frame % FPS) == 0 &&
+                update_transform_switch_lut(transform_mode, frame) != 0) {
+                fprintf(stderr, "warning: TRANSFORM mode LUT update rejected mode=%d\n", transform_mode);
             }
             if ((frame % 15) == 0) {
                 uint64_t vi_count = 0;
@@ -13593,42 +13518,30 @@ int main(int argc, char **argv) {
                 } else {
                     transform_counts[0] = vi_count;
                 }
-                for (int i = 1; i < VPSS_DEMO_OUTPUTS; ++i) {
-                    (void)MEDIA_SYS_GetModuleFrameCount("TRANSFORM", g_transform_quad_grps[i],
-                                                        &transform_counts[i]);
-                }
-                for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
-                    (void)MEDIA_SYS_GetModuleFrameCount("RESIZE_RGA", g_transform_display_resize_grps[i],
-                                                        &resize_counts[i]);
-                }
+                (void)MEDIA_SYS_GetModuleFrameCount("TRANSFORM", g_transform_quad_grps[1],
+                                                    &transform_counts[transform_mode]);
+                (void)MEDIA_SYS_GetModuleFrameCount("RESIZE_RGA", g_transform_display_resize_grps[0],
+                                                    &resize_counts[transform_mode]);
                 snprintf(gpu_text, sizeof(gpu_text), g_perf.gpu_available ? "%.0f%%" : "N/A",
                          g_perf.gpu_percent);
                 snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
                          g_perf.rga_percent);
-                snprintf(perf, sizeof(perf), "PAGE %02d/%02d TRANSFORM 4K THEN RESIZE CPU %.0f%% GPU %s RGA %s LUT %d",
+                snprintf(perf, sizeof(perf), "PAGE %02d/%02d TRANSFORM MODE %s CPU %.0f%% GPU %s RGA %s",
                          module_page_number("TRANSFORM"), module_page_total(),
-                         g_perf.cpu_percent, gpu_text, rga_text, frame);
-                (void)update_display_osd_text("TRANSFORM  4K PROCESS THEN RESIZE", perf);
+                         g_transform_effects[transform_mode].name,
+                         g_perf.cpu_percent, gpu_text, rga_text);
+                (void)update_display_osd_text("TRANSFORM  4K LUT MODE SWITCH", perf);
                 (void)update_transform_quad_overlay(vi_count, transform_counts, resize_counts, frame);
                 if ((frame % FPS) == 0) {
-                    printf("TRANSFORM vi_frames=%llu %s=%llu/%llu %s=%llu/%llu %s=%llu/%llu %s=%llu/%llu cpu=%.0f%% gpu=%s rga=%s lut=%d\n",
+                    printf("TRANSFORM vi_frames=%llu mode=%s vpss=%llu transform=%llu resize=%llu cpu=%.0f%% gpu=%s rga=%s\n",
                            (unsigned long long)vi_count,
-                           g_transform_effects[0].name,
-                           (unsigned long long)transform_counts[0],
-                           (unsigned long long)resize_counts[0],
-                           g_transform_effects[1].name,
-                           (unsigned long long)transform_counts[1],
-                           (unsigned long long)resize_counts[1],
-                           g_transform_effects[2].name,
-                           (unsigned long long)transform_counts[2],
-                           (unsigned long long)resize_counts[2],
-                           g_transform_effects[3].name,
-                           (unsigned long long)transform_counts[3],
-                           (unsigned long long)resize_counts[3],
+                           g_transform_effects[transform_mode].name,
+                           (unsigned long long)vpss_count,
+                           (unsigned long long)transform_counts[transform_mode],
+                           (unsigned long long)resize_counts[transform_mode],
                            g_perf.cpu_percent,
                            gpu_text,
-                           rga_text,
-                           frame);
+                           rga_text);
                 }
             }
             maybe_capture_vo_channel_frame(only_tile, frame, dstride);
