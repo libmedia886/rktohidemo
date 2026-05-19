@@ -1,0 +1,22 @@
+acceptance_report:
+  case_name: "VI_CUSTOMER_PAGE_4K_INPUT"
+  requirement_id: "SRS-VI-CUSTOMER-PAGE-001"
+  date: "2026-05-19"
+  verdict: "Pass"
+  validation_commands:
+    - command: "cmake --build build -j4"
+      result: "Passed"
+    - command: "timeout -s INT -k 5s 8s ./scripts/run_alldemo.sh --only VI"
+      result: "Passed By Runtime Probe"
+    - command: "git diff --check"
+      result: "Passed"
+  observed_runtime:
+    - "MEDIA_VI_SetAttr ok: /dev/video-camera0 3840x2160@30fps。"
+    - "实际 bind 链路为 VI_0.output -> RESIZE_RGA_61.input0 -> RESIZE_RGA_61.output0 -> VMIX_80.input0 -> VMIX_80.output0 -> OSD_81.input -> OSD_81.output0 -> VO_0.input0。"
+    - "日志显示 VI input=3840x2160 display=1080x608。"
+    - "日志显示 resize_frames 跟随 VI 帧计数增长到 211。"
+    - "buffer 流转已按下游 RESIZE_RGA 帧计数确认，不只是 VI 单模块启动成功。"
+    - "自动 VO 抓帧问题已解决，不再作为当前 VI 4K 验收风险。"
+    - "退出时 VI、RESIZE_RGA、VMIX、OSD、VO 和 pool 清理完成。"
+  acceptance_limits:
+    - "产品最终接受仍由现场复看确认；软件验收以链路 buffer 流转、帧计数和退出清理为准。"

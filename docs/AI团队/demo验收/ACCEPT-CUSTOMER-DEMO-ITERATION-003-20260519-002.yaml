@@ -23,5 +23,5 @@ checks:
     evidence: no residual process after targeted runs
 residual_risks:
   - 本次验证覆盖 CAP_DEHAZE 公共上下布局和 RETINEX 绑定页回归；完整默认轮播仍需产品现场复看。
-  - 4K 输入策略仍未切换；当前实时 VI 输入仍是 640x640，后续需要按能力展示页面单独验证 4K 或 1080P。
+  - 4K 输入策略已覆盖默认轮播实时摄像头页；VI、VPSS、VMIX、OSD、RGA、RESIZE_RGA、CSC_CL、CLAHE、RETINEX、CAP_DEHAZE、CONV_CL、TRANSFORM 已用短运行验证下游 buffer 流转。
   - 页面风格和位置统一仍由 DEFECT-CUSTOMER-DEMO-20260519-005 单独跟踪。

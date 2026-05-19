@@ -1,0 +1,26 @@
+implementation_summary:
+  requirement_id: "SRS-VI-CUSTOMER-PAGE-001"
+  case_name: "VI_CUSTOMER_PAGE_4K_INPUT"
+  date: "2026-05-19"
+  status: "Implemented"
+  implementation_scope:
+    - "VI 单页输入分辨率改为 3840x2160。"
+    - "后续显示保持原页面布局：VI 4K 输入先经 RESIZE_RGA 缩放到 1080x608，再进入 VMIX -> OSD -> VO。"
+    - "默认只影响 --only VI 的大输入路径，其它页面仍使用原摄像头输入尺寸和链路。"
+    - "VI 相机 pool 保持 V4L2 buf_cnt 之外的 spare buffer，避免 bound pipeline 因 pool_count 等于 buf_cnt 而饥饿。"
+  changed_files:
+    - "src/alldemo.c"
+    - "docs/AI团队/demo需求/PRODUCT-VI-CUSTOMER-PAGE.yaml"
+    - "docs/AI团队/demo需求/SRS-VI-CUSTOMER-PAGE-001.yaml"
+    - "docs/AI团队/demo实现/IMPL-VI-CUSTOMER-PAGE-20260519-003.yaml"
+    - "docs/AI团队/demo验收/ACCEPT-VI-CUSTOMER-PAGE-20260519-003.yaml"
+    - "docs/AI团队/srs_status.yaml"
+  data_flow: "VI_0.output -> RESIZE_RGA_61.input0; RESIZE_RGA_61.output0 -> VMIX_80.input0; VMIX_80.output0 -> OSD_81.input; OSD_81.output0 -> VO_0.input0"
+  verified:
+    - "cmake --build build -j4 编译通过。"
+    - "timeout -s INT -k 5s 8s ./scripts/run_alldemo.sh --only VI 日志确认 VI 以 3840x2160@30fps 启动。"
+    - "日志确认 display=1080x608，resize_frames 随 VI 帧计数增长到 211。"
+    - "INT 退出时 VI、RESIZE_RGA、VMIX、OSD、VO 和 pool 清理完成。"
+  not_verified:
+    - "自动 VO 抓帧仍可能拿不到 output frame，不能把抓帧作为本次 4K 页面验收前置条件。"
+    - "屏幕视觉效果仍需用户现场复看。"

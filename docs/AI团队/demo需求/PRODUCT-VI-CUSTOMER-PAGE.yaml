@@ -1,12 +1,12 @@
 product_brief:
   case_name: "VI_CUSTOMER_PAGE"
   target_user: "到现场观看 AllDemo 的客户和售前演示人员"
-  demo_goal: "把 VI 页作为客户默认轮播中的独立输入能力页讲清楚：VI 单页恢复原稳定输入分辨率 640x640，真实摄像头输入通过 bind 链路稳定上屏，不是离线图片或 CPU 拷贝预览。"
+  demo_goal: "把 VI 页作为客户默认轮播中的独立输入能力页讲清楚：VI 单页使用 3840x2160 实时摄像头输入，后续显示链路保持缩放上屏，不是离线图片或 CPU 拷贝预览。"
   first_screen_message: "客户看到实时摄像头画面、VI 到显示链路说明、实时指标，并能用抓帧复看输入页效果。"
   must_show:
     - "VI 保持在默认客户演示页表中。"
     - "VI 单页使用实时摄像头输入，不使用静态占位图。"
-    - "屏幕显示真实数据流：VI 640x640 -> VMIX -> OSD -> VO。"
+    - "屏幕显示真实数据流：VI 3840x2160 -> RESIZE_RGA 1080x608 -> VMIX -> OSD -> VO。"
     - "屏幕显示 FPS、CPU/GPU/RGA 状态。"
     - "运行后保存 VI 页面 VO 抓帧，供产品复看。"
   should_show:
@@ -19,8 +19,8 @@ product_brief:
   input_source_preference: "live_camera"
   visual_layout: "竖屏单模块页；主画面为实时 VI 输入，下方为数据流、端口命中和运行指标。"
   overlay_text:
-    data_flow: "数据流：VI 640x640 -> VMIX -> OSD -> VO"
-    rationale: "VI 页证明摄像头输入已经进入统一显示链路；大分辨率输入另行验证。"
+    data_flow: "数据流：VI 3840x2160 -> RESIZE_RGA 1080x608 -> VMIX -> OSD -> VO"
+    rationale: "VI 页证明 4K 摄像头输入已经进入统一显示链路；后续显示尺寸保持原页面布局。"
     runtime_metrics: "FPS/frame time/CPU/GPU/RGA"
   acceptance_feel:
     - "客户不用看源码也能理解当前画面来自实时摄像头。"

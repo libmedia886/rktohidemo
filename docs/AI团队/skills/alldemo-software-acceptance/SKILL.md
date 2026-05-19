@@ -39,6 +39,7 @@ description: Software acceptance workflow for /userdata/alldemo showcase changes
 - 画面一致性：标题、主画面、流程图、说明区和指标区是否符合统一模板。
 - 输入分辨率：实时算法页是否优先使用 4K；未达到 4K 时是否在流程图标注 1080P 或实际分辨率。
 - 链路显示：屏幕数据流是否和实际模块链路一致，是否足够清晰。
+- Buffer 流转：不能只看模块创建、bind 成功或最终截图；必须检查输入到下游模块的 buffer 是否实际流转，例如 VI/VPSS/RGA/RESIZE_RGA/VMIX/OSD/VO 等相关模块帧计数、输出队列或日志计数是否沿链路增长。若 buffer 没有流转，模块没有可处理数据，不能判定页面通过。
 - 对比布局：实时双路对比是否统一为上下布局。
 - 指标显示：FPS、帧耗时、CPU/GPU/RGA 状态是否存在；不可读时是否合理显示 `N/A`。
 - 退出：`Ctrl+C` 或 timeout 后是否干净退出，无残留进程。
@@ -59,6 +60,8 @@ cmake --build build -j
 ```
 
 运行单页时建议设置短时间窗口并检查残留进程。命令失败时保留错误摘要，不要只写“失败”。
+
+对于 bind 链路页面，运行日志里应记录关键模块的帧计数或等价 buffer 流转证据。例如 `VI input=3840x2160 display=1080x608 vi_frames=... resize_frames=...` 中，`resize_frames` 跟随 `vi_frames` 增长才证明 VI buffer 已经送到 RESIZE_RGA 并被下游处理；如果只有 VI 计数增长而下游计数为 0，应按链路阻塞或 buffer 未流转处理。
 
 ## 6. 缺陷记录
 

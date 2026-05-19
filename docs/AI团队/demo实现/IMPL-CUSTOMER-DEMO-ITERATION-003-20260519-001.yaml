@@ -21,8 +21,8 @@ changes:
   - defect: DEFECT-CUSTOMER-DEMO-20260519-006
     summary: 已先补齐四个目标页的数据流和分辨率说明。
 implementation_notes:
-  - 当前实时摄像头链路仍使用 640x640 稳定预览；需要体现 4K 能力的页面应单独升级和验证输入分辨率。
-  - CSC_CL 的 960x960 是显示放大，不等同于 4K 输入能力验证。
+  - VI 和默认轮播实时摄像头页已升级为 3840x2160 输入，后级按页面能力缩放到原处理/显示尺寸。
+  - CSC_CL 的 960x960 是显示放大；本轮 4K 输入能力通过 VI 3840x2160 -> RESIZE_RGA 640x640 -> CSC_CL buffer 流转验证。
   - 实时双路对比统一上下布局仍作为独立遗留项跟踪。
 files_changed:
   - src/alldemo.c

@@ -101,9 +101,10 @@
 #define CAM_W 640
 #define CAM_H 640
 #define CAM_STRIDE 640
-#define VI_BIG_W 1920
-#define VI_BIG_H 1080
-#define VI_BIG_STRIDE 1920
+#define VI_BIG_W 3840
+#define VI_BIG_H 2160
+#define VI_BIG_STRIDE 3840
+#define VI_BIG_FRAME_SIZE (VI_BIG_STRIDE * VI_BIG_H * 3 / 2)
 #define VI_BIG_VIEW_W SCREEN_W
 #define VI_BIG_VIEW_H 608
 #define VI_BIG_VIEW_STRIDE ALIGN_UP(VI_BIG_VIEW_W, 64)
@@ -489,6 +490,9 @@ static const int g_transform_quad_grps[VPSS_DEMO_OUTPUTS] = {
     LIVE_TRANSFORM_QUAD_BASE_GRP + 1,
     LIVE_TRANSFORM_QUAD_BASE_GRP + 2,
 };
+static int g_camera_input_w = CAM_W;
+static int g_camera_input_h = CAM_H;
+static int g_camera_input_stride = CAM_STRIDE;
 static const transform_effect_t g_transform_effects[VPSS_DEMO_OUTPUTS] = {
     {"RAW", "原图直通"},
     {"UNDISTORT", "镜头畸变矫正"},
@@ -498,6 +502,7 @@ static const transform_effect_t g_transform_effects[VPSS_DEMO_OUTPUTS] = {
 
 static void set_tile_status(const char *name, int status);
 static int find_tile_index(const char *name);
+static size_t live_camera_input_frame_size(void);
 static void update_perf_status(void);
 static void format_runtime_status(char *buf, size_t len);
 static const char *showcase_nav_mode(void);
@@ -5084,19 +5089,23 @@ static int default_page_index(const char *name) {
 static void fill_live_rga_attr(MEDIA_RGA_GRP_ATTR *attr, const rga_demo_op_t *op) {
     memset(attr, 0, sizeof(*attr));
     attr->algo = op->algo;
+    if (op->algo == MEDIA_RGA_ALG_COPY &&
+        (g_camera_input_w != CAM_W || g_camera_input_h != CAM_H)) {
+        attr->algo = MEDIA_RGA_ALG_RESIZE;
+    }
     attr->input_count = 1;
     attr->output_count = 1;
     attr->input_depth = 4;
     attr->output_depth = 4;
     attr->inputs[0].port_id = 0;
-    attr->inputs[0].width = CAM_W;
-    attr->inputs[0].height = CAM_H;
-    attr->inputs[0].stride = CAM_STRIDE;
+    attr->inputs[0].width = g_camera_input_w;
+    attr->inputs[0].height = g_camera_input_h;
+    attr->inputs[0].stride = g_camera_input_stride;
     attr->inputs[0].format = MEDIA_FORMAT_NV12;
-    attr->inputs[0].crop_x = op->crop_x;
-    attr->inputs[0].crop_y = op->crop_y;
-    attr->inputs[0].crop_w = op->crop_w;
-    attr->inputs[0].crop_h = op->crop_h;
+    attr->inputs[0].crop_x = (op->crop_x * g_camera_input_w) / CAM_W;
+    attr->inputs[0].crop_y = (op->crop_y * g_camera_input_h) / CAM_H;
+    attr->inputs[0].crop_w = (op->crop_w * g_camera_input_w) / CAM_W;
+    attr->inputs[0].crop_h = (op->crop_h * g_camera_input_h) / CAM_H;
     attr->outputs[0].port_id = 0;
     attr->outputs[0].width = CAM_W;
     attr->outputs[0].height = CAM_H;
@@ -5141,10 +5150,12 @@ static int set_live_rga_op(int op_index, int frame) {
     if (op_index < 0 || op_index >= (int)ARRAY_SIZE(g_rga_demo_ops)) return -1;
     fill_live_rga_attr(&attr, &g_rga_demo_ops[op_index]);
     if (op_index == 1) {
-        int crop = 320 + (rga_wave_i(frame * 3, 160) & ~1);
-        int max_xy = CAM_W - crop;
-        attr.inputs[0].crop_x = rga_wave_i(frame * 5, max_xy) & ~1;
-        attr.inputs[0].crop_y = rga_wave_i(frame * 4, max_xy) & ~1;
+        int max_square = g_camera_input_w < g_camera_input_h ? g_camera_input_w : g_camera_input_h;
+        int crop = max_square / 2 + (rga_wave_i(frame * 3, max_square / 4) & ~1);
+        int max_x = g_camera_input_w - crop;
+        int max_y = g_camera_input_h - crop;
+        attr.inputs[0].crop_x = rga_wave_i(frame * 5, max_x) & ~1;
+        attr.inputs[0].crop_y = rga_wave_i(frame * 4, max_y) & ~1;
         attr.inputs[0].crop_w = crop;
         attr.inputs[0].crop_h = crop;
     }
@@ -6104,6 +6115,79 @@ static int bind_vi_live_osd_vmix_osd_vo(void) {
     return 0;
 }
 
+static int bind_vi_resize_live_osd_vmix_osd_vo(void) {
+    const char *out_ports[] = {"output0", "output"};
+    const char *vi_out_ports[] = {"output", "output0"};
+    const char *in_ports[] = {"input", "input0"};
+    const char *resize_in_ports[] = {"input0", "input"};
+    const char *vmix_in_ports[] = {"input0", "input"};
+    g_bind_vi_src_port = NULL;
+    g_bind_resize_in_port = NULL;
+    g_bind_resize_src_port = NULL;
+    g_bind_live_osd_in_port = NULL;
+    g_bind_live_osd_src_port = NULL;
+    g_bind_vmix_in_port = NULL;
+    g_bind_vmix_src_port = NULL;
+    g_bind_osd_in_port = NULL;
+    g_bind_osd_src_port = NULL;
+    g_bind_vo_in_port = NULL;
+
+    if (bind_first_match("VI", 0, vi_out_ports, (int)ARRAY_SIZE(vi_out_ports),
+                         "RESIZE_RGA", LIVE_RESIZE_GRP,
+                         resize_in_ports, (int)ARRAY_SIZE(resize_in_ports),
+                         &g_bind_vi_src_port, &g_bind_resize_in_port) != 0) {
+        fprintf(stderr, "bind failed: VI -> pre-resize\n");
+        return -1;
+    }
+    if (bind_first_match("RESIZE_RGA", LIVE_RESIZE_GRP,
+                         out_ports, (int)ARRAY_SIZE(out_ports),
+                         "OSD", LIVE_OSD_GRP, in_ports, (int)ARRAY_SIZE(in_ports),
+                         &g_bind_resize_src_port, &g_bind_live_osd_in_port) != 0) {
+        fprintf(stderr, "bind failed: pre-resize -> live OSD\n");
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "RESIZE_RGA", LIVE_RESIZE_GRP, g_bind_resize_in_port);
+        return -1;
+    }
+    if (bind_first_match("OSD", LIVE_OSD_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
+                         "VMIX", DISPLAY_VMIX_GRP,
+                         vmix_in_ports, (int)ARRAY_SIZE(vmix_in_ports),
+                         &g_bind_live_osd_src_port, &g_bind_vmix_in_port) != 0) {
+        fprintf(stderr, "bind failed: live OSD -> VMIX\n");
+        MEDIA_SYS_UnBind("RESIZE_RGA", LIVE_RESIZE_GRP, g_bind_resize_src_port,
+                         "OSD", LIVE_OSD_GRP, g_bind_live_osd_in_port);
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "RESIZE_RGA", LIVE_RESIZE_GRP, g_bind_resize_in_port);
+        return -1;
+    }
+    if (bind_first_match("VMIX", DISPLAY_VMIX_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
+                         "OSD", DISPLAY_OSD_GRP, in_ports, (int)ARRAY_SIZE(in_ports),
+                         &g_bind_vmix_src_port, &g_bind_osd_in_port) != 0) {
+        fprintf(stderr, "bind failed: VMIX -> display OSD\n");
+        MEDIA_SYS_UnBind("OSD", LIVE_OSD_GRP, g_bind_live_osd_src_port,
+                         "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_in_port);
+        MEDIA_SYS_UnBind("RESIZE_RGA", LIVE_RESIZE_GRP, g_bind_resize_src_port,
+                         "OSD", LIVE_OSD_GRP, g_bind_live_osd_in_port);
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "RESIZE_RGA", LIVE_RESIZE_GRP, g_bind_resize_in_port);
+        return -1;
+    }
+    if (bind_first_match("OSD", DISPLAY_OSD_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
+                         "VO", 0, vmix_in_ports, (int)ARRAY_SIZE(vmix_in_ports),
+                         &g_bind_osd_src_port, &g_bind_vo_in_port) != 0) {
+        fprintf(stderr, "bind failed: display OSD -> VO\n");
+        MEDIA_SYS_UnBind("VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_src_port,
+                         "OSD", DISPLAY_OSD_GRP, g_bind_osd_in_port);
+        MEDIA_SYS_UnBind("OSD", LIVE_OSD_GRP, g_bind_live_osd_src_port,
+                         "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_in_port);
+        MEDIA_SYS_UnBind("RESIZE_RGA", LIVE_RESIZE_GRP, g_bind_resize_src_port,
+                         "OSD", LIVE_OSD_GRP, g_bind_live_osd_in_port);
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "RESIZE_RGA", LIVE_RESIZE_GRP, g_bind_resize_in_port);
+        return -1;
+    }
+    return 0;
+}
+
 static int bind_vi_clahe_vmix_osd_vo(void) {
     const char *mix = g_clahe_mix_module ? g_clahe_mix_module : "VMIX";
     const char *out_ports[] = {"output0", "output"};
@@ -6515,6 +6599,80 @@ static int bind_vi_csc_cl_chain_vmix_osd_vo(void) {
                          "OSD", DISPLAY_OSD_GRP, g_bind_osd_in_port);
         MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
                          "CSC_CL", LIVE_CSC_CL_GRP, g_bind_csc_cl_front_in_port);
+        return -1;
+    }
+    return 0;
+}
+
+static int bind_vi_resize_csc_cl_chain_vmix_osd_vo(void) {
+    const char *out_ports[] = {"output0", "output"};
+    const char *vi_out_ports[] = {"output", "output0"};
+    const char *resize_in_ports[] = {"input0", "input"};
+    const char *in_ports[] = {"input", "input0"};
+    const char *rga_in_ports[] = {"input0", "input"};
+    const char *vo_in_ports[] = {"input0", "input"};
+    g_bind_vi_src_port = NULL;
+    g_bind_resize_in_port = NULL;
+    g_bind_resize_src_port = NULL;
+    g_bind_csc_cl_front_in_port = NULL;
+    g_bind_csc_cl_front_src_port = NULL;
+    g_bind_csc_cl_rga_in_port = NULL;
+    g_bind_csc_cl_rga_src_port = NULL;
+    g_bind_osd_in_port = NULL;
+    g_bind_osd_src_port = NULL;
+    g_bind_vo_in_port = NULL;
+
+    if (bind_first_match("VI", 0, vi_out_ports, (int)ARRAY_SIZE(vi_out_ports),
+                         "RESIZE_RGA", LIVE_RESIZE_GRP,
+                         resize_in_ports, (int)ARRAY_SIZE(resize_in_ports),
+                         &g_bind_vi_src_port, &g_bind_resize_in_port) != 0) {
+        fprintf(stderr, "bind failed: VI -> pre-resize\n");
+        return -1;
+    }
+    if (bind_first_match("RESIZE_RGA", LIVE_RESIZE_GRP,
+                         out_ports, (int)ARRAY_SIZE(out_ports),
+                         "CSC_CL", LIVE_CSC_CL_GRP, in_ports, (int)ARRAY_SIZE(in_ports),
+                         &g_bind_resize_src_port, &g_bind_csc_cl_front_in_port) != 0) {
+        fprintf(stderr, "bind failed: pre-resize -> CSC_CL front\n");
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "RESIZE_RGA", LIVE_RESIZE_GRP, g_bind_resize_in_port);
+        return -1;
+    }
+    if (bind_first_match("CSC_CL", LIVE_CSC_CL_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
+                         "OSD", DISPLAY_OSD_GRP, in_ports, (int)ARRAY_SIZE(in_ports),
+                         &g_bind_csc_cl_front_src_port, &g_bind_osd_in_port) != 0) {
+        fprintf(stderr, "bind failed: CSC_CL -> OSD\n");
+        MEDIA_SYS_UnBind("RESIZE_RGA", LIVE_RESIZE_GRP, g_bind_resize_src_port,
+                         "CSC_CL", LIVE_CSC_CL_GRP, g_bind_csc_cl_front_in_port);
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "RESIZE_RGA", LIVE_RESIZE_GRP, g_bind_resize_in_port);
+        return -1;
+    }
+    if (bind_first_match("OSD", DISPLAY_OSD_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
+                         "RGA", LIVE_CSC_CL_RGA_GRP,
+                         rga_in_ports, (int)ARRAY_SIZE(rga_in_ports),
+                         &g_bind_osd_src_port, &g_bind_csc_cl_rga_in_port) != 0) {
+        fprintf(stderr, "bind failed: OSD -> CSC_CL RGA scale\n");
+        MEDIA_SYS_UnBind("CSC_CL", LIVE_CSC_CL_GRP, g_bind_csc_cl_front_src_port,
+                         "OSD", DISPLAY_OSD_GRP, g_bind_osd_in_port);
+        MEDIA_SYS_UnBind("RESIZE_RGA", LIVE_RESIZE_GRP, g_bind_resize_src_port,
+                         "CSC_CL", LIVE_CSC_CL_GRP, g_bind_csc_cl_front_in_port);
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "RESIZE_RGA", LIVE_RESIZE_GRP, g_bind_resize_in_port);
+        return -1;
+    }
+    if (bind_first_match("RGA", LIVE_CSC_CL_RGA_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
+                         "VO", 0, vo_in_ports, (int)ARRAY_SIZE(vo_in_ports),
+                         &g_bind_csc_cl_rga_src_port, &g_bind_vo_in_port) != 0) {
+        fprintf(stderr, "bind failed: CSC_CL RGA scale -> VO\n");
+        MEDIA_SYS_UnBind("OSD", DISPLAY_OSD_GRP, g_bind_osd_src_port,
+                         "RGA", LIVE_CSC_CL_RGA_GRP, g_bind_csc_cl_rga_in_port);
+        MEDIA_SYS_UnBind("CSC_CL", LIVE_CSC_CL_GRP, g_bind_csc_cl_front_src_port,
+                         "OSD", DISPLAY_OSD_GRP, g_bind_osd_in_port);
+        MEDIA_SYS_UnBind("RESIZE_RGA", LIVE_RESIZE_GRP, g_bind_resize_src_port,
+                         "CSC_CL", LIVE_CSC_CL_GRP, g_bind_csc_cl_front_in_port);
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "RESIZE_RGA", LIVE_RESIZE_GRP, g_bind_resize_in_port);
         return -1;
     }
     return 0;
@@ -7017,9 +7175,16 @@ static void unbind_vi_csc_cl_chain_vmix_osd_vo(int enabled) {
         MEDIA_SYS_UnBind("CSC_CL", LIVE_CSC_CL_GRP, g_bind_csc_cl_front_src_port,
                          "OSD", DISPLAY_OSD_GRP, g_bind_osd_in_port);
     }
-    if (g_bind_vi_src_port && g_bind_csc_cl_front_in_port) {
+    if (g_bind_resize_src_port && g_bind_csc_cl_front_in_port) {
+        MEDIA_SYS_UnBind("RESIZE_RGA", LIVE_RESIZE_GRP, g_bind_resize_src_port,
+                         "CSC_CL", LIVE_CSC_CL_GRP, g_bind_csc_cl_front_in_port);
+    } else if (g_bind_vi_src_port && g_bind_csc_cl_front_in_port) {
         MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
                          "CSC_CL", LIVE_CSC_CL_GRP, g_bind_csc_cl_front_in_port);
+    }
+    if (g_bind_vi_src_port && g_bind_resize_in_port) {
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "RESIZE_RGA", LIVE_RESIZE_GRP, g_bind_resize_in_port);
     }
 }
 
@@ -7073,9 +7238,16 @@ static void unbind_vi_live_osd_vmix_osd_vo(int enabled) {
         MEDIA_SYS_UnBind("OSD", LIVE_OSD_GRP, g_bind_live_osd_src_port,
                          "VMIX", DISPLAY_VMIX_GRP, g_bind_vmix_in_port);
     }
-    if (g_bind_vi_src_port && g_bind_live_osd_in_port) {
+    if (g_bind_resize_src_port && g_bind_live_osd_in_port) {
+        MEDIA_SYS_UnBind("RESIZE_RGA", LIVE_RESIZE_GRP, g_bind_resize_src_port,
+                         "OSD", LIVE_OSD_GRP, g_bind_live_osd_in_port);
+    } else if (g_bind_vi_src_port && g_bind_live_osd_in_port) {
         MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
                          "OSD", LIVE_OSD_GRP, g_bind_live_osd_in_port);
+    }
+    if (g_bind_vi_src_port && g_bind_resize_in_port) {
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "RESIZE_RGA", LIVE_RESIZE_GRP, g_bind_resize_in_port);
     }
 }
 
@@ -7719,13 +7891,21 @@ static int process_live_osd(const uint8_t *src, uint8_t *dst) {
 
 static void fill_resize_attr(MEDIA_RESIZE_RGA_ATTR *attr, resize_demo_params_t p, int output_pool, int input_depth) {
     memset(attr, 0, sizeof(*attr));
-    attr->src_x = p.crop_x;
-    attr->src_y = p.crop_y;
-    attr->src_width = p.crop_w;
-    attr->src_height = p.crop_h;
-    attr->input_width = CAM_W;
-    attr->input_height = CAM_H;
-    attr->input_stride = CAM_STRIDE;
+    int src_x = ((p.crop_x * g_camera_input_w) / CAM_W) & ~1;
+    int src_y = ((p.crop_y * g_camera_input_h) / CAM_H) & ~1;
+    int src_w = ((p.crop_w * g_camera_input_w) / CAM_W) & ~1;
+    int src_h = ((p.crop_h * g_camera_input_h) / CAM_H) & ~1;
+    if (src_w < 2) src_w = 2;
+    if (src_h < 2) src_h = 2;
+    if (src_x + src_w > g_camera_input_w) src_w = (g_camera_input_w - src_x) & ~1;
+    if (src_y + src_h > g_camera_input_h) src_h = (g_camera_input_h - src_y) & ~1;
+    attr->src_x = src_x;
+    attr->src_y = src_y;
+    attr->src_width = src_w;
+    attr->src_height = src_h;
+    attr->input_width = g_camera_input_w;
+    attr->input_height = g_camera_input_h;
+    attr->input_stride = g_camera_input_stride;
     attr->input_format = MEDIA_FORMAT_NV12;
     attr->input_depth = input_depth;
     attr->out_width = CAM_W;
@@ -7736,7 +7916,7 @@ static void fill_resize_attr(MEDIA_RESIZE_RGA_ATTR *attr, resize_demo_params_t p
 }
 
 static int setup_live_resize(void) {
-    if (MEDIA_POOL_Create(RESIZE_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
+    if (MEDIA_POOL_Create(RESIZE_INPUT_POOL, live_camera_input_frame_size(), 3) != 0) return -1;
     if (MEDIA_POOL_Create(RESIZE_OUTPUT_POOL, CAM_FRAME_SIZE, 3) != 0) {
         MEDIA_POOL_Destroy(RESIZE_INPUT_POOL);
         return -1;
@@ -7771,6 +7951,39 @@ static int setup_live_resize_bind_with_params(resize_demo_params_t p) {
     }
     set_tile_status("RESIZE_RGA", TILE_LIVE);
     return 0;
+}
+
+static int setup_live_camera_to_cam_resize_bind(void) {
+    if (MEDIA_POOL_Create(WORK_POOL_OUT, CAM_FRAME_SIZE, 4) != 0) return -1;
+
+    resize_demo_params_t full = {
+        .crop_x = 0,
+        .crop_y = 0,
+        .crop_w = CAM_W,
+        .crop_h = CAM_H,
+    };
+    MEDIA_RESIZE_RGA_ATTR attr = {0};
+    fill_resize_attr(&attr, full, WORK_POOL_OUT, 4);
+
+    if (MEDIA_RESIZE_RGA_CreateGrp(LIVE_RESIZE_GRP, &attr) != 0 ||
+        MEDIA_RESIZE_RGA_Start(LIVE_RESIZE_GRP) != 0 ||
+        MEDIA_RESIZE_RGA_Enable(LIVE_RESIZE_GRP) != 0) {
+        MEDIA_RESIZE_RGA_Disable(LIVE_RESIZE_GRP);
+        MEDIA_RESIZE_RGA_Stop(LIVE_RESIZE_GRP);
+        MEDIA_RESIZE_RGA_DestroyGrp(LIVE_RESIZE_GRP);
+        MEDIA_POOL_Destroy(WORK_POOL_OUT);
+        return -1;
+    }
+    set_tile_status("RESIZE_RGA", TILE_LIVE);
+    return 0;
+}
+
+static void cleanup_live_camera_to_cam_resize_bind(int enabled) {
+    if (!enabled) return;
+    MEDIA_RESIZE_RGA_Disable(LIVE_RESIZE_GRP);
+    MEDIA_RESIZE_RGA_Stop(LIVE_RESIZE_GRP);
+    MEDIA_RESIZE_RGA_DestroyGrp(LIVE_RESIZE_GRP);
+    MEDIA_POOL_Destroy(WORK_POOL_OUT);
 }
 
 static int setup_live_resize_bind(void) {
@@ -7886,6 +8099,38 @@ static int pingpong_i(int t, int max_value) {
     return v <= max_value ? v : period - v;
 }
 
+static size_t live_camera_input_frame_size(void) {
+    return (size_t)g_camera_input_stride * g_camera_input_h * 3 / 2;
+}
+
+static void scale_nv12_to_cam_frame(const uint8_t *src, int src_w, int src_h, int src_stride,
+                                    uint8_t *dst) {
+    uint8_t *dst_uv = dst + CAM_STRIDE * CAM_H;
+    const uint8_t *src_uv = src + (size_t)src_stride * src_h;
+
+    for (int y = 0; y < CAM_H; ++y) {
+        int sy = ((int64_t)y * src_h) / CAM_H;
+        const uint8_t *srow = src + (size_t)sy * src_stride;
+        uint8_t *drow = dst + (size_t)y * CAM_STRIDE;
+        for (int x = 0; x < CAM_W; ++x) {
+            int sx = ((int64_t)x * src_w) / CAM_W;
+            drow[x] = srow[sx];
+        }
+    }
+
+    for (int y = 0; y < CAM_H / 2; ++y) {
+        int sy = ((int64_t)y * (src_h / 2)) / (CAM_H / 2);
+        const uint8_t *srow = src_uv + (size_t)sy * src_stride;
+        uint8_t *drow = dst_uv + (size_t)y * CAM_STRIDE;
+        for (int x = 0; x < CAM_W; x += 2) {
+            int sx = ((int64_t)x * src_w) / CAM_W;
+            sx &= ~1;
+            drow[x] = srow[sx];
+            drow[x + 1] = srow[sx + 1];
+        }
+    }
+}
+
 static void fill_vpss_demo_output_attr(MEDIA_VPSS_OUT_ATTR *out, int output_id,
                                        int crop_x, int crop_y, int crop_w, int crop_h,
                                        int flip_h, int flip_v) {
@@ -7911,13 +8156,21 @@ static void fill_vpss_demo_output_attr(MEDIA_VPSS_OUT_ATTR *out, int output_id,
 }
 
 static void fill_vpss_initial_output_attr(MEDIA_VPSS_OUT_ATTR *out, int output_id) {
-    fill_vpss_demo_output_attr(out, output_id, 0, 0, CAM_W, CAM_H, 0, 0);
+    fill_vpss_demo_output_attr(out, output_id, 0, 0,
+                               g_camera_input_w, g_camera_input_h, 0, 0);
     if (output_id == 1) {
-        fill_vpss_demo_output_attr(out, output_id, 160, 160, 320, 320, 0, 0);
+        fill_vpss_demo_output_attr(out, output_id,
+                                   g_camera_input_w / 4, g_camera_input_h / 4,
+                                   g_camera_input_w / 2, g_camera_input_h / 2,
+                                   0, 0);
     } else if (output_id == 2) {
-        fill_vpss_demo_output_attr(out, output_id, 0, 0, CAM_W, CAM_H, 1, 0);
+        fill_vpss_demo_output_attr(out, output_id, 0, 0,
+                                   g_camera_input_w, g_camera_input_h, 1, 0);
     } else if (output_id == 3) {
-        fill_vpss_demo_output_attr(out, output_id, 80, 80, 480, 480, 0, 0);
+        fill_vpss_demo_output_attr(out, output_id,
+                                   g_camera_input_w / 8, g_camera_input_h / 8,
+                                   g_camera_input_w * 3 / 4, g_camera_input_h * 3 / 4,
+                                   0, 0);
     }
 }
 
@@ -7925,22 +8178,24 @@ static int update_vpss_dynamic_attrs(int frame) {
     MEDIA_VPSS_OUT_ATTR out = {0};
     int ret = 0;
 
-    int crop_size = 320;
-    int crop_range = CAM_W - crop_size;
+    int max_square = g_camera_input_w < g_camera_input_h ? g_camera_input_w : g_camera_input_h;
+    int crop_size = max_square / 2;
+    int crop_range = g_camera_input_w - crop_size;
     int crop_x = pingpong_i(frame * 4, crop_range) & ~1;
-    int crop_y = pingpong_i(frame * 3, crop_range) & ~1;
+    int crop_y = pingpong_i(frame * 3, g_camera_input_h - crop_size) & ~1;
     fill_vpss_demo_output_attr(&out, 1, crop_x, crop_y, crop_size, crop_size, 0, 0);
     if (MEDIA_VPSS_SetOutAttr(LIVE_VPSS_GRP, &out) != 0) ret = -1;
 
     int flip_h = ((frame / (FPS * 2)) & 1) != 0;
     int flip_v = ((frame / (FPS * 4)) & 1) != 0;
-    fill_vpss_demo_output_attr(&out, 2, 0, 0, CAM_W, CAM_H, flip_h, flip_v);
+    fill_vpss_demo_output_attr(&out, 2, 0, 0,
+                               g_camera_input_w, g_camera_input_h, flip_h, flip_v);
     if (MEDIA_VPSS_SetOutAttr(LIVE_VPSS_GRP, &out) != 0) ret = -1;
 
-    crop_size = 640 - (pingpong_i(frame * 2, 320) & ~1);
-    if (crop_size < 320) crop_size = 320;
-    crop_x = ((CAM_W - crop_size) / 2) & ~1;
-    crop_y = ((CAM_H - crop_size) / 2) & ~1;
+    crop_size = max_square - (pingpong_i(frame * 2, max_square / 2) & ~1);
+    if (crop_size < max_square / 2) crop_size = max_square / 2;
+    crop_x = ((g_camera_input_w - crop_size) / 2) & ~1;
+    crop_y = ((g_camera_input_h - crop_size) / 2) & ~1;
     fill_vpss_demo_output_attr(&out, 3, crop_x, crop_y, crop_size, crop_size, 0, 0);
     if (MEDIA_VPSS_SetOutAttr(LIVE_VPSS_GRP, &out) != 0) ret = -1;
 
@@ -7948,16 +8203,16 @@ static int update_vpss_dynamic_attrs(int frame) {
 }
 
 static int setup_live_vpss(void) {
-    if (MEDIA_POOL_Create(VPSS_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
+    if (MEDIA_POOL_Create(VPSS_INPUT_POOL, live_camera_input_frame_size(), 3) != 0) return -1;
     if (MEDIA_POOL_Create(VPSS_OUTPUT_POOL, VPSS_TILE_NV12_SIZE, VPSS_DEMO_OUTPUTS * 4) != 0) {
         MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
         return -1;
     }
 
     MEDIA_VPSS_ATTR attr = {0};
-    attr.width = CAM_W;
-    attr.height = CAM_H;
-    attr.input_stride = CAM_STRIDE;
+    attr.width = g_camera_input_w;
+    attr.height = g_camera_input_h;
+    attr.input_stride = g_camera_input_stride;
     attr.input_depth = 3;
     attr.input_format = MEDIA_FORMAT_NV12;
     attr.output_count = VPSS_DEMO_OUTPUTS;
@@ -8502,7 +8757,7 @@ static int setup_live_transform_quad(void) {
      * The rotate/zoom LUT is updated while running; the other LUTs stay fixed.
      */
     if (alloc_transform_quad_luts() != 0) return -1;
-    if (MEDIA_POOL_Create(VPSS_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) goto fail_lut;
+    if (MEDIA_POOL_Create(VPSS_INPUT_POOL, live_camera_input_frame_size(), 3) != 0) goto fail_lut;
     if (MEDIA_POOL_Create(VPSS_OUTPUT_POOL, VPSS_TILE_NV12_SIZE, VPSS_DEMO_OUTPUTS * 4) != 0) {
         MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
         goto fail_lut;
@@ -8514,9 +8769,9 @@ static int setup_live_transform_quad(void) {
     }
 
     MEDIA_VPSS_ATTR vpss = {0};
-    vpss.width = CAM_W;
-    vpss.height = CAM_H;
-    vpss.input_stride = CAM_STRIDE;
+    vpss.width = g_camera_input_w;
+    vpss.height = g_camera_input_h;
+    vpss.input_stride = g_camera_input_stride;
     vpss.input_depth = 4;
     vpss.input_format = MEDIA_FORMAT_NV12;
     vpss.output_count = VPSS_DEMO_OUTPUTS;
@@ -8882,7 +9137,8 @@ static void fill_vpss_same_tile_initial_output_attr(MEDIA_VPSS_OUT_ATTR *out, in
      * so the only visual difference between quadrants comes from the target
      * module effect.
      */
-    fill_vpss_same_tile_output_attr(out, output_id, 0, 0, CAM_W, CAM_H, 0, 0);
+    fill_vpss_same_tile_output_attr(out, output_id, 0, 0,
+                                    g_camera_input_w, g_camera_input_h, 0, 0);
 }
 
 static void destroy_live_conv_cl_quad_pools(int conv_input_count,
@@ -8924,7 +9180,7 @@ static int setup_live_conv_cl_quad(void) {
     int conv_input_pools_created = 0;
     int conv_output_pools_created = 0;
 
-    if (MEDIA_POOL_Create(VPSS_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
+    if (MEDIA_POOL_Create(VPSS_INPUT_POOL, live_camera_input_frame_size(), 3) != 0) return -1;
     vpss_input_pool_created = 1;
     if (MEDIA_POOL_Create(VPSS_OUTPUT_POOL, VPSS_TILE_NV12_SIZE, VPSS_DEMO_OUTPUTS * 4) != 0) {
         destroy_live_conv_cl_quad_pools(conv_input_pools_created, conv_output_pools_created,
@@ -8950,9 +9206,9 @@ static int setup_live_conv_cl_quad(void) {
     }
 
     MEDIA_VPSS_ATTR vpss = {0};
-    vpss.width = CAM_W;
-    vpss.height = CAM_H;
-    vpss.input_stride = CAM_STRIDE;
+    vpss.width = g_camera_input_w;
+    vpss.height = g_camera_input_h;
+    vpss.input_stride = g_camera_input_stride;
     vpss.input_depth = 4;
     vpss.input_format = MEDIA_FORMAT_NV12;
     vpss.output_count = VPSS_DEMO_OUTPUTS;
@@ -9148,7 +9404,7 @@ static void cleanup_live_clahe(int enabled) {
 }
 
 static int setup_live_clahe_bind(void) {
-    if (MEDIA_POOL_Create(VPSS_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
+    if (MEDIA_POOL_Create(VPSS_INPUT_POOL, live_camera_input_frame_size(), 3) != 0) return -1;
     if (MEDIA_POOL_Create(VPSS_OUTPUT_POOL, CAM_FRAME_SIZE, 5) != 0) {
         MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
         return -1;
@@ -9160,9 +9416,9 @@ static int setup_live_clahe_bind(void) {
     }
 
     MEDIA_VPSS_ATTR vpss = {0};
-    vpss.width = CAM_W;
-    vpss.height = CAM_H;
-    vpss.input_stride = CAM_STRIDE;
+    vpss.width = g_camera_input_w;
+    vpss.height = g_camera_input_h;
+    vpss.input_stride = g_camera_input_stride;
     vpss.input_depth = 4;
     vpss.input_format = MEDIA_FORMAT_NV12;
     vpss.output_count = 2;
@@ -9174,8 +9430,8 @@ static int setup_live_clahe_bind(void) {
         vpss.outputs[i].pool_id = VPSS_OUTPUT_POOL;
         vpss.outputs[i].crop_x = 0;
         vpss.outputs[i].crop_y = 0;
-        vpss.outputs[i].crop_w = CAM_W;
-        vpss.outputs[i].crop_h = CAM_H;
+        vpss.outputs[i].crop_w = g_camera_input_w;
+        vpss.outputs[i].crop_h = g_camera_input_h;
         vpss.outputs[i].in_fps = -1;
         vpss.outputs[i].out_fps = -1;
         vpss.outputs[i].output_format = MEDIA_FORMAT_NV12;
@@ -9349,16 +9605,16 @@ static void cleanup_live_retinex(int enabled) {
 }
 
 static int setup_live_retinex_bind(void) {
-    if (MEDIA_POOL_Create(VPSS_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
+    if (MEDIA_POOL_Create(VPSS_INPUT_POOL, live_camera_input_frame_size(), 3) != 0) return -1;
     if (MEDIA_POOL_Create(VPSS_OUTPUT_POOL, CAM_FRAME_SIZE, 5) != 0) {
         MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
         return -1;
     }
 
     MEDIA_VPSS_ATTR vpss = {0};
-    vpss.width = CAM_W;
-    vpss.height = CAM_H;
-    vpss.input_stride = CAM_STRIDE;
+    vpss.width = g_camera_input_w;
+    vpss.height = g_camera_input_h;
+    vpss.input_stride = g_camera_input_stride;
     vpss.input_depth = 4;
     vpss.input_format = MEDIA_FORMAT_NV12;
     vpss.output_count = 2;
@@ -9370,8 +9626,8 @@ static int setup_live_retinex_bind(void) {
         vpss.outputs[i].pool_id = VPSS_OUTPUT_POOL;
         vpss.outputs[i].crop_x = 0;
         vpss.outputs[i].crop_y = 0;
-        vpss.outputs[i].crop_w = CAM_W;
-        vpss.outputs[i].crop_h = CAM_H;
+        vpss.outputs[i].crop_w = g_camera_input_w;
+        vpss.outputs[i].crop_h = g_camera_input_h;
         vpss.outputs[i].in_fps = -1;
         vpss.outputs[i].out_fps = -1;
         vpss.outputs[i].output_format = MEDIA_FORMAT_NV12;
@@ -9871,8 +10127,8 @@ static void fill_vpss_stereo_output_attr(MEDIA_VPSS_OUT_ATTR *out, int output_id
     out->pool_id = VPSS_OUTPUT_POOL;
     out->crop_x = 0;
     out->crop_y = 0;
-    out->crop_w = CAM_W;
-    out->crop_h = CAM_H;
+    out->crop_w = g_camera_input_w;
+    out->crop_h = g_camera_input_h;
     out->in_fps = -1;
     out->out_fps = -1;
     out->output_format = MEDIA_FORMAT_NV12;
@@ -9910,7 +10166,7 @@ static int setup_live_stereo_bind(void) {
      * There is no color tint stage.  The second branch is rotated by VPSS so
      * the two STEREO_3D inputs are visibly different before they are merged.
      */
-    if (MEDIA_POOL_Create(VPSS_INPUT_POOL, CAM_FRAME_SIZE, 3) != 0) return -1;
+    if (MEDIA_POOL_Create(VPSS_INPUT_POOL, live_camera_input_frame_size(), 3) != 0) return -1;
     if (MEDIA_POOL_Create(VPSS_OUTPUT_POOL, CAM_FRAME_SIZE, STEREO_INPUT_COUNT * 4) != 0) {
         MEDIA_POOL_Destroy(VPSS_INPUT_POOL);
         return -1;
@@ -9922,9 +10178,9 @@ static int setup_live_stereo_bind(void) {
     }
 
     MEDIA_VPSS_ATTR vpss = {0};
-    vpss.width = CAM_W;
-    vpss.height = CAM_H;
-    vpss.input_stride = CAM_STRIDE;
+    vpss.width = g_camera_input_w;
+    vpss.height = g_camera_input_h;
+    vpss.input_stride = g_camera_input_stride;
     vpss.input_depth = 4;
     vpss.input_format = MEDIA_FORMAT_NV12;
     vpss.output_count = STEREO_INPUT_COUNT;
@@ -10022,6 +10278,22 @@ static int tile_needs_camera(const char *name) {
            strcasecmp(name, "CLAHE") == 0 ||
            strcasecmp(name, "RETINEX") == 0 ||
            strcasecmp(name, "STEREO_3D") == 0;
+}
+
+static int tile_uses_4k_camera_input(const char *name) {
+    if (!name) return 0;
+    return strcasecmp(name, "VI") == 0 ||
+           strcasecmp(name, "VPSS") == 0 ||
+           strcasecmp(name, "VMIX") == 0 ||
+           strcasecmp(name, "OSD") == 0 ||
+           strcasecmp(name, "CSC_CL") == 0 ||
+           strcasecmp(name, "RGA") == 0 ||
+           strcasecmp(name, "RESIZE_RGA") == 0 ||
+           strcasecmp(name, "CLAHE") == 0 ||
+           strcasecmp(name, "RETINEX") == 0 ||
+           strcasecmp(name, "CAP_DEHAZE") == 0 ||
+           strcasecmp(name, "CONV_CL") == 0 ||
+           strcasecmp(name, "TRANSFORM") == 0;
 }
 
 static int load_loop_assets(void) {
@@ -10879,6 +11151,11 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    int use_4k_camera_input = !solid_test && only_tile && tile_uses_4k_camera_input(only_tile);
+    g_camera_input_w = use_4k_camera_input ? VI_BIG_W : CAM_W;
+    g_camera_input_h = use_4k_camera_input ? VI_BIG_H : CAM_H;
+    g_camera_input_stride = use_4k_camera_input ? VI_BIG_STRIDE : CAM_STRIDE;
+
     if (!only_tile && !solid_test && !heavy_probe) {
         return run_default_only_loop(argv[0], rotate_main, demo_loop);
     }
@@ -11106,7 +11383,7 @@ int main(int argc, char **argv) {
     int use_conv_cl_bind_display = 0;
     int use_transform_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "TRANSFORM") == 0;
     int use_stereo_bind_display = !solid_test && only_tile && strcasecmp(only_tile, "STEREO_3D") == 0;
-    int use_vi_big_display = 0;
+    int use_vi_big_display = use_vi_bind_display;
     int vi_bind_display_ok = 0;
     int vi_resize_bind_display_ok = 0;
     int wbc_bind_display_ok = 0;
@@ -11132,6 +11409,7 @@ int main(int argc, char **argv) {
     int live_transform_quad_ok = 0;
     int live_stereo_bind_ok = 0;
     int live_wbc_ok = 0;
+    int live_pre_resize_bind_ok = 0;
     int display_vmix_osd_ok = 0;
     int display_vmix_rga_osd_ok = 0;
     int display_vmix_inputs =
@@ -11152,6 +11430,10 @@ int main(int argc, char **argv) {
     } else if (!defer_vmix_osd_for_csc_cl && !defer_vmix_osd_for_clahe &&
                !defer_vmix_osd_for_retinex && !defer_vmix_osd_for_conv_cl) {
         use_vmix_osd_display = 0;
+    }
+    if (use_csc_cl_bind_display && use_4k_camera_input &&
+        setup_live_camera_to_cam_resize_bind() == 0) {
+        live_pre_resize_bind_ok = 1;
     }
     if (use_csc_cl_bind_display && setup_live_csc_cl_chain() == 0) {
         live_csc_cl_chain_ok = 1;
@@ -11214,6 +11496,10 @@ int main(int argc, char **argv) {
         setup_live_stereo_bind() == 0) {
         live_stereo_bind_ok = 1;
     }
+    if (use_osd_bind_display && use_4k_camera_input &&
+        setup_live_camera_to_cam_resize_bind() == 0) {
+        live_pre_resize_bind_ok = 1;
+    }
     if (use_osd_bind_display && display_vmix_osd_ok && setup_live_osd_bind() == 0) {
         live_osd_bind_ok = 1;
     }
@@ -11226,11 +11512,17 @@ int main(int argc, char **argv) {
 
     int camera_ok = 0;
     int need_camera = !solid_test && tile_needs_camera(only_tile);
-    int camera_w = use_vi_big_display ? VI_BIG_W : CAM_W;
-    int camera_h = use_vi_big_display ? VI_BIG_H : CAM_H;
-    int camera_stride = use_vi_big_display ? VI_BIG_STRIDE : CAM_STRIDE;
+    int camera_w = g_camera_input_w;
+    int camera_h = g_camera_input_h;
+    int camera_stride = g_camera_input_stride;
+    int camera_v4l2_buf_cnt = 4;
     size_t camera_frame_size = (size_t)camera_stride * camera_h * 3 / 2;
-    int camera_pool_count = use_vi_big_display ? 4 : 6;
+    /*
+     * VI queues buf_cnt buffers into V4L2.  The pool must keep spare buffers
+     * so a captured buffer can be handed downstream while VI re-queues a
+     * replacement; pool_count == buf_cnt makes bound pipelines starve.
+     */
+    int camera_pool_count = camera_v4l2_buf_cnt + 2;
     if (need_camera && MEDIA_POOL_Create(CAMERA_POOL, camera_frame_size, camera_pool_count) == 0) {
         MEDIA_VI_ATTR vi = {0};
         vi.device = CAMERA_DEVICE;
@@ -11238,7 +11530,7 @@ int main(int argc, char **argv) {
         vi.height = camera_h;
         vi.stride = camera_stride;
         vi.fps = FPS;
-        vi.buf_cnt = 4;
+        vi.buf_cnt = camera_v4l2_buf_cnt;
         vi.pool_id = CAMERA_POOL;
         vi.format = MEDIA_FORMAT_NV12;
         if (MEDIA_VI_SetAttr(0, &vi) == 0 && MEDIA_VI_Enable(0) == 0) {
@@ -11441,10 +11733,14 @@ int main(int argc, char **argv) {
     }
     if (use_osd_bind_display) {
         if (!camera_ok || !live_osd_bind_ok || !display_vmix_osd_ok ||
-            bind_vi_live_osd_vmix_osd_vo() != 0) {
+            (use_4k_camera_input && !live_pre_resize_bind_ok) ||
+            (use_4k_camera_input ?
+             bind_vi_resize_live_osd_vmix_osd_vo() :
+             bind_vi_live_osd_vmix_osd_vo()) != 0) {
             fprintf(stderr, "OSD bind display setup failed; CPU copy fallback is disabled for --only OSD\n");
             if (camera_ok) MEDIA_VI_Disable(0);
             cleanup_live_osd_bind(live_osd_bind_ok);
+            cleanup_live_camera_to_cam_resize_bind(live_pre_resize_bind_ok);
             cleanup_display_vmix_osd(display_vmix_osd_ok);
             MEDIA_VO_Stop(0, 0);
             MEDIA_VO_DestroyChn(0, 0);
@@ -11663,10 +11959,14 @@ int main(int argc, char **argv) {
     }
     if (use_csc_cl_bind_display) {
         if (!camera_ok || !live_csc_cl_chain_ok ||
-            bind_vi_csc_cl_chain_vmix_osd_vo() != 0) {
+            (use_4k_camera_input && !live_pre_resize_bind_ok) ||
+            (use_4k_camera_input ?
+             bind_vi_resize_csc_cl_chain_vmix_osd_vo() :
+             bind_vi_csc_cl_chain_vmix_osd_vo()) != 0) {
             fprintf(stderr, "CSC_CL bind display setup failed; CPU copy fallback is disabled for --only CSC_CL\n");
             if (camera_ok) MEDIA_VI_Disable(0);
             cleanup_live_csc_cl_chain(live_csc_cl_chain_ok);
+            cleanup_live_camera_to_cam_resize_bind(live_pre_resize_bind_ok);
             cleanup_display_vmix_osd(display_vmix_osd_ok);
             MEDIA_VO_Stop(0, 0);
             MEDIA_VO_DestroyChn(0, 0);
@@ -11932,9 +12232,16 @@ int main(int argc, char **argv) {
                 size_t size = 0;
                 if (MEDIA_POOL_BeginCpuAccess(cbuf, DMA_BUF_SYNC_READ) == 0) {
                     if (map_buffer(cbuf, &addr, &size, PROT_READ) == 0) {
-                        size_t need = CAM_STRIDE * CAM_H * 3 / 2;
+                        size_t need = camera_frame_size;
                         if (last_cam && size >= need) {
-                            memcpy(last_cam, addr, need);
+                            if (camera_w == CAM_W && camera_h == CAM_H &&
+                                camera_stride == CAM_STRIDE) {
+                                memcpy(last_cam, addr, CAM_FRAME_SIZE);
+                            } else {
+                                scale_nv12_to_cam_frame((const uint8_t *)addr,
+                                                        camera_w, camera_h,
+                                                        camera_stride, last_cam);
+                            }
                             cam_frames++;
                             g_health.camera_frames = cam_frames;
                             if (live_osd_ok && last_osd &&
@@ -12113,12 +12420,14 @@ int main(int argc, char **argv) {
                 if ((frame % FPS) == 0) {
                     char gpu_text[24];
                     char rga_text[24];
+                    int display_w = use_vi_big_display ? VI_BIG_VIEW_W : camera_w;
+                    int display_h = use_vi_big_display ? VI_BIG_VIEW_H : camera_h;
                     snprintf(gpu_text, sizeof(gpu_text), g_perf.gpu_available ? "%.0f%%" : "N/A",
                              g_perf.gpu_percent);
                     snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
                              g_perf.rga_percent);
                     printf("VI input=%dx%d display=%dx%d vi_frames=%llu resize_frames=%llu cpu=%.0f%% gpu=%s rga=%s\n",
-                           camera_w, camera_h, VI_BIG_VIEW_W, VI_BIG_VIEW_H,
+                           camera_w, camera_h, display_w, display_h,
                            (unsigned long long)vi_count,
                            (unsigned long long)resize_count,
                            g_perf.cpu_percent, gpu_text, rga_text);
@@ -12183,12 +12492,14 @@ int main(int argc, char **argv) {
             }
             if ((frame % 15) == 0) {
                 uint64_t vi_count = 0;
+                uint64_t vpss_count = 0;
                 uint64_t vmix_count = 0;
                 char perf[128];
                 update_perf_status();
                 if (MEDIA_SYS_GetModuleFrameCount("VI", 0, &vi_count) == 0) {
                     g_health.camera_frames = (int)vi_count;
                 }
+                (void)MEDIA_SYS_GetModuleFrameCount("VPSS", LIVE_VPSS_GRP, &vpss_count);
                 if (use_vmix_bind_display) {
                     (void)MEDIA_SYS_GetModuleFrameCount("VMIX", DISPLAY_VMIX_GRP, &vmix_count);
                     if (g_perf.gpu_available) {
@@ -12227,6 +12538,19 @@ int main(int argc, char **argv) {
                              crop_x, crop_y, zoom_crop, g_perf.cpu_percent);
                     (void)update_display_osd_text("VPSS TEST", perf);
                 }
+                if (!use_vmix_bind_display && (frame % FPS) == 0) {
+                    char gpu_text[24];
+                    char rga_text[24];
+                    snprintf(gpu_text, sizeof(gpu_text), g_perf.gpu_available ? "%.0f%%" : "N/A",
+                             g_perf.gpu_percent);
+                    snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
+                             g_perf.rga_percent);
+                    printf("VPSS vi_frames=%llu vpss_frames=%llu input=%dx%d outputs=4x%dx%d cpu=%.0f%% gpu=%s rga=%s\n",
+                           (unsigned long long)vi_count,
+                           (unsigned long long)vpss_count,
+                           camera_w, camera_h, VPSS_TILE_W, VPSS_TILE_H,
+                           g_perf.cpu_percent, gpu_text, rga_text);
+                }
             }
             maybe_capture_vo_channel_frame(only_tile, frame, dstride);
             frame++;
@@ -12239,12 +12563,16 @@ int main(int argc, char **argv) {
             }
             if ((frame % 15) == 0) {
                 uint64_t vi_count = 0;
+                uint64_t resize_count = 0;
                 uint64_t osd_count = 0;
                 uint64_t display_osd_count = 0;
                 char perf[160];
                 update_perf_status();
                 if (MEDIA_SYS_GetModuleFrameCount("VI", 0, &vi_count) == 0) {
                     g_health.camera_frames = (int)vi_count;
+                }
+                if (live_pre_resize_bind_ok) {
+                    (void)MEDIA_SYS_GetModuleFrameCount("RESIZE_RGA", LIVE_RESIZE_GRP, &resize_count);
                 }
                 (void)MEDIA_SYS_GetModuleFrameCount("OSD", LIVE_OSD_GRP, &osd_count);
                 (void)MEDIA_SYS_GetModuleFrameCount("OSD", DISPLAY_OSD_GRP, &display_osd_count);
@@ -12279,8 +12607,9 @@ int main(int argc, char **argv) {
                              g_perf.gpu_percent);
                     snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
                              g_perf.rga_percent);
-                    printf("OSD vi_frames=%llu osd_frames=%llu display_osd_frames=%llu cpu=%.0f%% gpu=%s rga=%s\n",
+                    printf("OSD vi_frames=%llu resize_frames=%llu osd_frames=%llu display_osd_frames=%llu cpu=%.0f%% gpu=%s rga=%s\n",
                            (unsigned long long)vi_count,
+                           (unsigned long long)resize_count,
                            (unsigned long long)osd_count,
                            (unsigned long long)display_osd_count,
                            g_perf.cpu_percent,
@@ -12556,6 +12885,7 @@ int main(int argc, char **argv) {
         if (csc_cl_bind_display_ok) {
             if ((frame % 15) == 0) {
                 uint64_t vi_count = 0;
+                uint64_t resize_count = 0;
                 uint64_t csc_front_count = 0;
                 uint64_t osd_count = 0;
                 MEDIA_CSC_CL_PERF perf0 = {0};
@@ -12565,6 +12895,9 @@ int main(int argc, char **argv) {
                 update_perf_status();
                 if (MEDIA_SYS_GetModuleFrameCount("VI", 0, &vi_count) == 0) {
                     g_health.camera_frames = (int)vi_count;
+                }
+                if (live_pre_resize_bind_ok) {
+                    (void)MEDIA_SYS_GetModuleFrameCount("RESIZE_RGA", LIVE_RESIZE_GRP, &resize_count);
                 }
                 (void)MEDIA_SYS_GetModuleFrameCount("CSC_CL", LIVE_CSC_CL_GRP, &csc_front_count);
                 (void)MEDIA_SYS_GetModuleFrameCount("OSD", DISPLAY_OSD_GRP, &osd_count);
@@ -12603,8 +12936,9 @@ int main(int argc, char **argv) {
                     } else {
                         snprintf(cl_text, sizeof(cl_text), "N/A");
                     }
-                    printf("CSC_CL vi_frames=%llu csc_frames=%llu osd_frames=%llu cpu=%.0f%% gpu=%s cl=%s\n",
+                    printf("CSC_CL vi_frames=%llu resize_frames=%llu csc_frames=%llu osd_frames=%llu cpu=%.0f%% gpu=%s cl=%s\n",
                            (unsigned long long)vi_count,
+                           (unsigned long long)resize_count,
                            (unsigned long long)csc_front_count,
                            (unsigned long long)osd_count,
                            g_perf.cpu_percent,
@@ -13077,6 +13411,7 @@ int main(int argc, char **argv) {
     cleanup_live_csc_cl_chain(live_csc_cl_chain_ok);
     cleanup_live_csc_rga_chain(live_csc_rga_chain_ok);
     cleanup_live_resize_bind(live_resize_bind_ok || live_vi_resize_bind_ok);
+    cleanup_live_camera_to_cam_resize_bind(live_pre_resize_bind_ok);
     cleanup_live_osd_bind(live_osd_bind_ok);
     cleanup_live_clahe_bind(live_clahe_bind_ok);
     cleanup_live_retinex_bind(live_retinex_bind_ok);
