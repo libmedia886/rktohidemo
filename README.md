@@ -31,7 +31,7 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --no-rotate-main
 ```
 
-默认客户演示分页策略：轮播用户容易看懂、画面效果明显、稳定上屏的页面：`VI`、`VPSS`、`VMIX`、`OSD`、`RGA`、`RESIZE_RGA`、`CSC_CL`、`CLAHE`、`RETINEX`、`CAP_DEHAZE`、`CONV_CL`、`TRANSFORM`、`THERMAL`、`EDOF_CL`、`MCF_FUSION_CL`、`PANO`。偏工程验证或调试意味更强的 `VO`、`WBC`、`CSC_RGA`、`STEREO_3D` 保留在工程演示或 `--only` 模式，避免客户现场误解为黑屏、冻结、格式细节或调试页。
+默认客户演示分页策略：轮播用户容易看懂、画面效果明显、稳定上屏的页面：`VI`、`VPSS`、`VMIX`、`OSD`、`RGA`、`RESIZE_RGA`、`CSC_CL`、`CLAHE`、`RETINEX`、`CAP_DEHAZE`、`CAP_DEHAZE_OFFLINE`、`CONV_CL`、`TRANSFORM`、`THERMAL`、`EDOF_CL`、`MCF_FUSION_CL`、`PANO`。偏工程验证或调试意味更强的 `VO`、`WBC`、`CSC_RGA`、`STEREO_3D` 保留在工程演示或 `--only` 模式，避免客户现场误解为黑屏、冻结、格式细节或调试页。
 
 如果要看完整工程页表：
 
@@ -61,6 +61,7 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --only CSC_CL
 /userdata/alldemo/scripts/run_alldemo.sh --only TRANSFORM
 /userdata/alldemo/scripts/run_alldemo.sh --only CAP_DEHAZE
+/userdata/alldemo/scripts/run_alldemo.sh --only CAP_DEHAZE_OFFLINE
 /userdata/alldemo/scripts/run_alldemo.sh --only DCP_FAST_DEHAZE
 /userdata/alldemo/scripts/run_alldemo.sh --only THERMAL
 /userdata/alldemo/scripts/run_alldemo.sh --only CONV_CL
@@ -84,8 +85,9 @@ cmake --build build -j
 `RESIZE_RGA` 单独模式使用 3840x2160 实时摄像头输入，走 `VI 3840x2160 -> RESIZE_RGA 1080x608 -> VMIX -> OSD -> VO` bind 链路，单个实时主画面宽度统一为 1080；页面动态移动裁剪框并改变 crop 尺寸，展示裁剪区域被硬件缩放放大的效果；屏幕显示 crop x/y/w/h、zoom 倍率、RESIZE_RGA 帧计数和 CPU/GPU/RGA 指标，并保存 `vo_captures/resize_rga_vo_*.bmp` 供复看。
 `CSC_RGA` 单独模式使用实时摄像头输入，走 `VI -> CSC_RGA(NV12->ARGB8888) -> CSC_RGA(ARGB8888->NV12) -> VMIX -> OSD -> VO` bind 链路，页面显示颜色格式转换流程、动态通道条和两级 CSC 帧计数。
 `CSC_CL` 单独模式使用 3840x2160 实时摄像头输入，走 `VI 3840x2160 -> CSC_CL(NV12->ARGB8888, 4K) -> RESIZE_RGA(1080x1920) -> OSD(ARGB8888) -> VO`；页面会明确标注 VI 输入、CSC_CL 模块 4K 输入、后置缩放和全屏显示尺寸，并显示 kernel/queue 耗时、CSC_CL/RESIZE_RGA/OSD 帧计数和 CPU/GPU/RGA 指标；运行时保存 `vo_captures/csc_cl_vo_*.bmp` 供复看。
-`CAP_DEHAZE` 单独模式使用 3840x2160 实时摄像头输入，走 `VI 3840x2160 -> CSC_RGA RGB888 4K -> CAP_DEHAZE 4K passthrough/增强 -> RESIZE_RGA 1080x608 -> VMIX -> OSD -> VO`；CAP_DEHAZE 每 1 秒在 passthrough 原图和正常去雾之间切换，屏幕显示中文数据流、guided radius、t0、beta 参数、CAP_DEHAZE/RESIZE 帧计数和 CPU/GPU/RGA 指标。
-`DCP_FAST_DEHAZE` 单独模式使用实时摄像头输入，走 `VI -> CSC_RGA RGB888 -> DCP_FAST_DEHAZE passthrough/增强 -> RESIZE_RGA 1080x608 -> VMIX -> OSD -> VO`，屏幕显示中文数据流、参数、为什么这样做和实测 FPS/CPU/GPU/RGA 指标。DCP_FAST_DEHAZE 尚未纳入本轮 4K 输入通过列表。
+`CAP_DEHAZE` 单独模式使用 1920x1080 有效实时摄像头输入，走 `VI 1920x1080有效画面 -> CSC_RGA BGR888 -> CAP_DEHAZE passthrough/增强 -> RESIZE_RGA 1080x608 -> VMIX -> OSD -> VO`；CAP_DEHAZE 每 1 秒在 passthrough 原图和正常去雾之间切换，屏幕显示中文数据流、guided radius、t0、beta、refine_scale=0.25、CAP_DEHAZE/RESIZE 帧计数和 CPU/GPU/RGA 指标。
+`CAP_DEHAZE_OFFLINE` 单独模式不占用摄像头，使用从 `/userdata/rktohi/demo/cap_dehaze/input` 同步来的 3 张低能见度样张轮播，逐张生成原图和 CAP_DEHAZE 输出两张图做上下等尺寸对比；该页紧跟默认客户循环中的实时 `CAP_DEHAZE` 页，使用相同 guided radius、t0、beta 和 `refine_scale=0.25`，用于实时画面效果不明显时让客户看清去雾差异，并保存 `vo_captures/cap_dehaze_offline_vo_*.bmp` 供复看。
+`DCP_FAST_DEHAZE` 单独模式使用实时摄像头输入，走 `VI -> CSC_RGA BGR888 -> DCP_FAST_DEHAZE passthrough/增强 -> RESIZE_RGA 1080x608 -> VMIX -> OSD -> VO`，屏幕显示中文数据流、参数、为什么这样做和实测 FPS/CPU/GPU/RGA 指标。DCP_FAST_DEHAZE 尚未纳入本轮 4K 输入通过列表。
 `THERMAL` 单独模式使用 `/userdata/rktohi/demo/thermal/1.png` 和 `2.png` 原始 demo 图，一屏展示 16 种热成像伪彩模式，同一张输入图按不同色表映射，便于直接比较 RAINBOW、BLACK HOT、WHITE HOT、IRON、SEPIA 等模式差异；源图每 3 秒自动切换。页面按当前源图缓存整页 NV12 结果，避免每帧重算 16 个伪彩格，日志输出帧数、样张索引、cache 状态和 CPU/GPU/RGA 占用率，并保存 `vo_captures/thermal_vo_*.bmp` 供复看。
 `CONV_CL` 单独模式使用 3840x2160 实时摄像头输入，页面侧先把 VI 的 NV12 帧下采样到处理尺寸并转换为 RGBA staging 后送入单个 CONV_CL 组，按顺序加载 SHARPEN、EDGE、EMBOSS、BLUR 四个 3x3 卷积核，再把四个真实 OpenCL 输出合成为 2x2 页面送 VO；屏幕显示中文数据流、四个卷积核帧计数、CPU/GPU/RGA 占用率和 OpenCL kernel/queue 耗时，并保存 `vo_captures/conv_cl_vo_*.bmp` 供复看。
 `VMIX` 单独模式使用 3840x2160 实时摄像头输入，走 `VI 3840x2160 -> VPSS(4路480x480同源输入) -> VMIX(input0..3) -> OSD -> VO` bind 链路；VMIX 页面把四路输入做位置叠放和 alpha 透明混合，屏幕上显示中文数据流、各路 alpha、VI/VMIX 帧计数和 CPU/GPU/RGA 指标，并保存 `vo_captures/vmix_vo_*.bmp` 供复看。

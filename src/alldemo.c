@@ -110,14 +110,21 @@
 #define VI_BIG_H 2160
 #define VI_BIG_STRIDE 3840
 #define VI_BIG_FRAME_SIZE (VI_BIG_STRIDE * VI_BIG_H * 3 / 2)
+#define VI_HD_W 1920
+#define VI_HD_H 1080
+#define VI_HD_BUF_H 1088
+#define VI_HD_STRIDE 1920
+#define VI_HD_FRAME_SIZE (VI_HD_STRIDE * VI_HD_BUF_H * 3 / 2)
 #define VI_BIG_VIEW_W SCREEN_W
 #define VI_BIG_VIEW_H 608
 #define VI_BIG_VIEW_STRIDE ALIGN_UP(VI_BIG_VIEW_W, 64)
 #define VI_BIG_VIEW_FRAME_SIZE (VI_BIG_VIEW_STRIDE * VI_BIG_VIEW_H * 3 / 2)
 #define VI_BIG_VIEW_X 0
 #define VI_BIG_VIEW_Y 320
-#define DEHAZE_RGB4K_STRIDE ALIGN_UP(VI_BIG_W * 3, 64)
-#define DEHAZE_RGB4K_FRAME_SIZE (DEHAZE_RGB4K_STRIDE * VI_BIG_H)
+#define DEHAZE_PROC_W 960
+#define DEHAZE_PROC_H 540
+#define DEHAZE_PROC_STRIDE 960
+#define DEHAZE_PROC_NV12_FRAME_SIZE (DEHAZE_PROC_STRIDE * DEHAZE_PROC_H * 3 / 2)
 #define VPSS_TILE_W 480
 #define VPSS_TILE_H 480
 #define VPSS_TILE_NV12_STRIDE CAM_STRIDE
@@ -182,6 +189,7 @@
 #define RGA_OP_SECONDS 3
 #define EDOF_PAIR_SECONDS 3
 #define MCF_PAIR_SECONDS 3
+#define CAP_DEHAZE_OFFLINE_SECONDS 3
 #define RESIZE_DEMO_UPDATE_FRAMES (FPS * 2)
 #define VO_CAPTURE_SECONDS 5
 #define TILE_FIRST_INDEX 4
@@ -552,7 +560,8 @@ static module_tile_t g_tiles[] = {
     {"RESIZE_RGA", 0, 0, TILE_OFFLINE}, {"CSC_RGA", 0, 0, TILE_OFFLINE},
     {"CSC_CL", 0, 0, TILE_OFFLINE}, {"OSD", 0, 0, TILE_OFFLINE},
     {"CLAHE", 0, 0, TILE_OFFLINE}, {"RETINEX", 0, 0, TILE_OFFLINE},
-    {"CAP_DEHAZE", 0, 0, TILE_OFFLINE}, {"DCP_FAST_DEHAZE", 0, 0, TILE_OFFLINE},
+    {"CAP_DEHAZE", 0, 0, TILE_OFFLINE}, {"CAP_DEHAZE_OFFLINE", 0, 0, TILE_OFFLINE},
+    {"DCP_FAST_DEHAZE", 0, 0, TILE_OFFLINE},
     {"THERMAL", 0, 0, TILE_OFFLINE}, {"CONV_CL", 0, 0, TILE_OFFLINE},
     {"TRANSFORM", 0, 0, TILE_OFFLINE}, {"BLEND_PYR", 0, 0, TILE_OFFLINE},
     {"EDOF_CL", 0, 0, TILE_OFFLINE}, {"EXPOSURE_FUSION_CL", 0, 0, TILE_OFFLINE},
@@ -568,20 +577,20 @@ static module_tile_t g_tiles[] = {
 
 static const char *g_module_pages[] = {
     "VI", "VPSS", "VO", "WBC", "RGA", "RESIZE_RGA", "CSC_RGA", "CSC_CL", "OSD",
-    "CLAHE", "RETINEX", "CAP_DEHAZE", "DCP_FAST_DEHAZE", "THERMAL", "CONV_CL",
+    "CLAHE", "RETINEX", "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "DCP_FAST_DEHAZE", "THERMAL", "CONV_CL",
     "TRANSFORM", "VMIX", "EDOF_CL", "MCF_FUSION_CL", "DUALVIEW", "STEREO_3D", "PANO",
 };
 
 static const char *g_default_pages[] = {
     "VI", "VPSS", "VMIX", "OSD", "RGA", "RESIZE_RGA", "CSC_CL", "CLAHE", "RETINEX",
-    "CAP_DEHAZE", "CONV_CL", "TRANSFORM", "THERMAL", "EDOF_CL", "MCF_FUSION_CL",
+    "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "THERMAL", "EDOF_CL", "MCF_FUSION_CL",
     "PANO",
 };
 
 static const char *g_engineering_pages[] = {
     "VI", "VPSS", "VO", "WBC", "OSD", "RESIZE_RGA", "THERMAL", "EDOF_CL",
     "MCF_FUSION_CL", "RGA", "CSC_RGA", "CSC_CL", "CLAHE", "RETINEX",
-    "CAP_DEHAZE", "CONV_CL", "TRANSFORM", "VMIX", "STEREO_3D", "PANO",
+    "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "VMIX", "STEREO_3D", "PANO",
 };
 
 typedef struct {
@@ -633,6 +642,11 @@ static loop_asset_t g_loop_assets[] = {
         "assets/loop/vmix/vmix_1.png",
         "assets/loop/vmix/vmix_2.png",
     }, 2, {{0}}, 0},
+    {"CAP_DEHAZE_OFFLINE", "CAP DEHAZE OFFLINE", {
+        "assets/loop/cap_dehaze/0001_0.8_0.2.jpg",
+        "assets/loop/cap_dehaze/0002_0.8_0.08.jpg",
+        "assets/loop/cap_dehaze/0003_0.8_0.2.jpg",
+    }, 3, {{0}}, 0},
     {"AVM", "AVM INPUTS", {
         "assets/loop/avm_inputs/src_1.jpg",
         "assets/loop/avm_inputs/src_2.jpg",
@@ -1135,6 +1149,8 @@ static void maybe_capture_module_vo_frame(const char *only_tile, int frame,
         prefix = "retinex";
     } else if (strcasecmp(only_tile, "CAP_DEHAZE") == 0) {
         prefix = "cap_dehaze";
+    } else if (strcasecmp(only_tile, "CAP_DEHAZE_OFFLINE") == 0) {
+        prefix = "cap_dehaze_offline";
     } else if (strcasecmp(only_tile, "CONV_CL") == 0) {
         prefix = "conv_cl";
     } else {
@@ -1171,8 +1187,9 @@ static void maybe_capture_vo_channel_frame(const char *only_tile, int frame, int
     int is_csc_cl = strcasecmp(only_tile, "CSC_CL") == 0;
     int is_clahe = strcasecmp(only_tile, "CLAHE") == 0;
     int is_cap_dehaze = strcasecmp(only_tile, "CAP_DEHAZE") == 0;
+    int is_cap_dehaze_offline = strcasecmp(only_tile, "CAP_DEHAZE_OFFLINE") == 0;
     int is_dcp_dehaze = strcasecmp(only_tile, "DCP_FAST_DEHAZE") == 0;
-    if (!is_retinex && !is_conv_cl && !is_transform && !is_stereo && !is_vi && !is_vpss && !is_osd && !is_rga && !is_resize_rga && !is_csc_cl && !is_clahe && !is_cap_dehaze && !is_dcp_dehaze) return;
+    if (!is_retinex && !is_conv_cl && !is_transform && !is_stereo && !is_vi && !is_vpss && !is_osd && !is_rga && !is_resize_rga && !is_csc_cl && !is_clahe && !is_cap_dehaze && !is_cap_dehaze_offline && !is_dcp_dehaze) return;
     if (frame <= 0) return;
     if ((frame % (FPS * VO_CAPTURE_SECONDS)) != 0) return;
 
@@ -1211,6 +1228,9 @@ static void maybe_capture_vo_channel_frame(const char *only_tile, int frame, int
     } else if (is_cap_dehaze) {
         label = "CAP_DEHAZE";
         prefix = "cap_dehaze";
+    } else if (is_cap_dehaze_offline) {
+        label = "CAP_DEHAZE_OFFLINE";
+        prefix = "cap_dehaze_offline";
     } else if (is_dcp_dehaze) {
         label = "DCP_FAST_DEHAZE";
         prefix = "dcp_fast_dehaze";
@@ -2404,6 +2424,33 @@ static void image_to_nv12_frame(const image_asset_t *img, uint8_t *dst) {
     }
 }
 
+static void image_to_rgb_frame(const image_asset_t *img, uint8_t *dst) {
+    if (!img || !img->rgb || !dst || img->width <= 0 || img->height <= 0) return;
+    memset(dst, 0, RGB_FRAME_SIZE);
+
+    int out_w = CAM_W;
+    int out_h = (int)((int64_t)img->height * CAM_W / img->width);
+    if (out_h > CAM_H) {
+        out_h = CAM_H;
+        out_w = (int)((int64_t)img->width * CAM_H / img->height);
+    }
+    int ox = (CAM_W - out_w) / 2;
+    int oy = (CAM_H - out_h) / 2;
+
+    for (int y = 0; y < out_h; ++y) {
+        int sy = y * img->height / out_h;
+        uint8_t *drow = dst + ((size_t)(oy + y) * CAM_W + ox) * 3;
+        for (int x = 0; x < out_w; ++x) {
+            int sx = x * img->width / out_w;
+            const uint8_t *src = img->rgb + ((size_t)sy * img->width + sx) * 3;
+            uint8_t *dpx = drow + x * 3;
+            dpx[0] = src[0];
+            dpx[1] = src[1];
+            dpx[2] = src[2];
+        }
+    }
+}
+
 static void image_to_nv12_packed(const image_asset_t *img, uint8_t *dst) {
     if (!img || !img->rgb || !dst || img->width <= 0 || img->height <= 0) return;
     int w = img->width;
@@ -2453,6 +2500,95 @@ static void fill_dualview_demo_rgb(uint8_t *dst, int input0) {
             px[0] = input0 ? 255 : 0;
             px[1] = 0;
             px[2] = input0 ? 0 : 255;
+        }
+    }
+}
+
+static void fill_cap_dehaze_offline_rgb(uint8_t *dst) {
+    if (!dst) return;
+    for (int y = 0; y < CAM_H; ++y) {
+        float fy = (float)y / (float)(CAM_H - 1);
+        uint8_t *row = dst + (size_t)y * CAM_W * 3;
+        for (int x = 0; x < CAM_W; ++x) {
+            float fx = (float)x / (float)(CAM_W - 1);
+            int sky = y < 230;
+            int r = sky ? (82 + (int)(42.0f * fy)) : 46;
+            int g = sky ? (104 + (int)(36.0f * fy)) : 58;
+            int b = sky ? (122 + (int)(34.0f * fy)) : 54;
+
+            if (y > 290) {
+                int road = y - 290;
+                r = 38 + road / 13;
+                g = 43 + road / 15;
+                b = 42 + road / 18;
+                int lane = abs(x - (CAM_W / 2 + (y - 320) / 5));
+                if (lane < 4 && ((y / 28) & 1)) {
+                    r = 170; g = 166; b = 118;
+                }
+            }
+            if (x > 42 && x < 185 && y > 210 && y < 420) {
+                r = 42; g = 56; b = 58;
+                if (y < 250) { r = 52; g = 68; b = 74; }
+                if ((x % 34) < 4 || (y % 42) < 4) { r = 100; g = 118; b = 126; }
+            }
+            if (x > 430 && x < 596 && y > 190 && y < 430) {
+                r = 48; g = 62; b = 64;
+                if (y < 235) { r = 62; g = 78; b = 84; }
+                if ((x % 38) < 5 || (y % 46) < 4) { r = 108; g = 126; b = 132; }
+            }
+            if (x > 210 && x < 290 && y > 260 && y < 362) {
+                r = 66; g = 76; b = 72;
+                if (y < 286) { r = 150; g = 116; b = 62; }
+                if (x > 226 && x < 274 && y > 306 && y < 350) { r = 30; g = 36; b = 36; }
+            }
+
+            int haze = 98 + (int)(72.0f * (1.0f - fy));
+            r = (r * 42 + haze * 58) / 100;
+            g = (g * 42 + haze * 58) / 100;
+            b = (b * 42 + haze * 58) / 100;
+            row[x * 3 + 0] = clamp_u8(r);
+            row[x * 3 + 1] = clamp_u8(g);
+            row[x * 3 + 2] = clamp_u8(b);
+        }
+    }
+}
+
+static void rgb_to_nv12_frame(const uint8_t *rgb, uint8_t *dst) {
+    if (!rgb || !dst) return;
+    uint8_t *yp = dst;
+    uint8_t *uv = dst + CAM_STRIDE * CAM_H;
+
+    for (int y = 0; y < CAM_H; ++y) {
+        uint8_t *drow = yp + (size_t)y * CAM_STRIDE;
+        const uint8_t *srow = rgb + (size_t)y * CAM_W * 3;
+        for (int x = 0; x < CAM_W; ++x) {
+            uint8_t yy, u, v;
+            const uint8_t *px = srow + x * 3;
+            rgb_to_yuv(px[0], px[1], px[2], &yy, &u, &v);
+            (void)u;
+            (void)v;
+            drow[x] = yy;
+        }
+    }
+
+    for (int y = 0; y < CAM_H; y += 2) {
+        uint8_t *drow = uv + (size_t)(y / 2) * CAM_STRIDE;
+        for (int x = 0; x < CAM_W; x += 2) {
+            int r = 0, g = 0, b = 0;
+            for (int dy = 0; dy < 2; ++dy) {
+                const uint8_t *srow = rgb + (size_t)(y + dy) * CAM_W * 3;
+                for (int dx = 0; dx < 2; ++dx) {
+                    const uint8_t *px = srow + (x + dx) * 3;
+                    r += px[0];
+                    g += px[1];
+                    b += px[2];
+                }
+            }
+            uint8_t yy, u, v;
+            rgb_to_yuv((uint8_t)(r / 4), (uint8_t)(g / 4), (uint8_t)(b / 4), &yy, &u, &v);
+            (void)yy;
+            drow[x] = u;
+            drow[x + 1] = v;
         }
     }
 }
@@ -3430,10 +3566,21 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
         draw_dehaze_showcase(dst, stride, x + 12, y + 12, w - 24, h - 24,
                              cam, cap_live,
                              "CAP_DEHAZE：实时去雾前后对比",
-                             "数据流：VI 640x640 NV12 -> RGB -> CAP_DEHAZE -> 上下对比显示。",
+                             "数据流：VI 1920x1080 NV12 -> BGR888 -> CAP_DEHAZE -> 上下对比显示。",
                              "为什么这样做：快速估计雾气透射率和空气光，突出低能见度场景细节。",
-                             "PARAM guided_r=24 t0=0.12 beta=0.121/0.960/-0.780",
+                             "PARAM guided_r=24 t0=0.12 refine_scale=0.25 beta=0.121/0.960/-0.780",
                              "BOTTOM: CAP_DEHAZE OUTPUT");
+        return;
+    }
+
+    if (strcmp(g_tiles[idx].name, "CAP_DEHAZE_OFFLINE") == 0 && (cam || cap_live)) {
+        draw_dehaze_showcase(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                             cam, cap_live,
+                             "CAP_DEHAZE：离线图片效果对比",
+                             "数据流：静态低能见度图片 -> CAP_DEHAZE -> 原图/去雾图对比。",
+                             "为什么这样做：实时画面效果不明显时，用固定样张展示可见去雾差异。",
+                             "PARAM guided_r=24 t0=0.12 refine_scale=0.25 beta=0.121/0.960/-0.780",
+                             "BOTTOM: CAP_DEHAZE OFFLINE OUTPUT");
         return;
     }
 
@@ -5060,7 +5207,7 @@ static int setup_display_vmix_osd(int dstride, size_t display_size, int input_co
         input_pool_count = 6;
     } else if (layout_mode == DISPLAY_VMIX_LAYOUT_VI_BIG) {
         input_pool_size = VI_BIG_VIEW_FRAME_SIZE;
-        input_pool_count = 4;
+        input_pool_count = 6;
     }
     if (MEDIA_POOL_Create(DISPLAY_VMIX_INPUT_POOL, input_pool_size, input_pool_count) != 0) return -1;
     if (MEDIA_POOL_Create(DISPLAY_VMIX_OUTPUT_POOL, display_size, 4) != 0) goto fail_input;
@@ -5072,7 +5219,7 @@ static int setup_display_vmix_osd(int dstride, size_t display_size, int input_co
     vmix.output_height = SCREEN_H;
     vmix.output_stride = dstride;
     vmix.format = MEDIA_FORMAT_NV12;
-    vmix.input_depth = 3;
+    vmix.input_depth = layout_mode == DISPLAY_VMIX_LAYOUT_VI_BIG ? 6 : 3;
     vmix.output_pool_id = DISPLAY_VMIX_OUTPUT_POOL;
     vmix.primary_index = -1;
     if (layout_mode == DISPLAY_VMIX_LAYOUT_WBC && input_count == 2) {
@@ -5161,7 +5308,7 @@ static int setup_display_vmix_osd(int dstride, size_t display_size, int input_co
     osd.input_width = SCREEN_W;
     osd.input_height = SCREEN_H;
     osd.format = MEDIA_FORMAT_NV12;
-    osd.input_depth = 3;
+    osd.input_depth = layout_mode == DISPLAY_VMIX_LAYOUT_VI_BIG ? 6 : 3;
     osd.output_pool_id = DISPLAY_OSD_OUTPUT_POOL;
     osd.input_stride = dstride;
     osd.output_stride = dstride;
@@ -6690,6 +6837,7 @@ static int bind_vi_retinex_vmix_osd_vo(void) {
 static int bind_vi_dehaze_vmix_osd_vo(int use_dcp) {
     const char *dehaze_module = use_dcp ? "DCP_FAST_DEHAZE" : "CAP_DEHAZE";
     const int dehaze_grp = use_dcp ? LIVE_DCP_DEHAZE_GRP : LIVE_CAP_DEHAZE_GRP;
+    const int use_pre_resize = 0;
     const char *out_ports[] = {"output0", "output"};
     const char *vi_out_ports[] = {"output", "output0"};
     const char *in_ports[] = {"input0", "input"};
@@ -6697,6 +6845,8 @@ static int bind_vi_dehaze_vmix_osd_vo(int use_dcp) {
     g_bind_vi_src_port = NULL;
     g_bind_csc_front_in_port = NULL;
     g_bind_csc_front_src_port = NULL;
+    g_bind_compare_raw_resize_in_port = NULL;
+    g_bind_compare_raw_resize_src_port = NULL;
     g_bind_dehaze_in_port = NULL;
     g_bind_dehaze_src_port = NULL;
     g_bind_compare_effect_resize_in_port = NULL;
@@ -6707,18 +6857,42 @@ static int bind_vi_dehaze_vmix_osd_vo(int use_dcp) {
     g_bind_osd_src_port = NULL;
     g_bind_vo_in_port = NULL;
 
-    if (bind_first_match("VI", 0, vi_out_ports, (int)ARRAY_SIZE(vi_out_ports),
-                         "CSC_RGA", LIVE_CSC_RGA_GRP, in_ports, (int)ARRAY_SIZE(in_ports),
-                         &g_bind_vi_src_port, &g_bind_csc_front_in_port) != 0) {
-        fprintf(stderr, "bind failed: VI -> CSC_RGA(dehaze)\n");
-        return -1;
+    if (use_pre_resize) {
+        if (bind_first_match("VI", 0, vi_out_ports, (int)ARRAY_SIZE(vi_out_ports),
+                             "RESIZE_RGA", LIVE_COMPARE_RAW_RESIZE_GRP, in_ports, (int)ARRAY_SIZE(in_ports),
+                             &g_bind_vi_src_port, &g_bind_compare_raw_resize_in_port) != 0) {
+            fprintf(stderr, "bind failed: VI -> RESIZE_RGA(dehaze pre)\n");
+            return -1;
+        }
+        if (bind_first_match("RESIZE_RGA", LIVE_COMPARE_RAW_RESIZE_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
+                             "CSC_RGA", LIVE_CSC_RGA_GRP, in_ports, (int)ARRAY_SIZE(in_ports),
+                             &g_bind_compare_raw_resize_src_port, &g_bind_csc_front_in_port) != 0) {
+            fprintf(stderr, "bind failed: RESIZE_RGA(dehaze pre) -> CSC_RGA\n");
+            MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                             "RESIZE_RGA", LIVE_COMPARE_RAW_RESIZE_GRP, g_bind_compare_raw_resize_in_port);
+            return -1;
+        }
+    } else {
+        if (bind_first_match("VI", 0, vi_out_ports, (int)ARRAY_SIZE(vi_out_ports),
+                             "CSC_RGA", LIVE_CSC_RGA_GRP, in_ports, (int)ARRAY_SIZE(in_ports),
+                             &g_bind_vi_src_port, &g_bind_csc_front_in_port) != 0) {
+            fprintf(stderr, "bind failed: VI -> CSC_RGA(dehaze)\n");
+            return -1;
+        }
     }
     if (bind_first_match("CSC_RGA", LIVE_CSC_RGA_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
                          dehaze_module, dehaze_grp, in_ports, (int)ARRAY_SIZE(in_ports),
                          &g_bind_csc_front_src_port, &g_bind_dehaze_in_port) != 0) {
         fprintf(stderr, "bind failed: CSC_RGA -> %s\n", dehaze_module);
-        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
-                         "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+        if (use_pre_resize) {
+            MEDIA_SYS_UnBind("RESIZE_RGA", LIVE_COMPARE_RAW_RESIZE_GRP, g_bind_compare_raw_resize_src_port,
+                             "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+            MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                             "RESIZE_RGA", LIVE_COMPARE_RAW_RESIZE_GRP, g_bind_compare_raw_resize_in_port);
+        } else {
+            MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                             "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+        }
         return -1;
     }
     if (bind_first_match(dehaze_module, dehaze_grp, out_ports, (int)ARRAY_SIZE(out_ports),
@@ -6728,8 +6902,15 @@ static int bind_vi_dehaze_vmix_osd_vo(int use_dcp) {
         fprintf(stderr, "bind failed: %s -> RESIZE_RGA\n", dehaze_module);
         MEDIA_SYS_UnBind("CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_src_port,
                          dehaze_module, dehaze_grp, g_bind_dehaze_in_port);
-        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
-                         "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+        if (use_pre_resize) {
+            MEDIA_SYS_UnBind("RESIZE_RGA", LIVE_COMPARE_RAW_RESIZE_GRP, g_bind_compare_raw_resize_src_port,
+                             "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+            MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                             "RESIZE_RGA", LIVE_COMPARE_RAW_RESIZE_GRP, g_bind_compare_raw_resize_in_port);
+        } else {
+            MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                             "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+        }
         return -1;
     }
     if (bind_first_match("RESIZE_RGA", LIVE_COMPARE_EFFECT_RESIZE_GRP,
@@ -6742,8 +6923,15 @@ static int bind_vi_dehaze_vmix_osd_vo(int use_dcp) {
                          g_bind_compare_effect_resize_in_port);
         MEDIA_SYS_UnBind("CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_src_port,
                          dehaze_module, dehaze_grp, g_bind_dehaze_in_port);
-        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
-                         "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+        if (use_pre_resize) {
+            MEDIA_SYS_UnBind("RESIZE_RGA", LIVE_COMPARE_RAW_RESIZE_GRP, g_bind_compare_raw_resize_src_port,
+                             "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+            MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                             "RESIZE_RGA", LIVE_COMPARE_RAW_RESIZE_GRP, g_bind_compare_raw_resize_in_port);
+        } else {
+            MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                             "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+        }
         return -1;
     }
     if (bind_first_match("VMIX", DISPLAY_VMIX_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
@@ -6758,8 +6946,15 @@ static int bind_vi_dehaze_vmix_osd_vo(int use_dcp) {
                          g_bind_compare_effect_resize_in_port);
         MEDIA_SYS_UnBind("CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_src_port,
                          dehaze_module, dehaze_grp, g_bind_dehaze_in_port);
-        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
-                         "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+        if (use_pre_resize) {
+            MEDIA_SYS_UnBind("RESIZE_RGA", LIVE_COMPARE_RAW_RESIZE_GRP, g_bind_compare_raw_resize_src_port,
+                             "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+            MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                             "RESIZE_RGA", LIVE_COMPARE_RAW_RESIZE_GRP, g_bind_compare_raw_resize_in_port);
+        } else {
+            MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                             "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+        }
         return -1;
     }
     if (bind_first_match("OSD", DISPLAY_OSD_GRP, out_ports, (int)ARRAY_SIZE(out_ports),
@@ -6776,8 +6971,15 @@ static int bind_vi_dehaze_vmix_osd_vo(int use_dcp) {
                          g_bind_compare_effect_resize_in_port);
         MEDIA_SYS_UnBind("CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_src_port,
                          dehaze_module, dehaze_grp, g_bind_dehaze_in_port);
-        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
-                         "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+        if (use_pre_resize) {
+            MEDIA_SYS_UnBind("RESIZE_RGA", LIVE_COMPARE_RAW_RESIZE_GRP, g_bind_compare_raw_resize_src_port,
+                             "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+            MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                             "RESIZE_RGA", LIVE_COMPARE_RAW_RESIZE_GRP, g_bind_compare_raw_resize_in_port);
+        } else {
+            MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                             "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+        }
         return -1;
     }
     return 0;
@@ -7630,6 +7832,7 @@ static void unbind_vi_retinex_vmix_osd_vo(int enabled) {
 static void unbind_vi_dehaze_vmix_osd_vo(int enabled, int use_dcp) {
     const char *dehaze_module = use_dcp ? "DCP_FAST_DEHAZE" : "CAP_DEHAZE";
     const int dehaze_grp = use_dcp ? LIVE_DCP_DEHAZE_GRP : LIVE_CAP_DEHAZE_GRP;
+    const int use_pre_resize = 0;
     if (!enabled) return;
     if (g_bind_osd_src_port && g_bind_vo_in_port) {
         MEDIA_SYS_UnBind("OSD", DISPLAY_OSD_GRP, g_bind_osd_src_port,
@@ -7653,7 +7856,14 @@ static void unbind_vi_dehaze_vmix_osd_vo(int enabled, int use_dcp) {
         MEDIA_SYS_UnBind("CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_src_port,
                          dehaze_module, dehaze_grp, g_bind_dehaze_in_port);
     }
-    if (g_bind_vi_src_port && g_bind_csc_front_in_port) {
+    if (use_pre_resize && g_bind_compare_raw_resize_src_port && g_bind_csc_front_in_port) {
+        MEDIA_SYS_UnBind("RESIZE_RGA", LIVE_COMPARE_RAW_RESIZE_GRP, g_bind_compare_raw_resize_src_port,
+                         "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
+    }
+    if (use_pre_resize && g_bind_vi_src_port && g_bind_compare_raw_resize_in_port) {
+        MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
+                         "RESIZE_RGA", LIVE_COMPARE_RAW_RESIZE_GRP, g_bind_compare_raw_resize_in_port);
+    } else if (g_bind_vi_src_port && g_bind_csc_front_in_port) {
         MEDIA_SYS_UnBind("VI", 0, g_bind_vi_src_port,
                          "CSC_RGA", LIVE_CSC_RGA_GRP, g_bind_csc_front_in_port);
     }
@@ -9259,11 +9469,12 @@ static int setup_live_cap_dehaze(void) {
     attr.guided_eps = 1e-3f;
     attr.t0 = 0.12f;
     attr.beta0 = 0.121779f;
-    attr.beta1 = 0.959710f;
-    attr.beta2 = -0.780245f;
-    attr.depth_scale = 1.0f;
+        attr.beta1 = 0.959710f;
+        attr.beta2 = -0.780245f;
+        attr.depth_scale = 1.0f;
+        attr.refine_scale = 0.25f;
 
-    if (MEDIA_CAP_DEHAZE_CreateGrp(LIVE_CAP_DEHAZE_GRP, &attr) != 0 ||
+        if (MEDIA_CAP_DEHAZE_CreateGrp(LIVE_CAP_DEHAZE_GRP, &attr) != 0 ||
         MEDIA_CAP_DEHAZE_Start(LIVE_CAP_DEHAZE_GRP) != 0 ||
         MEDIA_CAP_DEHAZE_Enable(LIVE_CAP_DEHAZE_GRP) != 0) {
         MEDIA_CAP_DEHAZE_DestroyGrp(LIVE_CAP_DEHAZE_GRP);
@@ -9293,21 +9504,52 @@ static void cleanup_live_cap_dehaze(int enabled) {
 
 static int setup_live_cap_dehaze_bind_chain(int use_dcp) {
     const int dehaze_grp = use_dcp ? LIVE_DCP_DEHAZE_GRP : LIVE_CAP_DEHAZE_GRP;
-    if (MEDIA_POOL_Create(WORK_POOL_RGB, DEHAZE_RGB4K_FRAME_SIZE, 2) != 0) return -1;
-    if (MEDIA_POOL_Create(WORK_POOL_OUT, DEHAZE_RGB4K_FRAME_SIZE, 2) != 0) {
+    const int use_pre_resize = 0;
+    const int dehaze_w = use_pre_resize ? DEHAZE_PROC_W : g_camera_input_w;
+    const int dehaze_h = use_pre_resize ? DEHAZE_PROC_H : g_camera_input_h;
+    const int dehaze_nv12_stride = use_pre_resize ? DEHAZE_PROC_STRIDE : g_camera_input_stride;
+    const int dehaze_rgb_stride = ALIGN_UP(dehaze_w * 3, 64);
+    const size_t dehaze_rgb_frame_size = (size_t)dehaze_rgb_stride * (size_t)dehaze_h;
+    if (use_pre_resize && MEDIA_POOL_Create(WORK_POOL_NV12, DEHAZE_PROC_NV12_FRAME_SIZE, 4) != 0) return -1;
+    if (MEDIA_POOL_Create(WORK_POOL_RGB, dehaze_rgb_frame_size, 3) != 0) return -1;
+    if (MEDIA_POOL_Create(WORK_POOL_OUT, dehaze_rgb_frame_size, 3) != 0) {
         MEDIA_POOL_Destroy(WORK_POOL_RGB);
+        if (use_pre_resize) MEDIA_POOL_Destroy(WORK_POOL_NV12);
         return -1;
     }
 
+    if (use_pre_resize) {
+        MEDIA_RESIZE_RGA_ATTR pre = {0};
+        pre.src_x = 0;
+        pre.src_y = 0;
+        pre.src_width = VI_HD_W;
+        pre.src_height = 1080;
+        pre.input_width = g_camera_input_w;
+        pre.input_height = g_camera_input_h;
+        pre.input_stride = g_camera_input_stride;
+        pre.input_format = MEDIA_FORMAT_NV12;
+        pre.input_depth = 4;
+        pre.out_width = DEHAZE_PROC_W;
+        pre.out_height = DEHAZE_PROC_H;
+        pre.out_stride = DEHAZE_PROC_STRIDE;
+        pre.output_format = MEDIA_FORMAT_NV12;
+        pre.output_pool_id = WORK_POOL_NV12;
+        if (MEDIA_RESIZE_RGA_CreateGrp(LIVE_COMPARE_RAW_RESIZE_GRP, &pre) != 0 ||
+            MEDIA_RESIZE_RGA_Start(LIVE_COMPARE_RAW_RESIZE_GRP) != 0 ||
+            MEDIA_RESIZE_RGA_Enable(LIVE_COMPARE_RAW_RESIZE_GRP) != 0) {
+            goto fail_pre_resize;
+        }
+    }
+
     MEDIA_CSC_RGA_ATTR csc = {0};
-    csc.input_width = g_camera_input_w;
-    csc.input_height = g_camera_input_h;
+    csc.input_width = dehaze_w;
+    csc.input_height = dehaze_h;
     csc.input_format = MEDIA_FORMAT_NV12;
-    csc.output_format = MEDIA_FORMAT_RGB888;
-    csc.input_depth = 4;
+    csc.output_format = MEDIA_FORMAT_BGR888;
+    csc.input_depth = 2;
     csc.output_pool_id = WORK_POOL_RGB;
-    csc.input_stride = g_camera_input_stride;
-    csc.output_stride = DEHAZE_RGB4K_STRIDE;
+    csc.input_stride = dehaze_nv12_stride;
+    csc.output_stride = dehaze_rgb_stride;
     csc.csc_mode = 0;
 
     if (MEDIA_CSC_RGA_CreateGrp(LIVE_CSC_RGA_GRP, &csc) != 0 ||
@@ -9318,13 +9560,13 @@ static int setup_live_cap_dehaze_bind_chain(int use_dcp) {
 
     if (use_dcp) {
         MEDIA_DCP_FAST_DEHAZE_ATTR attr = {0};
-        attr.width = g_camera_input_w;
-        attr.height = g_camera_input_h;
-        attr.format = MEDIA_FORMAT_RGB888;
-        attr.input_depth = 1;
+        attr.width = dehaze_w;
+        attr.height = dehaze_h;
+        attr.format = MEDIA_FORMAT_BGR888;
+        attr.input_depth = 2;
         attr.output_pool_id = WORK_POOL_OUT;
-        attr.input_stride = DEHAZE_RGB4K_STRIDE;
-        attr.output_stride = DEHAZE_RGB4K_STRIDE;
+        attr.input_stride = dehaze_rgb_stride;
+        attr.output_stride = dehaze_rgb_stride;
         attr.patch = 15;
         attr.omega = 0.95f;
         attr.t0 = 0.12f;
@@ -9341,13 +9583,13 @@ static int setup_live_cap_dehaze_bind_chain(int use_dcp) {
         set_tile_status("DCP_FAST_DEHAZE", TILE_LIVE);
     } else {
         MEDIA_CAP_DEHAZE_ATTR attr = {0};
-        attr.width = g_camera_input_w;
-        attr.height = g_camera_input_h;
-        attr.format = MEDIA_FORMAT_RGB888;
-        attr.input_depth = 1;
+        attr.width = dehaze_w;
+        attr.height = dehaze_h;
+        attr.format = MEDIA_FORMAT_BGR888;
+        attr.input_depth = 2;
         attr.output_pool_id = WORK_POOL_OUT;
-        attr.input_stride = DEHAZE_RGB4K_STRIDE;
-        attr.output_stride = DEHAZE_RGB4K_STRIDE;
+        attr.input_stride = dehaze_rgb_stride;
+        attr.output_stride = dehaze_rgb_stride;
         attr.guided_radius = 24;
         attr.guided_eps = 1e-3f;
         attr.t0 = 0.12f;
@@ -9355,6 +9597,7 @@ static int setup_live_cap_dehaze_bind_chain(int use_dcp) {
         attr.beta1 = 0.959710f;
         attr.beta2 = -0.780245f;
         attr.depth_scale = 1.0f;
+        attr.refine_scale = 0.25f;
         attr.passthrough = 1;
         if (MEDIA_CAP_DEHAZE_CreateGrp(dehaze_grp, &attr) != 0 ||
             MEDIA_CAP_DEHAZE_Start(dehaze_grp) != 0 ||
@@ -9367,13 +9610,13 @@ static int setup_live_cap_dehaze_bind_chain(int use_dcp) {
     MEDIA_RESIZE_RGA_ATTR resize = {0};
     resize.src_x = 0;
     resize.src_y = 0;
-    resize.src_width = g_camera_input_w;
-    resize.src_height = g_camera_input_h;
-    resize.input_width = g_camera_input_w;
-    resize.input_height = g_camera_input_h;
-    resize.input_stride = DEHAZE_RGB4K_STRIDE;
-    resize.input_format = MEDIA_FORMAT_RGB888;
-    resize.input_depth = 4;
+    resize.src_width = dehaze_w;
+    resize.src_height = dehaze_h;
+    resize.input_width = dehaze_w;
+    resize.input_height = dehaze_h;
+    resize.input_stride = dehaze_rgb_stride;
+    resize.input_format = MEDIA_FORMAT_BGR888;
+    resize.input_depth = 6;
     resize.out_width = VI_BIG_VIEW_W;
     resize.out_height = VI_BIG_VIEW_H;
     resize.out_stride = VI_BIG_VIEW_STRIDE;
@@ -9406,13 +9649,21 @@ fail_dehaze:
     MEDIA_CSC_RGA_Stop(LIVE_CSC_RGA_GRP);
     MEDIA_CSC_RGA_DestroyGrp(LIVE_CSC_RGA_GRP);
 fail_csc:
+    if (use_pre_resize) {
+        MEDIA_RESIZE_RGA_Disable(LIVE_COMPARE_RAW_RESIZE_GRP);
+        MEDIA_RESIZE_RGA_Stop(LIVE_COMPARE_RAW_RESIZE_GRP);
+        MEDIA_RESIZE_RGA_DestroyGrp(LIVE_COMPARE_RAW_RESIZE_GRP);
+    }
+fail_pre_resize:
     MEDIA_POOL_Destroy(WORK_POOL_OUT);
     MEDIA_POOL_Destroy(WORK_POOL_RGB);
+    if (use_pre_resize) MEDIA_POOL_Destroy(WORK_POOL_NV12);
     return -1;
 }
 
 static void cleanup_live_cap_dehaze_bind_chain(int enabled, int use_dcp) {
     if (!enabled) return;
+    int use_pre_resize = 0;
     MEDIA_CSC_RGA_Disable(LIVE_CSC_RGA_GRP);
     MEDIA_CSC_RGA_Stop(LIVE_CSC_RGA_GRP);
     if (use_dcp) {
@@ -9445,6 +9696,11 @@ static void cleanup_live_cap_dehaze_bind_chain(int enabled, int use_dcp) {
         MEDIA_CSC_RGA_ReleaseFrame(LIVE_CSC_RGA_GRP, buf);
     }
     MEDIA_RESIZE_RGA_DestroyGrp(LIVE_COMPARE_EFFECT_RESIZE_GRP);
+    if (use_pre_resize) {
+        MEDIA_RESIZE_RGA_Disable(LIVE_COMPARE_RAW_RESIZE_GRP);
+        MEDIA_RESIZE_RGA_Stop(LIVE_COMPARE_RAW_RESIZE_GRP);
+        MEDIA_RESIZE_RGA_DestroyGrp(LIVE_COMPARE_RAW_RESIZE_GRP);
+    }
     if (use_dcp) {
         MEDIA_DCP_FAST_DEHAZE_DestroyGrp(LIVE_DCP_DEHAZE_GRP);
     } else {
@@ -9453,6 +9709,7 @@ static void cleanup_live_cap_dehaze_bind_chain(int enabled, int use_dcp) {
     MEDIA_CSC_RGA_DestroyGrp(LIVE_CSC_RGA_GRP);
     MEDIA_POOL_Destroy(WORK_POOL_OUT);
     MEDIA_POOL_Destroy(WORK_POOL_RGB);
+    if (use_pre_resize) MEDIA_POOL_Destroy(WORK_POOL_NV12);
 }
 
 static int process_live_cap_dehaze(const uint8_t *src, uint8_t *dst) {
@@ -10214,6 +10471,83 @@ static int update_retinex_compare_overlay(uint64_t vi_count, uint64_t retinex_co
     return 0;
 }
 
+static int update_dehaze_compare_overlay(int use_dcp,
+                                         uint64_t vi_count,
+                                         uint64_t csc_count,
+                                         uint64_t dehaze_count,
+                                         uint64_t resize_count,
+                                         int passthrough_mode,
+                                         int frame) {
+    static uint8_t masks[16][1024 * 96];
+    const int view_x = (SCREEN_W - VI_BIG_VIEW_W) / 2;
+    const int view_y = 228;
+    const char *module = use_dcp ? "DCP_FAST_DEHAZE" : "CAP_DEHAZE";
+    const char *short_name = use_dcp ? "DCP" : "CAP";
+    char count_line[150];
+    char param_line[150];
+    char bind_line[190];
+    char mode_line[120];
+
+    snprintf(count_line, sizeof(count_line),
+             "FRAMES  VI=%llu  CSC=%llu  %s=%llu  RESIZE=%llu",
+             (unsigned long long)vi_count,
+             (unsigned long long)csc_count,
+             short_name,
+             (unsigned long long)dehaze_count,
+             (unsigned long long)resize_count);
+    snprintf(param_line, sizeof(param_line),
+             use_dcp ? "PATCH 15  OMEGA 0.95  T0 0.12  GUIDED R24" :
+                       "GUIDED R24  T0 0.12  REFINE 0.25  BETA 0.12/0.96/-0.78");
+    snprintf(mode_line, sizeof(mode_line), "MODE %s  1s AUTO SWITCH",
+             passthrough_mode ? "PASSTHROUGH RAW" : "DEHAZE ENHANCE");
+    snprintf(bind_line, sizeof(bind_line),
+             "VI0.%s -> CSC_RGA%d.%s -> %s%d.%s -> RESIZE%d.%s -> VMIX%d.%s -> OSD%d -> VO0",
+             g_bind_vi_src_port ? g_bind_vi_src_port : "output",
+             LIVE_CSC_RGA_GRP,
+             g_bind_csc_front_src_port ? g_bind_csc_front_src_port : "output0",
+             module,
+             use_dcp ? LIVE_DCP_DEHAZE_GRP : LIVE_CAP_DEHAZE_GRP,
+             g_bind_dehaze_src_port ? g_bind_dehaze_src_port : "output0",
+             LIVE_COMPARE_EFFECT_RESIZE_GRP,
+             g_bind_compare_effect_resize_src_port ? g_bind_compare_effect_resize_src_port : "output0",
+             DISPLAY_VMIX_GRP,
+             g_bind_vmix_in_port ? g_bind_vmix_in_port : "input0",
+             DISPLAY_OSD_GRP);
+
+    if (update_osd_rect_region(18, view_x, view_y - 50, 460, 38, 5, 10, 18, 220) != 0) return -1;
+    if (update_osd_utf8_text_region(20, view_x + 16, view_y - 45, 24, 190, 230, 255,
+                                    passthrough_mode ? "当前：直通原始画面" : "当前：去雾增强输出",
+                                    masks[0], sizeof(masks[0]), 1024, 96) != 0) return -1;
+
+    if (update_osd_rect_region(22, 34, 1510, 1012, 286, 5, 10, 18, 226) != 0) return -1;
+    if (update_osd_utf8_text_region(23, 66, 1536, 34, 160, 255, 220,
+                                    use_dcp ?
+                                    "DCP_FAST_DEHAZE：实时输入，暗通道快速去雾，直通/增强交替显示" :
+                                    "CAP_DEHAZE：1920x1080输入，实时去雾，直通/增强交替显示",
+                                    masks[2], sizeof(masks[2]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(24, 68, 1588, 24, 190, 230, 255,
+                                    use_dcp ?
+                                    "数据流：VI输入，CSC_RGA转BGR888，去雾后RESIZE_RGA缩放为1080x608显示。" :
+                                    "数据流：VI 1920x1080有效画面，CSC_RGA转BGR888，CAP_DEHAZE去雾后显示为1080x608。",
+                                    masks[3], sizeof(masks[3]), 1024, 96) != 0) return -1;
+    if (update_osd_utf8_text_region(25, 68, 1630, 23, 255, 230, 120,
+                                    "为什么这样做：VI用高清输入，CAP_DEHAZE内部refine_scale=0.25细化透射率，兼顾细节和实时性。",
+                                    masks[4], sizeof(masks[4]), 1024, 96) != 0) return -1;
+
+    int pulse_w = 180 + ((frame * 9) % 260);
+    if (update_osd_rect_region(26, 68, 1676, pulse_w, 28, 120, 220, 255, 220) != 0) return -1;
+    if (update_osd_text_region(27, 548, 1666, 1, 170, 255, 220,
+                               param_line, masks[5], sizeof(masks[5])) != 0) return -1;
+    if (update_osd_text_region(28, 68, 1716, 1, 170, 255, 220,
+                               count_line, masks[6], sizeof(masks[6])) != 0) return -1;
+    if (update_osd_text_region(29, 68, 1746, 1, 170, 205, 235,
+                               mode_line, masks[7], sizeof(masks[7])) != 0) return -1;
+    if (update_osd_text_region(30, 68, 1772, 1, 170, 205, 235,
+                               bind_line, masks[8], sizeof(masks[8])) != 0) return -1;
+
+    return 0;
+}
+
 static int setup_live_edof(void) {
     if (MEDIA_POOL_Create(STEREO_INPUT0_POOL, CAM_FRAME_SIZE, 2) != 0) return -1;
     if (MEDIA_POOL_Create(STEREO_INPUT1_POOL, CAM_FRAME_SIZE, 2) != 0) goto fail;
@@ -10749,9 +11083,13 @@ static int tile_uses_4k_camera_input(const char *name) {
            strcasecmp(name, "RESIZE_RGA") == 0 ||
            strcasecmp(name, "CLAHE") == 0 ||
            strcasecmp(name, "RETINEX") == 0 ||
-           strcasecmp(name, "CAP_DEHAZE") == 0 ||
            strcasecmp(name, "CONV_CL") == 0 ||
            strcasecmp(name, "TRANSFORM") == 0;
+}
+
+static int tile_uses_1080p_camera_input(const char *name) {
+    if (!name) return 0;
+    return strcasecmp(name, "CAP_DEHAZE") == 0;
 }
 
 static int load_loop_assets(void) {
@@ -11350,8 +11688,9 @@ static const char *module_flow_note(const char *name) {
     if (strcasecmp(name, "CSC_CL") == 0) return "数据流：VI 3840x2160 -> CSC_CL 4K ARGB -> RESIZE_RGA 1080x1920 -> OSD -> VO。";
     if (strcasecmp(name, "CLAHE") == 0) return "数据流：VI 3840x2160 -> CLAHE增强 -> RESIZE_RGA缩放 -> 上下对比显示。";
     if (strcasecmp(name, "RETINEX") == 0) return "数据流：VI 3840x2160 -> RETINEX校正/直通 -> RESIZE_RGA缩放 -> 单路显示。";
-    if (strcasecmp(name, "CAP_DEHAZE") == 0) return "数据流：VI 640x640 -> RGB -> CAP_DEHAZE，下方输出去雾效果。";
-    if (strcasecmp(name, "DCP_FAST_DEHAZE") == 0) return "数据流：VI 640x640 -> RGB -> DCP_FAST_DEHAZE，下方输出去雾效果。";
+    if (strcasecmp(name, "CAP_DEHAZE") == 0) return "数据流：VI 1920x1080有效画面 -> CSC_RGA BGR888 -> CAP_DEHAZE -> VO。";
+    if (strcasecmp(name, "CAP_DEHAZE_OFFLINE") == 0) return "数据流：静态低能见度图 -> CAP_DEHAZE refine_scale=0.25 -> 原图/输出图对比。";
+    if (strcasecmp(name, "DCP_FAST_DEHAZE") == 0) return "数据流：VI 3840x2160 -> CSC_RGA BGR888 -> DCP_FAST_DEHAZE -> RESIZE_RGA -> VO。";
     if (strcasecmp(name, "THERMAL") == 0) return "数据流：同一红外灰度图映射到多种热成像伪彩模式。";
     if (strcasecmp(name, "CONV_CL") == 0) return "数据流：VI 640x640 -> RGBA -> CONV_CL四核卷积 -> 2x2输出。";
     if (strcasecmp(name, "TRANSFORM") == 0) return "数据流：VI 3840x2160 -> TRANSFORM LUT -> RESIZE_RGA缩放 -> 四宫格显示。";
@@ -11379,6 +11718,7 @@ static const char *module_showcase_note(const char *name) {
     if (strcasecmp(name, "CLAHE") == 0) return "展示重点：上下对比局部对比度增强效果。";
     if (strcasecmp(name, "RETINEX") == 0) return "展示重点：1秒直通、1秒增强，观察光照校正和暗部细节增强。";
     if (strcasecmp(name, "CAP_DEHAZE") == 0) return "展示重点：实时去雾前后对比，突出低能见度细节。";
+    if (strcasecmp(name, "CAP_DEHAZE_OFFLINE") == 0) return "展示重点：用固定低能见度图片看清CAP去雾前后差异。";
     if (strcasecmp(name, "DCP_FAST_DEHAZE") == 0) return "展示重点：暗通道快速去雾前后对比。";
     if (strcasecmp(name, "THERMAL") == 0) return "展示重点：同一灰度输入映射为多种热成像色表。";
     if (strcasecmp(name, "CONV_CL") == 0) return "展示重点：四路GPU卷积同屏比较。";
@@ -11610,9 +11950,10 @@ int main(int argc, char **argv) {
     }
 
     int use_4k_camera_input = !solid_test && only_tile && tile_uses_4k_camera_input(only_tile);
-    g_camera_input_w = use_4k_camera_input ? VI_BIG_W : CAM_W;
-    g_camera_input_h = use_4k_camera_input ? VI_BIG_H : CAM_H;
-    g_camera_input_stride = use_4k_camera_input ? VI_BIG_STRIDE : CAM_STRIDE;
+    int use_1080p_camera_input = !solid_test && only_tile && tile_uses_1080p_camera_input(only_tile);
+    g_camera_input_w = use_4k_camera_input ? VI_BIG_W : (use_1080p_camera_input ? VI_HD_W : CAM_W);
+    g_camera_input_h = use_4k_camera_input ? VI_BIG_H : (use_1080p_camera_input ? VI_HD_H : CAM_H);
+    g_camera_input_stride = use_4k_camera_input ? VI_BIG_STRIDE : (use_1080p_camera_input ? VI_HD_STRIDE : CAM_STRIDE);
 
     if (!only_tile && !solid_test && !heavy_probe) {
         return run_default_only_loop(argv[0], rotate_main, demo_loop);
@@ -11683,9 +12024,14 @@ int main(int argc, char **argv) {
     }
     int live_transform_ok = 0;
     int live_cap_ok = 0;
-    if (!solid_test && !only_tile && default_page_index("CAP_DEHAZE") >= 0 &&
+    if (!solid_test &&
+        ((!only_tile && default_page_index("CAP_DEHAZE") >= 0) ||
+         (only_tile && strcasecmp(only_tile, "CAP_DEHAZE_OFFLINE") == 0)) &&
         setup_live_cap_dehaze() == 0) {
         live_cap_ok = 1;
+        if (only_tile && strcasecmp(only_tile, "CAP_DEHAZE_OFFLINE") == 0) {
+            set_tile_status("CAP_DEHAZE_OFFLINE", TILE_LIVE);
+        }
     }
     int live_dcp_ok = 0;
     if (!solid_test && !only_tile && default_page_index("DCP_FAST_DEHAZE") >= 0 &&
@@ -12009,7 +12355,8 @@ int main(int argc, char **argv) {
     int camera_stride = g_camera_input_stride;
     int camera_fps = (use_cap_dehaze_bind_display || use_dcp_dehaze_bind_display) ? 10 : FPS;
     int camera_v4l2_buf_cnt = 4;
-    size_t camera_frame_size = (size_t)camera_stride * camera_h * 3 / 2;
+    size_t camera_frame_size = use_1080p_camera_input ? VI_HD_FRAME_SIZE :
+        (size_t)camera_stride * camera_h * 3 / 2;
     /*
      * VI queues buf_cnt buffers into V4L2.  The pool must keep spare buffers
      * so a captured buffer can be handed downstream while VI re-queues a
@@ -12021,7 +12368,7 @@ int main(int argc, char **argv) {
         vi.device = CAMERA_DEVICE;
         vi.width = camera_w;
         vi.height = camera_h;
-        vi.stride = camera_stride;
+        vi.stride = use_1080p_camera_input ? 0 : camera_stride;
         vi.fps = camera_fps;
         vi.buf_cnt = camera_v4l2_buf_cnt;
         vi.pool_id = CAMERA_POOL;
@@ -12385,9 +12732,11 @@ int main(int argc, char **argv) {
         }
         cap_dehaze_bind_display_ok = use_cap_dehaze_bind_display;
         dcp_dehaze_bind_display_ok = use_dcp_dehaze_bind_display;
-        (void)update_display_osd_text(use_dcp ? "DCP_FAST_DEHAZE  4K PASS/ENHANCE" :
-                                                "CAP_DEHAZE  4K PASS/ENHANCE",
-                                      "VI 4K -> CSC_RGA RGB -> DEHAZE -> RESIZE -> VO");
+        (void)update_display_osd_text(use_dcp ? "DCP_FAST_DEHAZE  PASS/ENHANCE" :
+                                                "CAP_DEHAZE  1080P PASS/ENHANCE",
+                                      use_dcp ? "VI -> CSC_RGA BGR -> DEHAZE -> RESIZE -> VO" :
+                                                "VI 1920x1080 -> BGR888 -> CAP_DEHAZE refine 0.25 -> VO");
+        (void)update_dehaze_compare_overlay(use_dcp, 0, 0, 0, 0, 1, 0);
     }
     if (use_rga_bind_display) {
         if (!camera_ok || !live_rga_ok || !display_vmix_osd_ok || bind_vi_rga_vmix_osd_vo() != 0) {
@@ -12659,6 +13008,7 @@ int main(int argc, char **argv) {
     int csc_rga_frames = 0;
     int transform_frames = 0;
     int cap_frames = 0;
+    int cap_offline_sample_index = -1;
     int dcp_frames = 0;
     int conv_frames = 0;
     int clahe_frames = 0;
@@ -12836,7 +13186,26 @@ int main(int argc, char **argv) {
                 transform_frames++;
             }
         }
+        if (live_cap_ok && only_tile && strcasecmp(only_tile, "CAP_DEHAZE_OFFLINE") == 0 &&
+            last_rgb_src && last_cap && last_cam) {
+            loop_asset_t *cap_loop = find_loop_asset("CAP_DEHAZE_OFFLINE");
+            int next_sample = (cap_loop && cap_loop->loaded_count > 0) ?
+                (frame / (FPS * CAP_DEHAZE_OFFLINE_SECONDS)) % cap_loop->loaded_count : 0;
+            if (next_sample != cap_offline_sample_index) {
+                cap_offline_sample_index = next_sample;
+                if (cap_loop && cap_loop->loaded_count > 0) {
+                    image_to_rgb_frame(&cap_loop->images[next_sample], last_rgb_src);
+                } else {
+                    fill_cap_dehaze_offline_rgb(last_rgb_src);
+                }
+                rgb_to_nv12_frame(last_rgb_src, last_cam);
+                if (process_live_cap_dehaze(last_rgb_src, last_cap) == 0) {
+                    cap_frames++;
+                }
+            }
+        }
         if (live_cap_ok && last_rgb_src && last_cap &&
+            !(only_tile && strcasecmp(only_tile, "CAP_DEHAZE_OFFLINE") == 0) &&
             !(only_tile && strcasecmp(only_tile, "CAP_DEHAZE") == 0 && camera_ok)) {
             fill_synthetic_rgb(last_rgb_src, CAM_W, CAM_H, CAM_W * 3, frame);
             if (process_live_cap_dehaze(last_rgb_src, last_cap) == 0) {
@@ -13291,16 +13660,20 @@ int main(int argc, char **argv) {
                          g_perf.gpu_percent);
                 snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
                          g_perf.rga_percent);
-                snprintf(perf, sizeof(perf), "PAGE %02d/%02d %s 4K %s OUT %llu RESIZE %llu CPU %.0f%% GPU %s RGA %s",
+                snprintf(perf, sizeof(perf), "PAGE %02d/%02d %s %s %s OUT %llu RESIZE %llu CPU %.0f%% GPU %s RGA %s",
                          module_page_number(module_name), module_page_total(),
                          use_dcp ? "DCP" : "CAP",
+                         use_dcp ? "LIVE" : "1080P",
                          passthrough_mode ? "PASS" : "ENHANCE",
                          (unsigned long long)dehaze_count,
                          (unsigned long long)resize_count,
                          g_perf.cpu_percent, gpu_text, rga_text);
-                (void)update_display_osd_text(use_dcp ? "DCP_FAST_DEHAZE  4K PASS/ENHANCE" :
-                                                        "CAP_DEHAZE  4K PASS/ENHANCE",
+                (void)update_display_osd_text(use_dcp ? "DCP_FAST_DEHAZE  PASS/ENHANCE" :
+                                                        "CAP_DEHAZE  1080P PASS/ENHANCE",
                                               perf);
+                (void)update_dehaze_compare_overlay(use_dcp, vi_count, csc_count,
+                                                     dehaze_count, resize_count,
+                                                     passthrough_mode, frame);
                 if ((frame % FPS) == 0) {
                     printf("%s vi_frames=%llu csc_frames=%llu dehaze_frames=%llu resize_frames=%llu display_osd_frames=%llu passthrough=%d cpu=%.0f%% gpu=%s rga=%s\n",
                            module_name,
@@ -13770,7 +14143,7 @@ int main(int argc, char **argv) {
             update_perf_status();
         }
         display_refs_t display_refs = {
-            cam_frames > 0 ? last_cam : NULL,
+            (cam_frames > 0 || (only_tile && strcasecmp(only_tile, "CAP_DEHAZE_OFFLINE") == 0 && cap_frames > 0)) ? last_cam : NULL,
             osd_frames > 0 ? last_osd : NULL,
             resize_frames > 0 ? last_resize : NULL,
             vpss_frames > 0 ? last_vpss : NULL,
@@ -13948,8 +14321,22 @@ int main(int argc, char **argv) {
                      g_perf.gpu_percent);
             snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
                      g_perf.rga_percent);
-            printf("CAP_DEHAZE vi_frames=%d cap_frames=%d guided_r=24 t0=0.12 cpu=%.0f%% gpu=%s rga=%s\n",
+            printf("CAP_DEHAZE vi_frames=%d cap_frames=%d guided_r=24 t0=0.12 refine_scale=0.25 cpu=%.0f%% gpu=%s rga=%s\n",
                    cam_frames, cap_frames, g_perf.cpu_percent, gpu_text, rga_text);
+        }
+        if (only_tile && strcasecmp(only_tile, "CAP_DEHAZE_OFFLINE") == 0 &&
+            (frame % FPS) == 0) {
+            char gpu_text[24];
+            char rga_text[24];
+            loop_asset_t *cap_loop = find_loop_asset("CAP_DEHAZE_OFFLINE");
+            int sample_count = cap_loop ? cap_loop->loaded_count : 0;
+            int sample_number = cap_offline_sample_index >= 0 ? cap_offline_sample_index + 1 : 0;
+            snprintf(gpu_text, sizeof(gpu_text), g_perf.gpu_available ? "%.0f%%" : "N/A",
+                     g_perf.gpu_percent);
+            snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
+                     g_perf.rga_percent);
+            printf("CAP_DEHAZE_OFFLINE sample=%d/%d source=rktohi_demo_cap_dehaze cap_frames=%d guided_r=24 t0=0.12 refine_scale=0.25 cpu=%.0f%% gpu=%s rga=%s\n",
+                   sample_number, sample_count, cap_frames, g_perf.cpu_percent, gpu_text, rga_text);
         }
         if (only_tile && strcasecmp(only_tile, "CONV_CL") == 0 &&
             (frame % FPS) == 0) {

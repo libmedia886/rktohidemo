@@ -896,6 +896,7 @@ typedef struct {
     float beta1;                /* CAP beta1 */
     float beta2;                /* CAP beta2 */
     float depth_scale;          /* depth 缩放 */
+    float refine_scale;         /* transmission refine 缩放（0 表示默认=0.25，1.0 表示全分辨率） */
     int passthrough;            /* 运行时直通模式 */
 } MEDIA_CAP_DEHAZE_ATTR;
 
