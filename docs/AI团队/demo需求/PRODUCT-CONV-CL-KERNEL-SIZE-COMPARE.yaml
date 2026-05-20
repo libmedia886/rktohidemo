@@ -1,0 +1,26 @@
+product_brief:
+  case_name: "CONV_CL_KERNEL_SIZE_COMPARE"
+  target_user: "到现场观看 AllDemo 的客户和售前演示人员"
+  demo_goal: "CONV_CL 页保留原四种3x3卷积核展示，同时追加 kernel size 能力展示：原四核10秒，强化3x3/11x11/21x2110秒，模糊3x3/11x11/21x2110秒。"
+  first_screen_message: "客户先看到原有四种卷积核差异，再看到 CONV_CL 能动态切换 kernel size，并看到画质变化和 OpenCL 耗时变化。"
+  must_show:
+    - "CONV_CL 保持在默认客户演示页表内。"
+    - "CONV_CL 单页使用实时摄像头输入，不使用静态占位图。"
+    - "原四核阶段显示 SHARPEN、EDGE、EMBOSS、BLUR 四格同源画面，持续10秒。"
+    - "强化阶段显示 RAW、SHARP 3x3、SHARP 11x11、SHARP 21x21 四格同源画面，持续10秒。"
+    - "模糊阶段显示 RAW、BLUR 3x3、BLUR 11x11、BLUR 21x21 四格同源画面，持续10秒。"
+    - "三路处理输出必须来自同一个 MEDIA_CONV_CL 组顺序切换 kernel_size 和 conv_table，不使用四个并发 CONV_CL 组。"
+    - "屏幕上显示中文数据流、阶段说明、四格帧计数、CPU/GPU/RGA 和 OpenCL kernel/queue 耗时。"
+  should_show:
+    - "客户能理解四格差异只来自 kernel size 和卷积表，不来自不同输入。"
+    - "README 和 effect manifest 应说明 CONV_CL 页面现在包含原四核、强化kernel size、模糊kernel size 三个阶段。"
+    - "短运行验证应看到 four-kernels、sharpen-size 与 blur-size 三个阶段日志，并看到对应计数增长。"
+  avoid_showing:
+    - "不要把 CONV_CL 固定解释成边缘检测；本需求只演示 kernel size 和演示用强化/模糊卷积表。"
+    - "不要恢复已验证不稳定的四个 CONV_CL 并发 bind 链路。"
+    - "不要复制 rktohi/src 到 alldemo；alldemo 只消费重建后的库和头文件产物。"
+  input_source_preference: "live_camera"
+  visual_layout: "竖屏单模块页；中部2x2四格显示当前阶段四个输出，顶部和底部显示中文数据流、阶段说明和运行指标。"
+  comparison_rule: "四格画面必须来自同源实时帧，显示差异只由当前阶段卷积表或 kernel size 决定。"
+  product_verdict: "Ready"
+  next_skill: "alldemo-srs-writer"

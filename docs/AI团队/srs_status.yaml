@@ -21,21 +21,22 @@ status_values:
   Deferred: "暂缓。"
   ProductAccepted: "产品复看接受，闭环完成。"
 summary:
-  srs_total: 17
+  srs_total: 18
   by_status:
-    SoftwareAccepted: 17
+    SoftwareAccepted: 18
+    Implementing: 0
     ProductAccepted: 0
     Blocked: 0
     Deferred: 0
   implementation:
-    implemented: 17
+    implemented: 18
     missing_implementation: 0
   software_acceptance:
-    accepted_or_pass_with_risks: 17
+    accepted_or_pass_with_risks: 18
     missing_acceptance: 0
   product_acceptance:
     accepted: 0
-    pending: 17
+    pending: 18
   defects:
     total: 7
     fixed: 6
@@ -79,6 +80,17 @@ srs:
     product_acceptance: "Pending"
     related_defects: []
     next_action: "产品复看；确认页面流程图和算法对比布局。"
+  - id: "SRS-CONV-CL-KERNEL-SIZE-COMPARE-002"
+    page: "CONV_CL"
+    status: "SoftwareAccepted"
+    srs_file: "docs/AI团队/demo需求/SRS-CONV-CL-KERNEL-SIZE-COMPARE-002.yaml"
+    implementation_file: "docs/AI团队/demo实现/IMPL-CONV-CL-KERNEL-SIZE-COMPARE-20260520-001.yaml"
+    implementation_status: "Implemented"
+    acceptance_file: "docs/AI团队/demo验收/ACCEPT-CONV-CL-KERNEL-SIZE-COMPARE-20260520-001.yaml"
+    acceptance_result: "Accepted By Runtime Probe"
+    product_acceptance: "Pending"
+    related_defects: []
+    next_action: "产品复看 CONV_CL 原四核、强化kernel size、模糊kernel size 三阶段页面。"
   - id: "SRS-CSC-CL-CUSTOMER-PAGE-001"
     page: "CSC_CL"
     status: "SoftwareAccepted"

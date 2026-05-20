@@ -1,0 +1,67 @@
+software_requirement_specification:
+  requirement_id: "SRS-CONV-CL-KERNEL-SIZE-COMPARE-002"
+  case_name: "CONV_CL_KERNEL_SIZE_COMPARE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-CONV-CL-KERNEL-SIZE-COMPARE.yaml"
+  user_value: "客户默认轮播逐页优化时，CONV_CL 页需要同时保留原四种3x3卷积核对比，并追加可设置 kernel size 的强化与模糊对比。"
+  scope:
+    - "保持 CONV_CL 在客户默认页表中。"
+    - "默认轮播进入 CONV_CL 后停留30秒，内部按10秒切换三个展示阶段。"
+    - "阶段1保留原四核对比：SHARPEN、EDGE、EMBOSS、BLUR 四种3x3卷积核。"
+    - "阶段2为强化 kernel size 对比：RAW、SHARP 3x3、SHARP 11x11、SHARP 21x21。"
+    - "阶段3为模糊 kernel size 对比：RAW、BLUR 3x3、BLUR 11x11、BLUR 21x21。"
+    - "CONV_CL 使用实时摄像头输入：VI 获取 NV12 帧，页面侧转换为 RGBA 后送入 MEDIA_CONV_CL。"
+    - "页面使用单个 CONV_CL 组顺序调用 MEDIA_CONV_CL_SetKernelSize() 与 MEDIA_CONV_CL_SetTable()，再 GetFrame 取真实输出。"
+    - "原四核阶段四格均显示真实 CONV_CL 输出；强化/模糊阶段 RAW 格显示同源原图，3x3/11x11/21x21 三格显示真实 CONV_CL 输出。"
+    - "页面显示中文数据流、阶段说明、四格输出计数、CPU/GPU/RGA 和 OpenCL kernel/queue 耗时。"
+    - "运行日志输出 stage=four-kernels、stage=sharpen-size 与 stage=blur-size，以及各阶段四格计数。"
+    - "更新 README 和 assets/effect_manifest.json 的 CONV_CL 描述。"
+    - "rktohi CONV_CL kernel_size 高频更新日志默认不刷屏，仍可通过 CONV_CL_LOG_TABLE_UPDATE=1 打开。"
+  non_scope:
+    - "不改变 MEDIA_CONV_CL public API。"
+    - "不把 CONV_CL 固定为边缘检测语义；强化/模糊只是客户页演示用卷积表。"
+    - "不复制 rktohi/src 到 alldemo。"
+    - "不在本需求内修复板端四个 CONV_CL 并发 EGLImage import 限制。"
+  target_screen:
+    layout: "竖屏单模块页；中部2x2四格，顶部为标题/数据流/原因说明，底部为展示重点和运行指标。"
+    input_source: "实时摄像头 /dev/video-camera0。"
+    output_view: "原四核阶段四格来自同一个 MEDIA_CONV_CL 组顺序处理；强化/模糊阶段 RAW 来自同源 RGBA staging，三路 kernel size 输出来自同一个 MEDIA_CONV_CL 组顺序处理。"
+    overlay_text:
+      - "阶段1标题显示 CONV_CL：四种卷积核同屏比较。"
+      - "阶段2标题显示 CONV_CL：强化核大小对比。"
+      - "阶段3标题显示 CONV_CL：模糊核大小对比。"
+      - "显示 数据流：VI采集NV12 -> RGBA staging -> 单个CONV_CL顺序切换3x3/11x11/21x21 -> 页面合成 -> VO。"
+      - "显示 RAW、3x3、11x11、21x21 输出帧计数。"
+      - "显示 CPU/GPU/RGA 和 OpenCL kernel/queue 耗时。"
+  implementation_boundary:
+    alldemo_files:
+      - "src/alldemo.c"
+      - "README.md"
+      - "assets/effect_manifest.json"
+      - "docs/AI团队/demo需求/PRODUCT-CONV-CL-KERNEL-SIZE-COMPARE.yaml"
+      - "docs/AI团队/demo需求/SRS-CONV-CL-KERNEL-SIZE-COMPARE-002.yaml"
+      - "docs/AI团队/srs_status.yaml"
+    rktohi_files:
+      - "/userdata/rktohi/src/module/conv_cl/conv_cl.c"
+    rktohi_dependency: "使用 run_alldemo.sh 同步后的 media_api.h、libmedia.a 和 libmedia.so；alldemo 只消费构建产物。"
+    copied_artifacts_only: true
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 在 /userdata/rktohi 通过。"
+    - "./scripts/run_alldemo.sh --asset-check 可以执行通过并同步 rktohi 产物。"
+    - "cmake --build build -j 在 /userdata/alldemo 通过。"
+    - "timeout -s INT -k 20s 75s stdbuf -oL -eL ./scripts/run_alldemo.sh --only CONV_CL 能覆盖三个10秒阶段并完成清理。"
+    - "运行日志出现 stage=four-kernels、stage=sharpen-size 和 stage=blur-size，且每个阶段四格计数增长。"
+    - "运行后生成 vo_captures/conv_cl_vo_*.bmp 抓帧文件。"
+    - "运行日志中 clCreateFromEGLImageKHR、set_param kernel_size 刷屏、set_param conv_table 刷屏、拒绝销毁 计数为 0。"
+  validation_plan:
+    build:
+      - "cmake --build build -j in /userdata/rktohi"
+      - "./scripts/run_alldemo.sh --asset-check"
+      - "cmake --build build -j in /userdata/alldemo"
+      - "git diff --check"
+    run:
+      - "timeout -s INT -k 20s 75s stdbuf -oL -eL ./scripts/run_alldemo.sh --only CONV_CL"
+      - "grep for stage=four-kernels, stage=sharpen-size, stage=blur-size, clCreateFromEGLImageKHR, set_param kernel_size, set_param conv_table, 拒绝销毁"
+      - "ls -lt vo_captures/conv_cl_vo_*.bmp"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

@@ -1,0 +1,30 @@
+implementation_record:
+  case_name: "CONV_CL_KERNEL_SIZE_COMPARE"
+  requirement_id: "SRS-CONV-CL-KERNEL-SIZE-COMPARE-002"
+  status: "Implemented"
+  implementation_date: "2026-05-20"
+  summary:
+    - "CONV_CL 单页保留原四种3x3卷积核展示，并追加两个10秒阶段的 kernel size 对比。"
+    - "阶段1显示 SHARPEN、EDGE、EMBOSS、BLUR 四种3x3卷积核。"
+    - "阶段2显示 RAW、SHARP 3x3、SHARP 11x11、SHARP 21x21。"
+    - "阶段3显示 RAW、BLUR 3x3、BLUR 11x11、BLUR 21x21。"
+    - "默认轮播进入 CONV_CL 时自动停留30秒，确保三个阶段都能展示。"
+    - "页面继续使用单个 CONV_CL 组顺序调用 SetKernelSize/SetTable，不恢复四个并发 CONV_CL 组。"
+    - "rktohi CONV_CL kernel_size 更新日志改为 CONV_CL_LOG_TABLE_UPDATE=1 才输出，避免客户页刷屏。"
+    - "README 和 effect manifest 已更新 CONV_CL 展示描述。"
+  changed_files:
+    alldemo:
+      - "src/alldemo.c"
+      - "README.md"
+      - "assets/effect_manifest.json"
+      - "docs/AI团队/demo需求/PRODUCT-CONV-CL-KERNEL-SIZE-COMPARE.yaml"
+      - "docs/AI团队/demo需求/SRS-CONV-CL-KERNEL-SIZE-COMPARE-002.yaml"
+      - "docs/AI团队/srs_status.yaml"
+    rktohi:
+      - "/userdata/rktohi/src/module/conv_cl/conv_cl.c"
+  design_notes:
+    - "原四核阶段四格均来自真实 CONV_CL 输出；强化/模糊阶段 RAW 格来自同源 RGBA staging，用作视觉基准。"
+    - "11x11/21x21 强化表在 alldemo 启动时动态生成为 unsharp kernel；11x11/21x21 模糊表动态生成 box blur kernel。"
+    - "SetKernelSize 每帧切换会改写底层 conv_table，因此紧跟 SetTable 写入当前展示用表。"
+  validation_log: "/tmp/alldemo_conv_cl_three_stage_clean.log"
+  next_skill: "alldemo-runtime-acceptance"

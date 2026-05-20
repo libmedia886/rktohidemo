@@ -177,9 +177,13 @@
 #define RGB_FRAME_SIZE (CAM_W * CAM_H * 3)
 #define RGBA_FRAME_SIZE (CAM_W * CAM_H * 4)
 #define PANO_OUTPUT_SIZE (PANO_STITCH_STRIDE * PANO_STITCH_H * 3 / 2)
+#define AVM2D_VIDEO_FRAME_COUNT 25
+#define AVM2D_CAMERA_COUNT 4
 #define MAIN_ROTATE_SECONDS 5
 #define PAGE_ROTATE_SECONDS 8
 #define CUSTOMER_ROTATE_SECONDS 10
+#define CONV_CL_KERNEL_STAGE_SECONDS 10
+#define CONV_CL_KERNEL_STAGE_COUNT 3
 #define RGA_DEMO_OP_COUNT 7
 #define NAV_KEY_MAX_FDS 16
 #define NAV_ENV_PAGE "ALLDEMO_LOOP_PAGE"
@@ -303,6 +307,14 @@ typedef struct {
 } pano_sample_t;
 
 typedef struct {
+    image_asset_t frames[AVM2D_VIDEO_FRAME_COUNT][AVM2D_CAMERA_COUNT];
+    image_asset_t reference;
+    image_asset_t gpu;
+    int frame_count;
+    int outputs_loaded;
+} avm2d_video_t;
+
+typedef struct {
     int license_ok;
     int camera_node_ok;
     int drm_ok;
@@ -358,6 +370,15 @@ typedef struct {
     const float *table;
     int table_size;
 } conv_cl_effect_t;
+
+typedef struct {
+    const char *title;
+    const char *flow;
+    const char *rationale;
+    const char *focus;
+    const char *log_name;
+    const conv_cl_effect_t *effects;
+} conv_cl_kernel_stage_t;
 
 typedef struct {
     const char *name;
@@ -477,9 +498,10 @@ static const int g_conv_cl_output_pools[VPSS_DEMO_OUTPUTS] = {
     CONV_CL_QUAD_OUTPUT_POOL_BASE + 2,
     CONV_CL_QUAD_OUTPUT_POOL_BASE + 3,
 };
-static uint64_t g_conv_cl_show_counts[VPSS_DEMO_OUTPUTS] = {0};
+static uint64_t g_conv_cl_kernel_counts[CONV_CL_KERNEL_STAGE_COUNT][VPSS_DEMO_OUTPUTS] = {{0}};
 static double g_conv_cl_show_kernel_ms = -1.0;
 static double g_conv_cl_show_queue_ms = -1.0;
+static int g_conv_cl_show_stage = 0;
 
 static const float g_conv_kernel_sharpen[9] = {
      0.0f, -1.0f,  0.0f,
@@ -507,6 +529,89 @@ static const conv_cl_effect_t g_conv_cl_effects[VPSS_DEMO_OUTPUTS] = {
     {"EMBOSS", 3, g_conv_kernel_emboss, (int)ARRAY_SIZE(g_conv_kernel_emboss)},
     {"BLUR", 3, g_conv_kernel_blur, (int)ARRAY_SIZE(g_conv_kernel_blur)},
 };
+static float g_conv_kernel_sharpen_11[11 * 11];
+static float g_conv_kernel_sharpen_21[21 * 21];
+static float g_conv_kernel_blur_11[11 * 11];
+static float g_conv_kernel_blur_21[21 * 21];
+static int g_conv_cl_kernel_tables_ready = 0;
+static conv_cl_effect_t g_conv_cl_sharpen_size_effects[VPSS_DEMO_OUTPUTS] = {
+    {"RAW", 0, NULL, 0},
+    {"SHARP 3x3", 3, g_conv_kernel_sharpen, (int)ARRAY_SIZE(g_conv_kernel_sharpen)},
+    {"SHARP 11x11", 11, g_conv_kernel_sharpen_11, (int)ARRAY_SIZE(g_conv_kernel_sharpen_11)},
+    {"SHARP 21x21", 21, g_conv_kernel_sharpen_21, (int)ARRAY_SIZE(g_conv_kernel_sharpen_21)},
+};
+static conv_cl_effect_t g_conv_cl_blur_size_effects[VPSS_DEMO_OUTPUTS] = {
+    {"RAW", 0, NULL, 0},
+    {"BLUR 3x3", 3, g_conv_kernel_blur, (int)ARRAY_SIZE(g_conv_kernel_blur)},
+    {"BLUR 11x11", 11, g_conv_kernel_blur_11, (int)ARRAY_SIZE(g_conv_kernel_blur_11)},
+    {"BLUR 21x21", 21, g_conv_kernel_blur_21, (int)ARRAY_SIZE(g_conv_kernel_blur_21)},
+};
+static const conv_cl_kernel_stage_t g_conv_cl_kernel_stages[CONV_CL_KERNEL_STAGE_COUNT] = {
+    {
+        "CONV_CL：四种卷积核同屏比较",
+        "数据流：VI采集NV12 -> RGBA staging -> 单个CONV_CL顺序加载四个3x3核 -> 页面合成 -> VO。",
+        "为什么这样做：同源画面只改变卷积核，稳定展示锐化、边缘、浮雕和模糊差异。",
+        "展示重点：保留原CONV_CL四核比较页；10秒后切到强化kernel size对比。",
+        "four-kernels",
+        g_conv_cl_effects,
+    },
+    {
+        "CONV_CL：强化核大小对比",
+        "数据流：VI采集NV12 -> RGBA staging -> 单个CONV_CL顺序切换3x3/11x11/21x21强化核 -> 页面合成 -> VO。",
+        "为什么这样做：同源画面只改变kernel size，展示强化半径变大后的细节和耗时变化。",
+        "展示重点：原图与3x3、11x11、21x21强化结果同屏比较，10秒后切到模糊核大小对比。",
+        "sharpen-size",
+        g_conv_cl_sharpen_size_effects,
+    },
+    {
+        "CONV_CL：模糊核大小对比",
+        "数据流：VI采集NV12 -> RGBA staging -> 单个CONV_CL顺序切换3x3/11x11/21x21模糊核 -> 页面合成 -> VO。",
+        "为什么这样做：同源画面只改变kernel size，展示模糊范围变大后的平滑效果和耗时变化。",
+        "展示重点：原图与3x3、11x11、21x21模糊结果同屏比较；本页结束后进入下一模块。",
+        "blur-size",
+        g_conv_cl_blur_size_effects,
+    },
+};
+
+static void init_box_blur_kernel(float *table, int kernel_size) {
+    if (!table || kernel_size <= 0) return;
+    int total = kernel_size * kernel_size;
+    float v = 1.0f / (float)total;
+    for (int i = 0; i < total; ++i) {
+        table[i] = v;
+    }
+}
+
+static void init_unsharp_kernel(float *table, int kernel_size, float amount) {
+    if (!table || kernel_size <= 0) return;
+    int total = kernel_size * kernel_size;
+    float outer = -amount / (float)(total - 1);
+    for (int i = 0; i < total; ++i) {
+        table[i] = outer;
+    }
+    table[(kernel_size / 2) * kernel_size + (kernel_size / 2)] = 1.0f + amount;
+}
+
+static void init_conv_cl_kernel_size_tables(void) {
+    if (g_conv_cl_kernel_tables_ready) return;
+    init_unsharp_kernel(g_conv_kernel_sharpen_11, 11, 1.2f);
+    init_unsharp_kernel(g_conv_kernel_sharpen_21, 21, 1.2f);
+    init_box_blur_kernel(g_conv_kernel_blur_11, 11);
+    init_box_blur_kernel(g_conv_kernel_blur_21, 21);
+    g_conv_cl_kernel_tables_ready = 1;
+}
+
+static int conv_cl_stage_for_frame(int frame) {
+    int stage = (frame / (FPS * CONV_CL_KERNEL_STAGE_SECONDS)) %
+        CONV_CL_KERNEL_STAGE_COUNT;
+    return stage < 0 ? 0 : stage;
+}
+
+static const conv_cl_kernel_stage_t *current_conv_cl_stage(void) {
+    int stage = g_conv_cl_show_stage;
+    if (stage < 0 || stage >= CONV_CL_KERNEL_STAGE_COUNT) stage = 0;
+    return &g_conv_cl_kernel_stages[stage];
+}
 
 static const int g_transform_quad_grps[VPSS_DEMO_OUTPUTS] = {
     -1,
@@ -569,6 +674,7 @@ static module_tile_t g_tiles[] = {
     {"DUALVIEW", 0, 0, TILE_OFFLINE}, {"STEREO_3D", 0, 0, TILE_OFFLINE},
     {"VMIX", 0, 0, TILE_OFFLINE}, {"VMIX_RGA", 0, 0, TILE_OFFLINE},
     {"PANO", 0, 0, TILE_OFFLINE}, {"AVM", 0, 0, TILE_OFFLINE},
+    {"AVM2D", 0, 0, TILE_OFFLINE},
     {"SVM3D", 0, 0, TILE_OFFLINE}, {"NPU", 0, 0, TILE_OFFLINE},
     {"VENC", 0, 0, TILE_OFFLINE}, {"VDEC", 0, 0, TILE_OFFLINE},
     {"RTSP_SEND", 0, 0, TILE_OFFLINE}, {"RTSP_RECV", 0, 0, TILE_OFFLINE},
@@ -578,19 +684,19 @@ static module_tile_t g_tiles[] = {
 static const char *g_module_pages[] = {
     "VI", "VPSS", "VO", "WBC", "RGA", "RESIZE_RGA", "CSC_RGA", "CSC_CL", "OSD",
     "CLAHE", "RETINEX", "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "DCP_FAST_DEHAZE", "THERMAL", "CONV_CL",
-    "TRANSFORM", "VMIX", "EDOF_CL", "MCF_FUSION_CL", "DUALVIEW", "STEREO_3D", "PANO",
+    "TRANSFORM", "VMIX", "EDOF_CL", "MCF_FUSION_CL", "DUALVIEW", "STEREO_3D", "PANO", "AVM2D",
 };
 
 static const char *g_default_pages[] = {
     "VI", "VPSS", "VMIX", "OSD", "RGA", "RESIZE_RGA", "CSC_CL", "CLAHE", "RETINEX",
     "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "THERMAL", "EDOF_CL", "MCF_FUSION_CL",
-    "PANO",
+    "PANO", "AVM2D",
 };
 
 static const char *g_engineering_pages[] = {
     "VI", "VPSS", "VO", "WBC", "OSD", "RESIZE_RGA", "THERMAL", "EDOF_CL",
     "MCF_FUSION_CL", "RGA", "CSC_RGA", "CSC_CL", "CLAHE", "RETINEX",
-    "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "VMIX", "STEREO_3D", "PANO",
+    "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "VMIX", "STEREO_3D", "PANO", "AVM2D",
 };
 
 typedef struct {
@@ -621,6 +727,10 @@ static int loop_page_rotate_seconds(const demo_loop_t *loop, const char *module)
     int seconds = loop ? loop->rotate_seconds : CUSTOMER_ROTATE_SECONDS;
     if (module && strcasecmp(module, "RGA") == 0) {
         int full_cycle = RGA_OP_SECONDS * RGA_DEMO_OP_COUNT;
+        if (seconds < full_cycle) seconds = full_cycle;
+    }
+    if (module && strcasecmp(module, "CONV_CL") == 0) {
+        int full_cycle = CONV_CL_KERNEL_STAGE_SECONDS * CONV_CL_KERNEL_STAGE_COUNT;
         if (seconds < full_cycle) seconds = full_cycle;
     }
     return seconds;
@@ -699,6 +809,8 @@ static pano_sample_t g_pano_sample = {
     0,
     0,
 };
+
+static avm2d_video_t g_avm2d_video = {0};
 
 static void on_signal(int sig) {
     (void)sig;
@@ -3183,6 +3295,80 @@ static void draw_pano_comparison(uint8_t *dst, int stride, int x, int y, int w, 
     draw_text(dst, stride, x + 8, oy + bottom_h - label_h + 5, "PANORAMA OUTPUT", 1, 180, 230, 255);
 }
 
+static void draw_avm2d_comparison(uint8_t *dst, int stride, int x, int y, int w, int h,
+                                  const avm2d_video_t *video, int frame) {
+    int gap = 10;
+    int label_h = 24;
+    int input_h = (h * 36) / 100;
+    int output_h = h - input_h - gap;
+    int center_w = (w - gap * 2) / 3;
+    int center_h = (input_h - gap) / 2;
+    int side_w = center_w;
+    int side_h = input_h;
+
+    if (!video || video->frame_count <= 0 || !video->outputs_loaded) {
+        fill_rect_nv12(dst, stride, x, y, w, h, 5, 10, 18);
+        draw_utf8_text(dst, stride, x + 24, y + h / 2 - 16,
+                       "AVM2D研究资产未加载", 26, 255, 190, 100);
+        return;
+    }
+
+    int frame_idx = (frame / 3) % video->frame_count;
+    struct {
+        int image_idx;
+        int px;
+        int py;
+        int pw;
+        int ph;
+        const char *label;
+    } inputs[4] = {
+        {0, x + center_w + gap, y, center_w, center_h, "FRONT VIDEO"},
+        {2, x, y, side_w, side_h, "LEFT VIDEO"},
+        {3, x + (center_w + gap) * 2, y, side_w, side_h, "RIGHT VIDEO"},
+        {1, x + center_w + gap, y + center_h + gap, center_w, center_h, "REAR VIDEO"},
+    };
+
+    for (int i = 0; i < 4; ++i) {
+        fill_rect_nv12(dst, stride, inputs[i].px, inputs[i].py, inputs[i].pw, inputs[i].ph, 5, 10, 18);
+        stroke_rect_nv12(dst, stride, inputs[i].px, inputs[i].py, inputs[i].pw, inputs[i].ph, 1, 70, 140, 210);
+        draw_rgb_image_nv12(dst, stride,
+                            inputs[i].px + 4, inputs[i].py + 4,
+                            inputs[i].pw - 8, inputs[i].ph - label_h - 8,
+                            &video->frames[frame_idx][inputs[i].image_idx]);
+        fill_rect_nv12(dst, stride, inputs[i].px, inputs[i].py + inputs[i].ph - label_h,
+                       inputs[i].pw, label_h, 0, 0, 0);
+        draw_text(dst, stride, inputs[i].px + 8, inputs[i].py + inputs[i].ph - label_h + 6,
+                  inputs[i].label, 1, 180, 230, 255);
+    }
+
+    int oy = y + input_h + gap;
+    int col_w = (w - gap) / 2;
+    const image_asset_t *outputs[2] = {&video->reference, &video->gpu};
+    const char *out_labels[2] = {"CALIBRATED REFERENCE", "GPU LUT OUTPUT"};
+    for (int i = 0; i < 2; ++i) {
+        int cx = x + i * (col_w + gap);
+        fill_rect_nv12(dst, stride, cx, oy, col_w, output_h, 5, 10, 18);
+        stroke_rect_nv12(dst, stride, cx, oy, col_w, output_h, 1,
+                         i == 0 ? 80 : 120, i == 0 ? 255 : 220, i == 0 ? 180 : 100);
+        draw_rgb_image_nv12(dst, stride, cx + 4, oy + 4, col_w - 8, output_h - label_h - 8,
+                            outputs[i]);
+        fill_rect_nv12(dst, stride, cx, oy + output_h - label_h, col_w, label_h, 0, 0, 0);
+        draw_text(dst, stride, cx + 8, oy + output_h - label_h + 6, out_labels[i], 1, 180, 230, 255);
+    }
+
+    char frame_line[64];
+    snprintf(frame_line, sizeof(frame_line), "VIDEO FRAME %02d/%02d", frame_idx + 1, video->frame_count);
+    draw_text(dst, stride, x + w - 250, y + 12, frame_line, 2, 255, 230, 120);
+
+    if (((frame / FPS) & 1) == 0) {
+        draw_utf8_text(dst, stride, x + 18, oy + 18,
+                       "上方四路输入来自rktohi研究视频抽帧并循环播放", 20, 255, 230, 120);
+    } else {
+        draw_utf8_text(dst, stride, x + 18, oy + 18,
+                       "输出方向：标定LUT/IPM + GPU实时执行", 20, 255, 230, 120);
+    }
+}
+
 static void draw_showcase_header(uint8_t *dst, int stride, int x, int y, int w,
                                  const char *title, const char *flow, const char *why) {
     fill_rect_nv12(dst, stride, x, y, w, 126, 6, 13, 24);
@@ -3205,6 +3391,7 @@ static void draw_showcase_footer(uint8_t *dst, int stride, int x, int y, int w,
 
 static void draw_conv_cl_showcase(uint8_t *dst, int stride, int x, int y, int w, int h,
                                   const uint8_t *conv_grid) {
+    const conv_cl_kernel_stage_t *stage = current_conv_cl_stage();
     int top_h = 126;
     int bottom_h = 218;
     int gap = 18;
@@ -3216,9 +3403,9 @@ static void draw_conv_cl_showcase(uint8_t *dst, int stride, int x, int y, int w,
     grid_size &= ~1;
 
     draw_showcase_header(dst, stride, x, y, w,
-                         "CONV_CL：四种卷积核同屏比较",
-                         "数据流：VI采集NV12 -> RGBA staging -> 单个CONV_CL顺序加载四个核 -> 页面合成 -> VO。",
-                         "为什么这样做：同源画面只改变卷积核，稳定展示锐化、边缘、浮雕和模糊差异。");
+                         stage->title,
+                         stage->flow,
+                         stage->rationale);
 
     int grid_x = x + (w - grid_size) / 2;
     int grid_y = y + top_h + gap;
@@ -3241,8 +3428,8 @@ static void draw_conv_cl_showcase(uint8_t *dst, int stride, int x, int y, int w,
         int cy = grid_y + (i / 2) * cell;
         char out_line[64];
         snprintf(out_line, sizeof(out_line), "%s OUT %llu",
-                 g_conv_cl_effects[i].name,
-                 (unsigned long long)g_conv_cl_show_counts[i]);
+                 stage->effects[i].name,
+                 (unsigned long long)g_conv_cl_kernel_counts[g_conv_cl_show_stage][i]);
         fill_rect_nv12(dst, stride, cx + 14, cy + 14, 238, 38, 0, 0, 0);
         fill_rect_nv12(dst, stride, cx + 14, cy + 14, 238, 5,
                        colors[i][0], colors[i][1], colors[i][2]);
@@ -3263,16 +3450,16 @@ static void draw_conv_cl_showcase(uint8_t *dst, int stride, int x, int y, int w,
         snprintf(cl_line, sizeof(cl_line), "CL N/A");
     }
     snprintf(count_line, sizeof(count_line), "%s=%llu  %s=%llu  %s=%llu  %s=%llu",
-             g_conv_cl_effects[0].name, (unsigned long long)g_conv_cl_show_counts[0],
-             g_conv_cl_effects[1].name, (unsigned long long)g_conv_cl_show_counts[1],
-             g_conv_cl_effects[2].name, (unsigned long long)g_conv_cl_show_counts[2],
-             g_conv_cl_effects[3].name, (unsigned long long)g_conv_cl_show_counts[3]);
+             stage->effects[0].name, (unsigned long long)g_conv_cl_kernel_counts[g_conv_cl_show_stage][0],
+             stage->effects[1].name, (unsigned long long)g_conv_cl_kernel_counts[g_conv_cl_show_stage][1],
+             stage->effects[2].name, (unsigned long long)g_conv_cl_kernel_counts[g_conv_cl_show_stage][2],
+             stage->effects[3].name, (unsigned long long)g_conv_cl_kernel_counts[g_conv_cl_show_stage][3]);
 
     int footer_y = y + h - bottom_h;
     fill_rect_nv12(dst, stride, x, footer_y, w, bottom_h, 5, 10, 18);
     stroke_rect_nv12(dst, stride, x, footer_y, w, bottom_h, 2, 0, 190, 170);
     draw_utf8_text(dst, stride, x + 24, footer_y + 22,
-                   "展示重点：同一帧画面分成四格，四格都来自真实CONV_CL输出，不是滤镜贴图。",
+                   stage->focus,
                    22, 170, 255, 220);
     draw_text(dst, stride, x + 24, footer_y + 74, runtime, 2, 255, 230, 120);
     draw_text(dst, stride, x + 24, footer_y + 124, cl_line, 2, 255, 210, 120);
@@ -3351,6 +3538,24 @@ static void draw_pano_showcase(uint8_t *dst, int stride, int x, int y, int w, in
     draw_pano_comparison(dst, stride, x, compare_y, w, compare_h, pano_out);
     draw_showcase_footer(dst, stride, x, y + h - bottom_h, w,
                          "展示重点：上方是六路输入，下方是同一标定文件拼接后的全景结果。");
+}
+
+static void draw_avm2d_showcase(uint8_t *dst, int stride, int x, int y, int w, int h,
+                                const avm2d_video_t *video, int frame) {
+    int top_h = 126;
+    int bottom_h = 156;
+    int gap = 12;
+    int compare_y = y + top_h + gap;
+    int compare_h = h - top_h - bottom_h - gap * 2;
+    if (compare_h < 320) return;
+
+    draw_showcase_header(dst, stride, x, y, w,
+                         "AVM2D：泊车俯视环视研究样例",
+                         "数据流：四路研究视频抽帧 -> 标定LUT/IPM -> 2D BEV泊车视角。",
+                         "为什么这样做：泊车页先看车身周围有效区域、车模位置和GPU LUT效果方向。");
+    draw_avm2d_comparison(dst, stride, x, compare_y, w, compare_h, video, frame);
+    draw_showcase_footer(dst, stride, x, y + h - bottom_h, w,
+                         "说明：研究视频可作为演示输入；最终验收仍需要更多四路同步样本和正式车模叠加。");
 }
 
 static const char *tile_status_text(int status) {
@@ -3456,6 +3661,8 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
                              retinex_in, retinex_live, "VIDEO IN", "RETINEX OUT");
     } else if (strcmp(g_tiles[idx].name, "PANO") == 0 && (g_pano_sample.loaded || pano_out)) {
         draw_pano_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38, pano_out);
+    } else if (strcmp(g_tiles[idx].name, "AVM2D") == 0 && g_avm2d_video.frame_count > 0) {
+        draw_avm2d_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38, &g_avm2d_video, frame);
     } else if (strcmp(g_tiles[idx].name, "EDOF_CL") == 0 && (edof_in0 || edof_in1 || edof_out)) {
         draw_edof_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38,
                              edof_in0, edof_in1, edof_out);
@@ -3620,6 +3827,11 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
 
     if (strcmp(g_tiles[idx].name, "PANO") == 0 && (g_pano_sample.loaded || pano_out)) {
         draw_pano_showcase(dst, stride, x + 12, y + 12, w - 24, h - 24, pano_out);
+        return;
+    }
+
+    if (strcmp(g_tiles[idx].name, "AVM2D") == 0 && g_avm2d_video.frame_count > 0) {
+        draw_avm2d_showcase(dst, stride, x + 12, y + 12, w - 24, h - 24, &g_avm2d_video, frame);
         return;
     }
 
@@ -9797,6 +10009,7 @@ static int process_live_dcp_dehaze(const uint8_t *src, uint8_t *dst) {
 }
 
 static int setup_live_conv_cl(void) {
+    init_conv_cl_kernel_size_tables();
     if (MEDIA_POOL_Create(OSD_INPUT_POOL, RGBA_FRAME_SIZE, 3) != 0) return -1;
     if (MEDIA_POOL_Create(OSD_OUTPUT_POOL, RGBA_FRAME_SIZE, 3) != 0) {
         MEDIA_POOL_Destroy(OSD_INPUT_POOL);
@@ -9863,15 +10076,21 @@ static void blit_conv_rgba_quadrant(uint8_t *dst, const uint8_t *src, int idx) {
     }
 }
 
-static int process_live_conv_cl_effect(int effect_idx, const uint8_t *src,
+static int process_live_conv_cl_effect(const conv_cl_effect_t *effect,
+                                       const uint8_t *src,
                                        uint8_t *dst,
                                        MEDIA_CONV_CL_PERF *perf) {
-    if (effect_idx < 0 || effect_idx >= VPSS_DEMO_OUTPUTS || !src || !dst) {
+    if (!effect || effect->kernel_size <= 0 || !effect->table ||
+        effect->table_size <= 0 || !src || !dst) {
+        return -1;
+    }
+    if (MEDIA_CONV_CL_SetKernelSize(LIVE_CONV_CL_GRP,
+                                    effect->kernel_size) != 0) {
         return -1;
     }
     if (MEDIA_CONV_CL_SetTable(LIVE_CONV_CL_GRP,
-                               g_conv_cl_effects[effect_idx].table,
-                               g_conv_cl_effects[effect_idx].table_size) != 0) {
+                               effect->table,
+                               effect->table_size) != 0) {
         return -1;
     }
     if (process_live_conv_cl(src, dst) != 0) {
@@ -9884,22 +10103,30 @@ static int process_live_conv_cl_effect(int effect_idx, const uint8_t *src,
     return 0;
 }
 
-static int process_live_conv_cl_grid(const uint8_t *src, uint8_t *tmp,
-                                     uint8_t *grid) {
+static int process_live_conv_cl_grid(int stage_idx, const uint8_t *src,
+                                     uint8_t *tmp, uint8_t *grid) {
     if (!src || !tmp || !grid) return -1;
+    if (stage_idx < 0 || stage_idx >= CONV_CL_KERNEL_STAGE_COUNT) stage_idx = 0;
+    const conv_cl_kernel_stage_t *stage = &g_conv_cl_kernel_stages[stage_idx];
     memset(grid, 0, RGBA_FRAME_SIZE);
     g_conv_cl_show_kernel_ms = -1.0;
     g_conv_cl_show_queue_ms = -1.0;
+    g_conv_cl_show_stage = stage_idx;
 
     double kernel_sum = 0.0;
     double queue_sum = 0.0;
     int perf_ok = 1;
     int ok_count = 0;
     for (int i = 0; i < VPSS_DEMO_OUTPUTS; ++i) {
+        const conv_cl_effect_t *effect = &stage->effects[i];
         MEDIA_CONV_CL_PERF perf = {0};
-        if (process_live_conv_cl_effect(i, src, tmp, &perf) == 0) {
+        if (effect->kernel_size <= 0) {
+            blit_conv_rgba_quadrant(grid, src, i);
+            g_conv_cl_kernel_counts[stage_idx][i]++;
+            ok_count++;
+        } else if (process_live_conv_cl_effect(effect, src, tmp, &perf) == 0) {
             blit_conv_rgba_quadrant(grid, tmp, i);
-            g_conv_cl_show_counts[i]++;
+            g_conv_cl_kernel_counts[stage_idx][i]++;
             ok_count++;
             if (perf.gpu_kernel_total_ms >= 0.0 &&
                 perf.gpu_queue_total_ms >= 0.0) {
@@ -11124,6 +11351,61 @@ static void unload_loop_assets(void) {
     }
 }
 
+static int load_avm2d_video(void) {
+    static const char *camera_names[AVM2D_CAMERA_COUNT] = {"front", "rear", "left", "right"};
+    avm2d_video_t *video = &g_avm2d_video;
+    memset(video, 0, sizeof(*video));
+
+    for (int frame = 0; frame < AVM2D_VIDEO_FRAME_COUNT; ++frame) {
+        int frame_ok = 1;
+        for (int cam = 0; cam < AVM2D_CAMERA_COUNT; ++cam) {
+            char path[PATH_MAX];
+            snprintf(path, sizeof(path), "assets/loop/avm2d/video/%03d/%s.jpg",
+                     frame, camera_names[cam]);
+            if (load_image_rgb(path, &video->frames[frame][cam]) != 0) {
+                fprintf(stderr, "warning: failed to load AVM2D frame %s\n", path);
+                frame_ok = 0;
+                break;
+            }
+        }
+        if (!frame_ok) {
+            for (int cam = 0; cam < AVM2D_CAMERA_COUNT; ++cam) {
+                free(video->frames[frame][cam].rgb);
+                memset(&video->frames[frame][cam], 0, sizeof(video->frames[frame][cam]));
+            }
+            break;
+        }
+        video->frame_count++;
+    }
+
+    if (load_image_rgb("assets/loop/avm2d/dyfcalid/surround_blend_1_balance_1_car_1.jpg",
+                       &video->reference) == 0 &&
+        load_image_rgb("assets/loop/avm2d/dyfcalid/avm_gpu_output_overlay.jpg",
+                       &video->gpu) == 0) {
+        video->outputs_loaded = 1;
+    } else {
+        fprintf(stderr, "warning: failed to load AVM2D BEV outputs\n");
+    }
+
+    if (video->frame_count > 0 && video->outputs_loaded) {
+        set_tile_status("AVM2D", TILE_LOOP);
+    }
+    return video->frame_count;
+}
+
+static void unload_avm2d_video(void) {
+    avm2d_video_t *video = &g_avm2d_video;
+    for (int frame = 0; frame < AVM2D_VIDEO_FRAME_COUNT; ++frame) {
+        for (int cam = 0; cam < AVM2D_CAMERA_COUNT; ++cam) {
+            free(video->frames[frame][cam].rgb);
+            memset(&video->frames[frame][cam], 0, sizeof(video->frames[frame][cam]));
+        }
+    }
+    free(video->reference.rgb);
+    free(video->gpu.rgb);
+    memset(video, 0, sizeof(*video));
+}
+
 static int load_edof_pairs(void) {
     int total = 0;
     for (size_t i = 0; i < sizeof(g_edof_pairs) / sizeof(g_edof_pairs[0]); ++i) {
@@ -11296,8 +11578,23 @@ static void print_loop_asset_summary(void) {
     }
 }
 
+static void print_avm2d_summary(void) {
+    printf("%-8s %d/%d frames outputs=%s", "AVM2D", g_avm2d_video.frame_count,
+           AVM2D_VIDEO_FRAME_COUNT, g_avm2d_video.outputs_loaded ? "yes" : "no");
+    if (g_avm2d_video.frame_count > 0) {
+        printf("  %dx%d", g_avm2d_video.frames[0][0].width, g_avm2d_video.frames[0][0].height);
+    }
+    if (g_avm2d_video.outputs_loaded) {
+        printf("  ref=%dx%d gpu=%dx%d",
+               g_avm2d_video.reference.width, g_avm2d_video.reference.height,
+               g_avm2d_video.gpu.width, g_avm2d_video.gpu.height);
+    }
+    printf("\n");
+}
+
 static int run_self_test(void) {
     int loaded = load_loop_assets();
+    int avm2d_loaded = load_avm2d_video();
     collect_health(loaded);
 
     printf("RKTohi AllDemo self-test\n");
@@ -11316,7 +11613,11 @@ static int run_self_test(void) {
     snprintf(detail, sizeof(detail), "%d/%d decoded", g_health.loop_loaded, g_health.loop_expected);
     failures += print_check("loop assets", g_health.loop_loaded == g_health.loop_expected, detail);
     print_loop_asset_summary();
+    failures += print_check("avm2d video", avm2d_loaded == AVM2D_VIDEO_FRAME_COUNT &&
+                            g_avm2d_video.outputs_loaded, "assets/loop/avm2d");
+    print_avm2d_summary();
 
+    unload_avm2d_video();
     unload_loop_assets();
     printf("summary: %s failures=%d\n", failures == 0 ? "PASS" : "FAIL", failures);
     return failures == 0 ? 0 : 1;
@@ -11939,9 +12240,12 @@ int main(int argc, char **argv) {
 
     if (asset_check) {
         int loaded = load_loop_assets();
+        int avm2d_loaded = load_avm2d_video();
         print_loop_asset_summary();
+        print_avm2d_summary();
+        unload_avm2d_video();
         unload_loop_assets();
-        return loaded > 0 ? 0 : 1;
+        return loaded > 0 && avm2d_loaded == AVM2D_VIDEO_FRAME_COUNT ? 0 : 1;
     }
 
     if (only_tile && find_tile_index(only_tile) < 0) {
@@ -11974,12 +12278,15 @@ int main(int argc, char **argv) {
 
     if (!solid_test) mark_showcase_modules();
     int loaded_assets = solid_test ? 0 : load_loop_assets();
+    int loaded_avm2d_video = (!solid_test && (!only_tile || strcasecmp(only_tile, "AVM2D") == 0)) ?
+        load_avm2d_video() : 0;
     int loaded_edof_pairs = (!solid_test && (!only_tile || strcasecmp(only_tile, "EDOF_CL") == 0)) ?
         load_edof_pairs() : 0;
     int loaded_mcf_pairs = (!solid_test && (!only_tile || strcasecmp(only_tile, "MCF_FUSION_CL") == 0)) ?
         load_mcf_pairs() : 0;
     int loaded_pano_sample = (!solid_test && (!only_tile || strcasecmp(only_tile, "PANO") == 0)) ?
         load_pano_sample() : 0;
+    (void)loaded_avm2d_video;
     collect_health(loaded_assets);
     if (heavy_probe && !solid_test) {
         probe_modules();
@@ -13165,8 +13472,9 @@ int main(int argc, char **argv) {
                                 }
                             }
                             if (live_conv_ok && last_rgba_src && last_conv_tmp && last_conv) {
+                                int conv_stage = conv_cl_stage_for_frame(frame);
                                 nv12_to_rgba_frame(last_cam, last_rgba_src, CAM_W, CAM_H, CAM_STRIDE);
-                                if (process_live_conv_cl_grid(last_rgba_src, last_conv_tmp,
+                                if (process_live_conv_cl_grid(conv_stage, last_rgba_src, last_conv_tmp,
                                                               last_conv) == 0) {
                                     conv_frames++;
                                 }
@@ -13221,8 +13529,9 @@ int main(int argc, char **argv) {
         }
         if (live_conv_ok && last_rgba_src && last_conv_tmp && last_conv &&
             !(only_tile && strcasecmp(only_tile, "CONV_CL") == 0 && camera_ok)) {
+            int conv_stage = conv_cl_stage_for_frame(frame);
             fill_synthetic_rgba(last_rgba_src, CAM_W, CAM_H, CAM_W * 4, frame);
-            if (process_live_conv_cl_grid(last_rgba_src, last_conv_tmp, last_conv) == 0) {
+            if (process_live_conv_cl_grid(conv_stage, last_rgba_src, last_conv_tmp, last_conv) == 0) {
                 conv_frames++;
             }
         }
@@ -14340,6 +14649,8 @@ int main(int argc, char **argv) {
         }
         if (only_tile && strcasecmp(only_tile, "CONV_CL") == 0 &&
             (frame % FPS) == 0) {
+            const conv_cl_kernel_stage_t *stage = current_conv_cl_stage();
+            int stage_idx = g_conv_cl_show_stage;
             char gpu_text[24];
             char rga_text[24];
             char cl_text[48];
@@ -14354,16 +14665,17 @@ int main(int argc, char **argv) {
             } else {
                 snprintf(cl_text, sizeof(cl_text), "N/A");
             }
-            printf("CONV_CL vi_frames=%d %s=%llu %s=%llu %s=%llu %s=%llu cpu=%.0f%% gpu=%s rga=%s cl=%s mode=single-sequential\n",
+            printf("CONV_CL vi_frames=%d stage=%s %s=%llu %s=%llu %s=%llu %s=%llu cpu=%.0f%% gpu=%s rga=%s cl=%s mode=single-sequential\n",
                    cam_frames,
-                   g_conv_cl_effects[0].name,
-                   (unsigned long long)g_conv_cl_show_counts[0],
-                   g_conv_cl_effects[1].name,
-                   (unsigned long long)g_conv_cl_show_counts[1],
-                   g_conv_cl_effects[2].name,
-                   (unsigned long long)g_conv_cl_show_counts[2],
-                   g_conv_cl_effects[3].name,
-                   (unsigned long long)g_conv_cl_show_counts[3],
+                   stage->log_name,
+                   stage->effects[0].name,
+                   (unsigned long long)g_conv_cl_kernel_counts[stage_idx][0],
+                   stage->effects[1].name,
+                   (unsigned long long)g_conv_cl_kernel_counts[stage_idx][1],
+                   stage->effects[2].name,
+                   (unsigned long long)g_conv_cl_kernel_counts[stage_idx][2],
+                   stage->effects[3].name,
+                   (unsigned long long)g_conv_cl_kernel_counts[stage_idx][3],
                    g_perf.cpu_percent,
                    gpu_text,
                    rga_text,
@@ -14463,6 +14775,7 @@ int main(int argc, char **argv) {
     MEDIA_POOL_Destroy(WORK_POOL_RGB);
     MEDIA_POOL_Destroy(WORK_POOL_OUT);
     unload_pano_sample();
+    unload_avm2d_video();
     unload_mcf_pairs();
     unload_edof_pairs();
     unload_loop_assets();
