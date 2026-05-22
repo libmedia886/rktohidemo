@@ -31,7 +31,7 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --no-rotate-main
 ```
 
-默认客户演示分页策略：轮播用户容易看懂、画面效果明显、稳定上屏的页面：`VI`、`VPSS`、`VMIX`、`OSD`、`RGA`、`RESIZE_RGA`、`CSC_CL`、`CLAHE`、`RETINEX`、`CAP_DEHAZE`、`CAP_DEHAZE_OFFLINE`、`CONV_CL`、`TRANSFORM`、`THERMAL`、`EDOF_CL`、`MCF_FUSION_CL`、`PANO`。偏工程验证或调试意味更强的 `VO`、`WBC`、`CSC_RGA`、`STEREO_3D` 保留在工程演示或 `--only` 模式，避免客户现场误解为黑屏、冻结、格式细节或调试页。
+默认客户演示分页策略：轮播用户容易看懂、画面效果明显、稳定上屏的页面：`VI`、`VPSS`、`VMIX`、`OSD`、`RGA`、`RESIZE_RGA`、`CSC_CL`、`CLAHE`、`RETINEX`、`RETINEX_OFFLINE`、`CAP_DEHAZE`、`CAP_DEHAZE_OFFLINE`、`CONV_CL`、`TRANSFORM`、`THERMAL`、`EDOF_CL`、`MCF_FUSION_CL`、`PANO`。偏工程验证或调试意味更强的 `VO`、`WBC`、`CSC_RGA`、`STEREO_3D` 保留在工程演示或 `--only` 模式，避免客户现场误解为黑屏、冻结、格式细节或调试页。
 
 如果要看完整工程页表：
 
@@ -68,6 +68,7 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --only VMIX
 /userdata/alldemo/scripts/run_alldemo.sh --only CLAHE
 /userdata/alldemo/scripts/run_alldemo.sh --only RETINEX
+/userdata/alldemo/scripts/run_alldemo.sh --only RETINEX_OFFLINE
 /userdata/alldemo/scripts/run_alldemo.sh --only EDOF_CL
 /userdata/alldemo/scripts/run_alldemo.sh --only MCF_FUSION_CL
 /userdata/alldemo/scripts/run_alldemo.sh --only DUALVIEW
@@ -93,7 +94,8 @@ cmake --build build -j
 `VMIX` 单独模式使用 3840x2160 实时摄像头输入，走 `VI 3840x2160 -> VPSS(4路480x480同源输入) -> VMIX(input0..3) -> OSD -> VO` bind 链路；VMIX 页面把四路输入做位置叠放和 alpha 透明混合，屏幕上显示中文数据流、各路 alpha、VI/VMIX 帧计数和 CPU/GPU/RGA 指标，并保存 `vo_captures/vmix_vo_*.bmp` 供复看。
 `VPSS` 单独模式使用 3840x2160 实时摄像头输入，走 `VI 3840x2160 -> VPSS(4路输出) -> VMIX -> OSD -> VO` bind 链路，并在同屏展示 VPSS 多输出能力：全幅缩放、动态裁剪后缩放、水平/垂直翻转切换、中心缩放变化；页面保存 `vo_captures/vpss_vo_*.bmp` 供复看。
 `CLAHE` 单独模式使用 3840x2160 实时摄像头输入，走 `VI 3840x2160 -> CLAHE 3840x2160 -> RESIZE_RGA 1080x608 -> VMIX_RGA -> OSD -> VO`；后置缩放保持 16:9 比例，CLAHE 每 1 秒在 passthrough 原图和正常增强之间切换，屏幕动态展示当前模式、clip limit、8x8 tile grid、CLAHE/RESIZE 帧计数和 CPU/GPU/RGA 指标，并保存 `vo_captures/clahe_vo_*.bmp` 供复看。
-`RETINEX` 单独模式使用 3840x2160 实时摄像头输入，走 `VI 3840x2160 -> RETINEX 3840x2160 -> RESIZE_RGA 1080x608 -> VMIX_RGA -> OSD -> VO`；后置缩放保持 16:9 比例，RETINEX 每 1 秒在 passthrough 原图和正常增强之间切换，屏幕显示 gain、threshold、log range、RETINEX/RESIZE 帧计数和 CPU/GPU/RGA 指标，并保存 `vo_captures/retinex_vo_*.bmp` 供复看。
+`RETINEX` 单独模式使用 3840x2160 实时摄像头输入，走 `VI 3840x2160 -> RETINEX 3840x2160 -> RESIZE_RGA 1080x608 -> VMIX_RGA -> OSD -> VO`；后置缩放保持 16:9 比例，RETINEX 每 1 秒在 passthrough 原图和正常增强之间切换，屏幕显示 gain=40、threshold、log range、RETINEX/RESIZE 帧计数和 CPU/GPU/RGA 指标，并保存 `vo_captures/retinex_vo_*.bmp` 供复看。
+`RETINEX_OFFLINE` 单独模式不占用摄像头，使用 `scripts/run_alldemo.sh` 从 `/userdata/rktohi/research/retinex/normalized/exdark_boat` 同步到 `assets/loop/retinex/exdark` 的前 100 张 EXDark 低照度图片；每 1 秒切换一张，将原图缩放为 640x640 NV12 后送入 RETINEX，使用 gain=40 生成目标增强图，并做上下等尺寸对比。默认客户循环中该页紧跟实时 `RETINEX` 页，完整播放约 100 秒，并保存 `vo_captures/retinex_offline_vo_*.bmp` 供复看。
 `EDOF_CL` 单独模式使用 `assets/loop/edof/mfi_whu` 的 `a.jpg/b.jpg/fused.png` 样张做三栏对比，每 3 秒切换一组；默认客户页使用参考融合结果稳定展示并避免慢速 OpenCL 线程影响 Ctrl+C 清理，页面按样张索引缓存整页 NV12 结果，日志输出帧数、样张索引、更新次数、模式、cache 状态和 CPU/GPU/RGA 指标，并保存 `vo_captures/edof_cl_vo_*.bmp` 供复看。需要验证实时模块路径时可显式设置 `ALLDEMO_EDOF_CL_LIVE=1`。
 `MCF_FUSION_CL` 单独模式使用 `assets/loop/mcf_fusion` 的彩色图、单色细节图和参考融合图做对比，每 3 秒切换一组；程序优先调用 `MEDIA_MCF_FUSION_CL` 的 OpenCL 模块生成输出，如果当前 GPU/OpenCL 路径初始化失败则保留参考融合结果上屏，避免展示页空白。页面按样张索引缓存整页 NV12 结果，日志输出帧数、样张索引、更新次数、模式、cache 状态、CPU/GPU/RGA 和 CL total/stats/fusion 耗时，并保存 `vo_captures/mcf_fusion_cl_vo_*.bmp` 供复看。
 `DUALVIEW` 单独模式参考 `/userdata/rktohi/demo/dualview` 示例生成两路 RGB888 输入：input0 纯红、input1 纯蓝，主画面同时显示 input0、input1、side-by-side 输出和 line-by-line 输出，不占用摄像头；屏幕上显示中文数据流和实测 FPS/CPU/GPU/RGA 指标。

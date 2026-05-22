@@ -194,6 +194,11 @@
 #define EDOF_PAIR_SECONDS 3
 #define MCF_PAIR_SECONDS 3
 #define CAP_DEHAZE_OFFLINE_SECONDS 3
+#define RETINEX_GAIN 40.0f
+#define RETINEX_OFFLINE_SECONDS 1
+#define RETINEX_OFFLINE_TARGET_SAMPLES 100
+#define RETINEX_OFFLINE_MAX_SAMPLES 100
+#define RETINEX_OFFLINE_ASSET_DIR "assets/loop/retinex/exdark"
 #define RESIZE_DEMO_UPDATE_FRAMES (FPS * 2)
 #define VO_CAPTURE_SECONDS 5
 #define TILE_FIRST_INDEX 4
@@ -237,6 +242,13 @@ typedef struct {
     image_asset_t images[4];
     int loaded_count;
 } loop_asset_t;
+
+typedef struct {
+    char paths[RETINEX_OFFLINE_MAX_SAMPLES][PATH_MAX];
+    int count;
+    int current_index;
+    char current_name[96];
+} retinex_offline_assets_t;
 
 typedef enum {
     NAV_KEY_NONE = 0,
@@ -665,6 +677,7 @@ static module_tile_t g_tiles[] = {
     {"RESIZE_RGA", 0, 0, TILE_OFFLINE}, {"CSC_RGA", 0, 0, TILE_OFFLINE},
     {"CSC_CL", 0, 0, TILE_OFFLINE}, {"OSD", 0, 0, TILE_OFFLINE},
     {"CLAHE", 0, 0, TILE_OFFLINE}, {"RETINEX", 0, 0, TILE_OFFLINE},
+    {"RETINEX_OFFLINE", 0, 0, TILE_OFFLINE},
     {"CAP_DEHAZE", 0, 0, TILE_OFFLINE}, {"CAP_DEHAZE_OFFLINE", 0, 0, TILE_OFFLINE},
     {"DCP_FAST_DEHAZE", 0, 0, TILE_OFFLINE},
     {"THERMAL", 0, 0, TILE_OFFLINE}, {"CONV_CL", 0, 0, TILE_OFFLINE},
@@ -683,19 +696,19 @@ static module_tile_t g_tiles[] = {
 
 static const char *g_module_pages[] = {
     "VI", "VPSS", "VO", "WBC", "RGA", "RESIZE_RGA", "CSC_RGA", "CSC_CL", "OSD",
-    "CLAHE", "RETINEX", "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "DCP_FAST_DEHAZE", "THERMAL", "CONV_CL",
+    "CLAHE", "RETINEX", "RETINEX_OFFLINE", "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "DCP_FAST_DEHAZE", "THERMAL", "CONV_CL",
     "TRANSFORM", "VMIX", "EDOF_CL", "MCF_FUSION_CL", "DUALVIEW", "STEREO_3D", "PANO", "AVM2D",
 };
 
 static const char *g_default_pages[] = {
     "VI", "VPSS", "VMIX", "OSD", "RGA", "RESIZE_RGA", "CSC_CL", "CLAHE", "RETINEX",
-    "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "THERMAL", "EDOF_CL", "MCF_FUSION_CL",
+    "RETINEX_OFFLINE", "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "THERMAL", "EDOF_CL", "MCF_FUSION_CL",
     "PANO", "AVM2D",
 };
 
 static const char *g_engineering_pages[] = {
     "VI", "VPSS", "VO", "WBC", "OSD", "RESIZE_RGA", "THERMAL", "EDOF_CL",
-    "MCF_FUSION_CL", "RGA", "CSC_RGA", "CSC_CL", "CLAHE", "RETINEX",
+    "MCF_FUSION_CL", "RGA", "CSC_RGA", "CSC_CL", "CLAHE", "RETINEX", "RETINEX_OFFLINE",
     "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "VMIX", "STEREO_3D", "PANO", "AVM2D",
 };
 
@@ -733,6 +746,10 @@ static int loop_page_rotate_seconds(const demo_loop_t *loop, const char *module)
         int full_cycle = CONV_CL_KERNEL_STAGE_SECONDS * CONV_CL_KERNEL_STAGE_COUNT;
         if (seconds < full_cycle) seconds = full_cycle;
     }
+    if (module && strcasecmp(module, "RETINEX_OFFLINE") == 0) {
+        int full_cycle = RETINEX_OFFLINE_SECONDS * RETINEX_OFFLINE_TARGET_SAMPLES;
+        if (seconds < full_cycle) seconds = full_cycle;
+    }
     return seconds;
 }
 
@@ -764,6 +781,8 @@ static loop_asset_t g_loop_assets[] = {
         "assets/loop/avm_inputs/src_4.jpg",
     }, 4, {{0}}, 0},
 };
+
+static retinex_offline_assets_t g_retinex_offline = {{0}, 0, -1, {0}};
 
 static edof_pair_t g_edof_pairs[] = {
     {"assets/loop/edof/mfi_whu/0002/a.jpg",
@@ -1259,6 +1278,8 @@ static void maybe_capture_module_vo_frame(const char *only_tile, int frame,
         prefix = "pano";
     } else if (strcasecmp(only_tile, "RETINEX") == 0) {
         prefix = "retinex";
+    } else if (strcasecmp(only_tile, "RETINEX_OFFLINE") == 0) {
+        prefix = "retinex_offline";
     } else if (strcasecmp(only_tile, "CAP_DEHAZE") == 0) {
         prefix = "cap_dehaze";
     } else if (strcasecmp(only_tile, "CAP_DEHAZE_OFFLINE") == 0) {
@@ -2905,6 +2926,56 @@ static void draw_dehaze_showcase(uint8_t *dst, int stride, int x, int y, int w, 
     draw_text(dst, stride, x + 24, bottom_y + 110, runtime, 2, 255, 230, 120);
 }
 
+static void draw_retinex_offline_showcase(uint8_t *dst, int stride, int x, int y, int w, int h,
+                                          const uint8_t *input_nv12,
+                                          const uint8_t *output_nv12) {
+    char runtime[128];
+    char sample_line[160];
+    char param_line[128];
+    int top_h = 148;
+    int bottom_h = 178;
+    int gap = 12;
+    int compare_y = y + top_h + gap;
+    int compare_h = h - top_h - bottom_h - gap * 2;
+    int bottom_y = y + h - bottom_h;
+    int sample_number = g_retinex_offline.current_index >= 0 ?
+        g_retinex_offline.current_index + 1 : 0;
+    const char *sample_name = g_retinex_offline.current_name[0] ?
+        g_retinex_offline.current_name : "waiting";
+
+    if (compare_h < 320) return;
+    format_runtime_status(runtime, sizeof(runtime));
+    snprintf(sample_line, sizeof(sample_line), "SAMPLE %03d/%03d  %s",
+             sample_number, g_retinex_offline.count, sample_name);
+    snprintf(param_line, sizeof(param_line),
+             "PARAM gain=%.1f threshold=0.5 log=-3.0..8.5 cadence=%ds",
+             RETINEX_GAIN, RETINEX_OFFLINE_SECONDS);
+
+    fill_rect_nv12(dst, stride, x, y, w, top_h, 6, 13, 24);
+    stroke_rect_nv12(dst, stride, x, y, w, top_h, 2, 66, 150, 210);
+    draw_utf8_text(dst, stride, x + 24, y + 18,
+                   "RETINEX：EXDark离线图片效果对比", 28, 170, 255, 220);
+    draw_utf8_text(dst, stride, x + 24, y + 62,
+                   "数据流：EXDark低照度图片 -> RETINEX gain=40 -> 原图/增强图上下对比。",
+                   20, 210, 235, 255);
+    draw_utf8_text(dst, stride, x + 24, y + 96,
+                   "为什么这样做：实时画面差异不明显时，用低照度样张稳定展示暗部提亮效果。",
+                   20, 255, 230, 120);
+
+    draw_nv12_comparison(dst, stride, x, compare_y, w, compare_h,
+                         input_nv12, output_nv12,
+                         "TOP: EXDARK ORIGINAL", "BOTTOM: RETINEX GAIN40 OUTPUT");
+
+    fill_rect_nv12(dst, stride, x, bottom_y, w, bottom_h, 5, 10, 18);
+    stroke_rect_nv12(dst, stride, x, bottom_y, w, bottom_h, 2, 0, 190, 170);
+    draw_utf8_text(dst, stride, x + 24, bottom_y + 22,
+                   "展示重点：100张EXDark图片，每1秒切换一张，持续观察原图和目标增强图。",
+                   22, 170, 255, 220);
+    draw_text(dst, stride, x + 24, bottom_y + 70, sample_line, 1, 190, 230, 255);
+    draw_text(dst, stride, x + 24, bottom_y + 104, param_line, 1, 190, 230, 255);
+    draw_text(dst, stride, x + 24, bottom_y + 136, runtime, 2, 255, 230, 120);
+}
+
 static void vpss_bind_layout(int *start_x, int *start_y, int *cell, int *gap) {
     int c = VPSS_TILE_W;
     int g = 40;
@@ -3659,6 +3730,9 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
     } else if (strcmp(g_tiles[idx].name, "RETINEX") == 0 && (retinex_in || retinex_live)) {
         draw_nv12_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38,
                              retinex_in, retinex_live, "VIDEO IN", "RETINEX OUT");
+    } else if (strcmp(g_tiles[idx].name, "RETINEX_OFFLINE") == 0 && (retinex_in || retinex_live)) {
+        draw_nv12_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38,
+                             retinex_in, retinex_live, "EXDARK IN", "RETINEX OUT");
     } else if (strcmp(g_tiles[idx].name, "PANO") == 0 && (g_pano_sample.loaded || pano_out)) {
         draw_pano_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38, pano_out);
     } else if (strcmp(g_tiles[idx].name, "AVM2D") == 0 && g_avm2d_video.frame_count > 0) {
@@ -3822,6 +3896,12 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
     if (strcmp(g_tiles[idx].name, "RETINEX") == 0 && (cam || retinex_live)) {
         draw_nv12_comparison(dst, stride, x + 12, y + 12, w - 24, h - 24,
                              cam, retinex_live, "VIDEO IN", "RETINEX OUT");
+        return;
+    }
+
+    if (strcmp(g_tiles[idx].name, "RETINEX_OFFLINE") == 0 && (cam || retinex_live)) {
+        draw_retinex_offline_showcase(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                                      cam, retinex_live);
         return;
     }
 
@@ -10570,7 +10650,7 @@ static int setup_live_retinex(void) {
     attr.output_depth = 3;
     attr.input_stride = CAM_STRIDE;
     attr.output_stride = CAM_STRIDE;
-    attr.gain = 20.0f;
+    attr.gain = RETINEX_GAIN;
     attr.threshold = 0.5f;
     attr.log_min = -3.0f;
     attr.log_max = 8.5f;
@@ -10603,7 +10683,7 @@ static int setup_live_retinex_bind(void) {
     attr.output_depth = 4;
     attr.input_stride = g_camera_input_stride;
     attr.output_stride = g_camera_input_stride;
-    attr.gain = 20.0f;
+    attr.gain = RETINEX_GAIN;
     attr.threshold = 0.5f;
     attr.log_min = -3.0f;
     attr.log_max = 8.5f;
@@ -10654,7 +10734,8 @@ static int update_retinex_compare_overlay(uint64_t vi_count, uint64_t retinex_co
     snprintf(count_line, sizeof(count_line), "FRAMES  VI=%llu  RETINEX=%llu  RESIZE=%llu",
              (unsigned long long)vi_count, (unsigned long long)retinex_count,
              (unsigned long long)effect_resize_count);
-    snprintf(param_line, sizeof(param_line), "GAIN 20.0  THRESHOLD 0.5  LOG -3.0..8.5");
+    snprintf(param_line, sizeof(param_line), "GAIN %.1f  THRESHOLD 0.5  LOG -3.0..8.5",
+             RETINEX_GAIN);
     snprintf(mode_line, sizeof(mode_line), "MODE %s  1s AUTO SWITCH",
              ((frame / FPS) % 2) == 0 ? "PASSTHROUGH" : "RETINEX ENHANCE");
     snprintf(bind_line1, sizeof(bind_line1), "VI0.%s -> RETINEX%d.%s -> RESIZE%d.%s -> %s%d.%s -> OSD%d -> VO0",
@@ -11351,6 +11432,88 @@ static void unload_loop_assets(void) {
     }
 }
 
+static int supported_image_path(const char *path) {
+    const char *ext = path ? strrchr(path, '.') : NULL;
+    return ext && (strcasecmp(ext, ".jpg") == 0 ||
+                   strcasecmp(ext, ".jpeg") == 0 ||
+                   strcasecmp(ext, ".png") == 0);
+}
+
+static int retinex_offline_path_cmp(const void *a, const void *b) {
+    return strcmp((const char *)a, (const char *)b);
+}
+
+static int load_retinex_offline_assets(void) {
+    DIR *dir = opendir(RETINEX_OFFLINE_ASSET_DIR);
+    struct dirent *ent = NULL;
+    g_retinex_offline.count = 0;
+    g_retinex_offline.current_index = -1;
+    g_retinex_offline.current_name[0] = '\0';
+
+    if (!dir) {
+        fprintf(stderr, "warning: failed to open retinex exdark asset dir %s: %s\n",
+                RETINEX_OFFLINE_ASSET_DIR, strerror(errno));
+        return 0;
+    }
+
+    while ((ent = readdir(dir)) != NULL &&
+           g_retinex_offline.count < RETINEX_OFFLINE_MAX_SAMPLES) {
+        char path[PATH_MAX];
+        struct stat st;
+        if (ent->d_name[0] == '.') continue;
+        if (!supported_image_path(ent->d_name)) continue;
+        if (snprintf(path, sizeof(path), "%s/%s",
+                     RETINEX_OFFLINE_ASSET_DIR, ent->d_name) >= (int)sizeof(path)) {
+            continue;
+        }
+        if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) continue;
+        snprintf(g_retinex_offline.paths[g_retinex_offline.count],
+                 sizeof(g_retinex_offline.paths[g_retinex_offline.count]),
+                 "%s", path);
+        g_retinex_offline.count++;
+    }
+    closedir(dir);
+
+    if (g_retinex_offline.count > 1) {
+        qsort(g_retinex_offline.paths,
+              (size_t)g_retinex_offline.count,
+              sizeof(g_retinex_offline.paths[0]),
+              retinex_offline_path_cmp);
+    }
+    if (g_retinex_offline.count > 0 && default_page_index("RETINEX_OFFLINE") >= 0) {
+        set_tile_status("RETINEX_OFFLINE", TILE_LOOP);
+    }
+    return g_retinex_offline.count;
+}
+
+static int load_retinex_offline_sample_nv12(int index, uint8_t *dst) {
+    if (!dst || index < 0 || index >= g_retinex_offline.count) return -1;
+    image_asset_t img = {0};
+    const char *path = g_retinex_offline.paths[index];
+    const char *base = strrchr(path, '/');
+    if (load_image_rgb(path, &img) != 0) {
+        fprintf(stderr, "warning: failed to load retinex exdark sample %s\n", path);
+        return -1;
+    }
+    image_to_nv12_frame(&img, dst);
+    g_retinex_offline.current_index = index;
+    snprintf(g_retinex_offline.current_name, sizeof(g_retinex_offline.current_name),
+             "%s", base ? base + 1 : path);
+    free(img.rgb);
+    return 0;
+}
+
+static void print_retinex_offline_summary(void) {
+    printf("%-8s %d/%d dir=%s", "RETINEX_OFFLINE", g_retinex_offline.count,
+           RETINEX_OFFLINE_TARGET_SAMPLES, RETINEX_OFFLINE_ASSET_DIR);
+    if (g_retinex_offline.count > 0) {
+        printf(" first=%s", strrchr(g_retinex_offline.paths[0], '/') ?
+               strrchr(g_retinex_offline.paths[0], '/') + 1 :
+               g_retinex_offline.paths[0]);
+    }
+    printf("\n");
+}
+
 static int load_avm2d_video(void) {
     static const char *camera_names[AVM2D_CAMERA_COUNT] = {"front", "rear", "left", "right"};
     avm2d_video_t *video = &g_avm2d_video;
@@ -11594,6 +11757,7 @@ static void print_avm2d_summary(void) {
 
 static int run_self_test(void) {
     int loaded = load_loop_assets();
+    int retinex_offline_loaded = load_retinex_offline_assets();
     int avm2d_loaded = load_avm2d_video();
     collect_health(loaded);
 
@@ -11616,6 +11780,12 @@ static int run_self_test(void) {
     failures += print_check("avm2d video", avm2d_loaded == AVM2D_VIDEO_FRAME_COUNT &&
                             g_avm2d_video.outputs_loaded, "assets/loop/avm2d");
     print_avm2d_summary();
+    snprintf(detail, sizeof(detail), "%d/%d decoded", retinex_offline_loaded,
+             RETINEX_OFFLINE_TARGET_SAMPLES);
+    failures += print_check("retinex exdark",
+                            retinex_offline_loaded >= RETINEX_OFFLINE_TARGET_SAMPLES,
+                            detail);
+    print_retinex_offline_summary();
 
     unload_avm2d_video();
     unload_loop_assets();
@@ -11989,6 +12159,7 @@ static const char *module_flow_note(const char *name) {
     if (strcasecmp(name, "CSC_CL") == 0) return "数据流：VI 3840x2160 -> CSC_CL 4K ARGB -> RESIZE_RGA 1080x1920 -> OSD -> VO。";
     if (strcasecmp(name, "CLAHE") == 0) return "数据流：VI 3840x2160 -> CLAHE增强 -> RESIZE_RGA缩放 -> 上下对比显示。";
     if (strcasecmp(name, "RETINEX") == 0) return "数据流：VI 3840x2160 -> RETINEX校正/直通 -> RESIZE_RGA缩放 -> 单路显示。";
+    if (strcasecmp(name, "RETINEX_OFFLINE") == 0) return "数据流：EXDark静态低照度图 -> RETINEX gain=40 -> 原图/增强图对比。";
     if (strcasecmp(name, "CAP_DEHAZE") == 0) return "数据流：VI 1920x1080有效画面 -> CSC_RGA BGR888 -> CAP_DEHAZE -> VO。";
     if (strcasecmp(name, "CAP_DEHAZE_OFFLINE") == 0) return "数据流：静态低能见度图 -> CAP_DEHAZE refine_scale=0.25 -> 原图/输出图对比。";
     if (strcasecmp(name, "DCP_FAST_DEHAZE") == 0) return "数据流：VI 3840x2160 -> CSC_RGA BGR888 -> DCP_FAST_DEHAZE -> RESIZE_RGA -> VO。";
@@ -12018,6 +12189,7 @@ static const char *module_showcase_note(const char *name) {
     if (strcasecmp(name, "CSC_CL") == 0) return "展示重点：GPU/OpenCL颜色矩阵转换和耗时指标。";
     if (strcasecmp(name, "CLAHE") == 0) return "展示重点：上下对比局部对比度增强效果。";
     if (strcasecmp(name, "RETINEX") == 0) return "展示重点：1秒直通、1秒增强，观察光照校正和暗部细节增强。";
+    if (strcasecmp(name, "RETINEX_OFFLINE") == 0) return "展示重点：100张EXDark低照度图逐张对比，突出暗部提亮效果。";
     if (strcasecmp(name, "CAP_DEHAZE") == 0) return "展示重点：实时去雾前后对比，突出低能见度细节。";
     if (strcasecmp(name, "CAP_DEHAZE_OFFLINE") == 0) return "展示重点：用固定低能见度图片看清CAP去雾前后差异。";
     if (strcasecmp(name, "DCP_FAST_DEHAZE") == 0) return "展示重点：暗通道快速去雾前后对比。";
@@ -12240,12 +12412,16 @@ int main(int argc, char **argv) {
 
     if (asset_check) {
         int loaded = load_loop_assets();
+        int retinex_offline_loaded = load_retinex_offline_assets();
         int avm2d_loaded = load_avm2d_video();
         print_loop_asset_summary();
+        print_retinex_offline_summary();
         print_avm2d_summary();
         unload_avm2d_video();
         unload_loop_assets();
-        return loaded > 0 && avm2d_loaded == AVM2D_VIDEO_FRAME_COUNT ? 0 : 1;
+        return loaded > 0 &&
+            retinex_offline_loaded >= RETINEX_OFFLINE_TARGET_SAMPLES &&
+            avm2d_loaded == AVM2D_VIDEO_FRAME_COUNT ? 0 : 1;
     }
 
     if (only_tile && find_tile_index(only_tile) < 0) {
@@ -12269,6 +12445,7 @@ int main(int argc, char **argv) {
     const int edof_only_page = only_tile && strcasecmp(only_tile, "EDOF_CL") == 0;
     const int mcf_only_page = only_tile && strcasecmp(only_tile, "MCF_FUSION_CL") == 0;
     const int pano_only_page = only_tile && strcasecmp(only_tile, "PANO") == 0;
+    const int retinex_offline_only_page = only_tile && strcasecmp(only_tile, "RETINEX_OFFLINE") == 0;
 
     if (MEDIA_SYS_Init() != 0) {
         fprintf(stderr, "MEDIA_SYS_Init failed\n");
@@ -12278,6 +12455,7 @@ int main(int argc, char **argv) {
 
     if (!solid_test) mark_showcase_modules();
     int loaded_assets = solid_test ? 0 : load_loop_assets();
+    int loaded_retinex_offline_samples = solid_test ? 0 : load_retinex_offline_assets();
     int loaded_avm2d_video = (!solid_test && (!only_tile || strcasecmp(only_tile, "AVM2D") == 0)) ?
         load_avm2d_video() : 0;
     int loaded_edof_pairs = (!solid_test && (!only_tile || strcasecmp(only_tile, "EDOF_CL") == 0)) ?
@@ -12356,9 +12534,14 @@ int main(int argc, char **argv) {
         live_clahe_ok = 1;
     }
     int live_retinex_ok = 0;
-    if (!solid_test && !only_tile && default_page_index("RETINEX") >= 0 &&
+    if (!solid_test &&
+        ((!only_tile && default_page_index("RETINEX") >= 0) ||
+         (only_tile && strcasecmp(only_tile, "RETINEX_OFFLINE") == 0)) &&
         setup_live_retinex() == 0) {
         live_retinex_ok = 1;
+        if (only_tile && strcasecmp(only_tile, "RETINEX_OFFLINE") == 0) {
+            set_tile_status("RETINEX_OFFLINE", TILE_LIVE);
+        }
     }
     int live_edof_ok = 0;
     if (!solid_test && only_tile && strcasecmp(only_tile, "EDOF_CL") == 0 &&
@@ -13320,6 +13503,7 @@ int main(int argc, char **argv) {
     int conv_frames = 0;
     int clahe_frames = 0;
     int retinex_frames = 0;
+    int retinex_offline_sample_index = -1;
     int edof_frames = 0;
     int edof_pair_index = -1;
     int mcf_frames = 0;
@@ -13539,6 +13723,18 @@ int main(int argc, char **argv) {
             fill_synthetic_nv12(last_cam, CAM_W, CAM_H, CAM_STRIDE, frame);
             if (process_live_clahe(last_cam, last_clahe) == 0) {
                 clahe_frames++;
+            }
+        }
+        if (live_retinex_ok && retinex_offline_only_page &&
+            loaded_retinex_offline_samples > 0 && last_cam && last_retinex) {
+            int next_sample = (frame / (FPS * RETINEX_OFFLINE_SECONDS)) %
+                loaded_retinex_offline_samples;
+            if (next_sample != retinex_offline_sample_index) {
+                if (load_retinex_offline_sample_nv12(next_sample, last_cam) == 0 &&
+                    process_live_retinex(last_cam, last_retinex) == 0) {
+                    retinex_frames++;
+                    retinex_offline_sample_index = next_sample;
+                }
             }
         }
         if (loaded_edof_pairs > 0 && last_edof_in0 && last_edof_in1 && last_edof) {
@@ -13921,11 +14117,12 @@ int main(int argc, char **argv) {
                              g_perf.gpu_percent);
                     snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
                              g_perf.rga_percent);
-                    printf("RETINEX vi_frames=%llu retinex_frames=%llu resize_frames=%llu passthrough=%d gain=20.0 threshold=0.5 cpu=%.0f%% gpu=%s rga=%s\n",
+                    printf("RETINEX vi_frames=%llu retinex_frames=%llu resize_frames=%llu passthrough=%d gain=%.1f threshold=0.5 cpu=%.0f%% gpu=%s rga=%s\n",
                            (unsigned long long)vi_count,
                            (unsigned long long)retinex_count,
                            (unsigned long long)effect_resize_count,
                            passthrough_mode,
+                           RETINEX_GAIN,
                            g_perf.cpu_percent,
                            gpu_text,
                            rga_text);
@@ -14452,7 +14649,9 @@ int main(int argc, char **argv) {
             update_perf_status();
         }
         display_refs_t display_refs = {
-            (cam_frames > 0 || (only_tile && strcasecmp(only_tile, "CAP_DEHAZE_OFFLINE") == 0 && cap_frames > 0)) ? last_cam : NULL,
+            (cam_frames > 0 ||
+             (only_tile && strcasecmp(only_tile, "CAP_DEHAZE_OFFLINE") == 0 && cap_frames > 0) ||
+             (retinex_offline_only_page && retinex_frames > 0)) ? last_cam : NULL,
             osd_frames > 0 ? last_osd : NULL,
             resize_frames > 0 ? last_resize : NULL,
             vpss_frames > 0 ? last_vpss : NULL,
@@ -14646,6 +14845,22 @@ int main(int argc, char **argv) {
                      g_perf.rga_percent);
             printf("CAP_DEHAZE_OFFLINE sample=%d/%d source=rktohi_demo_cap_dehaze cap_frames=%d guided_r=24 t0=0.12 refine_scale=0.25 cpu=%.0f%% gpu=%s rga=%s\n",
                    sample_number, sample_count, cap_frames, g_perf.cpu_percent, gpu_text, rga_text);
+        }
+        if (retinex_offline_only_page && (frame % FPS) == 0) {
+            char gpu_text[24];
+            char rga_text[24];
+            int sample_number = retinex_offline_sample_index >= 0 ?
+                retinex_offline_sample_index + 1 : 0;
+            const char *sample_name = g_retinex_offline.current_name[0] ?
+                g_retinex_offline.current_name : "waiting";
+            snprintf(gpu_text, sizeof(gpu_text), g_perf.gpu_available ? "%.0f%%" : "N/A",
+                     g_perf.gpu_percent);
+            snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
+                     g_perf.rga_percent);
+            printf("RETINEX_OFFLINE sample=%d/%d file=%s retinex_frames=%d gain=%.1f threshold=0.5 cadence=%ds cpu=%.0f%% gpu=%s rga=%s\n",
+                   sample_number, loaded_retinex_offline_samples, sample_name,
+                   retinex_frames, RETINEX_GAIN, RETINEX_OFFLINE_SECONDS,
+                   g_perf.cpu_percent, gpu_text, rga_text);
         }
         if (only_tile && strcasecmp(only_tile, "CONV_CL") == 0 &&
             (frame % FPS) == 0) {
