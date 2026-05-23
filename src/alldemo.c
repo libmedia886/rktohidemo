@@ -82,6 +82,7 @@
 #define LIVE_TNR_CL_GRP 77
 #define LIVE_WBC_RESIZE_GRP 78
 #define LIVE_WBC_VI_RESIZE_GRP 79
+#define LIVE_BLEND_PYR_GRP 118
 #define DISPLAY_VMIX_GRP 80
 #define DISPLAY_OSD_GRP 81
 #define LIVE_MCF_GRP 114
@@ -100,6 +101,10 @@
 #define MCF_INPUT0_POOL STEREO_INPUT0_POOL
 #define MCF_INPUT1_POOL STEREO_INPUT1_POOL
 #define MCF_OUTPUT_POOL STEREO_OUTPUT_POOL
+#define BLEND_PYR_INPUT0_POOL STEREO_INPUT0_POOL
+#define BLEND_PYR_INPUT1_POOL STEREO_INPUT1_POOL
+#define BLEND_PYR_OUTPUT_POOL STEREO_OUTPUT_POOL
+#define BLEND_PYR_MASK_POOL 14
 
 #define CAM_W 640
 #define CAM_H 640
@@ -391,6 +396,8 @@ typedef struct {
     const uint8_t *edof_in0;
     const uint8_t *edof_in1;
     const uint8_t *edof_out;
+    const uint8_t *blend_pyr_linear;
+    const uint8_t *blend_pyr_out;
     const uint8_t *mcf_color;
     const uint8_t *mcf_mono;
     const uint8_t *mcf_out;
@@ -725,17 +732,17 @@ static module_tile_t g_tiles[] = {
 static const char *g_module_pages[] = {
     "VI", "VPSS", "VO", "WBC", "RGA", "RESIZE_RGA", "CSC_RGA", "CSC_CL", "OSD",
     "CLAHE", "RETINEX", "RETINEX_OFFLINE", "EIS", "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "DCP_FAST_DEHAZE", "THERMAL", "CONV_CL",
-    "TRANSFORM", "VMIX", "EDOF_CL", "MCF_FUSION_CL", "DUALVIEW", "STEREO_3D", "PANO", "AVM2D",
+    "TRANSFORM", "VMIX", "BLEND_PYR", "EDOF_CL", "MCF_FUSION_CL", "DUALVIEW", "STEREO_3D", "PANO", "AVM2D",
 };
 
 static const char *g_default_pages[] = {
     "VI", "VPSS", "VMIX", "OSD", "RGA", "RESIZE_RGA", "CSC_CL", "CLAHE", "RETINEX",
-    "RETINEX_OFFLINE", "TNR_CL", "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "THERMAL", "EDOF_CL", "MCF_FUSION_CL",
+    "RETINEX_OFFLINE", "TNR_CL", "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "THERMAL", "BLEND_PYR", "EDOF_CL", "MCF_FUSION_CL",
     "PANO", "AVM2D",
 };
 
 static const char *g_engineering_pages[] = {
-    "VI", "VPSS", "VO", "WBC", "OSD", "RESIZE_RGA", "THERMAL", "EDOF_CL",
+    "VI", "VPSS", "VO", "WBC", "OSD", "RESIZE_RGA", "THERMAL", "BLEND_PYR", "EDOF_CL",
     "MCF_FUSION_CL", "RGA", "CSC_RGA", "CSC_CL", "CLAHE", "RETINEX", "RETINEX_OFFLINE", "TNR_CL", "EIS",
     "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "VMIX", "STEREO_3D", "PANO", "AVM2D",
 };
@@ -2856,6 +2863,76 @@ static void draw_edof_comparison(uint8_t *dst, int stride, int x, int y, int w, 
     }
 }
 
+static int blend_pyr_demo_alpha_for_x(int x, int width) {
+    int center = width / 2;
+    int feather = width / 7;
+    int left = center - feather / 2;
+    int right = center + feather / 2;
+    if (x <= left) return 0;
+    if (x >= right) return 255;
+    return ((x - left) * 255) / (right - left);
+}
+
+static void draw_blend_pyr_mask_preview(uint8_t *dst, int stride, int x, int y, int w, int h) {
+    for (int yy = 0; yy < h; ++yy) {
+        uint8_t *row = dst + (size_t)(y + yy) * (size_t)stride + x;
+        for (int xx = 0; xx < w; ++xx) {
+            row[xx] = (uint8_t)(24 + (blend_pyr_demo_alpha_for_x(xx, w) * 210) / 255);
+        }
+    }
+    int center = x + w / 2;
+    stroke_rect_nv12(dst, stride, center - w / 14, y + 8, w / 7, h - 16, 2, 255, 210, 90);
+    fill_rect_nv12(dst, stride, x, y + h - 22, w, 22, 0, 0, 0);
+    draw_text(dst, stride, x + 8, y + h - 17, "MASK SEAM BAND", 1, 180, 230, 255);
+}
+
+static void draw_blend_pyr_comparison(uint8_t *dst, int stride, int x, int y, int w, int h,
+                                      const uint8_t *in0, const uint8_t *in1,
+                                      const uint8_t *linear,
+                                      const uint8_t *out) {
+    (void)linear;
+    int gap = 12;
+    int label_h = 22;
+    int pane_w = (w - gap) / 2;
+    int pane_h = (h - gap) / 2;
+
+    struct panel_desc {
+        const char *label;
+        const uint8_t *frame;
+        int x, y, w, h;
+        int is_mask;
+        int highlight;
+    } panels[4] = {
+        {"INPUT0 LEFT SHARP", in0, x, y, pane_w, pane_h, 0, 0},
+        {"INPUT1 RIGHT SHARP", in1, x + pane_w + gap, y, pane_w, pane_h, 0, 0},
+        {"MASK", NULL, x, y + pane_h + gap, pane_w, pane_h, 1, 0},
+        {"BLEND_PYR OUT", out, x + pane_w + gap, y + pane_h + gap, pane_w, pane_h, 0, 1},
+    };
+
+    for (int i = 0; i < 4; ++i) {
+        int px = panels[i].x;
+        int py = panels[i].y;
+        int pw = panels[i].w;
+        int ph = panels[i].h;
+        fill_rect_nv12(dst, stride, px, py, pw, ph, 5, 10, 18);
+        stroke_rect_nv12(dst, stride, px, py, pw, ph, 1,
+                         panels[i].highlight ? 80 : 70,
+                         panels[i].highlight ? 255 : 140,
+                         panels[i].highlight ? 180 : 210);
+        if (panels[i].is_mask) {
+            draw_blend_pyr_mask_preview(dst, stride, px + 4, py + 4, pw - 8, ph - 8);
+        } else if (panels[i].frame) {
+            draw_camera_tile_fit_content(dst, stride, px + 4, py + 4, pw - 8, ph - label_h - 8,
+                                         panels[i].frame, CAM_W, CAM_H, CAM_STRIDE);
+            fill_rect_nv12(dst, stride, px, py + ph - label_h, pw, label_h, 0, 0, 0);
+            draw_text(dst, stride, px + 8, py + ph - label_h + 5,
+                      panels[i].label, 1, 180, 230, 255);
+        } else {
+            draw_text(dst, stride, px + 12, py + ph / 2 - 10, "WAIT", 1, 255, 190, 100);
+        }
+    }
+}
+
 static void draw_nv12_comparison(uint8_t *dst, int stride, int x, int y, int w, int h,
                                  const uint8_t *input, const uint8_t *output,
                                  const char *input_label, const char *output_label) {
@@ -3633,6 +3710,26 @@ static void draw_edof_showcase(uint8_t *dst, int stride, int x, int y, int w, in
                          "展示重点：每3秒切换一组样张，输出保留两张输入中更清晰的区域。");
 }
 
+static void draw_blend_pyr_showcase(uint8_t *dst, int stride, int x, int y, int w, int h,
+                                    const uint8_t *in0, const uint8_t *in1,
+                                    const uint8_t *linear,
+                                    const uint8_t *out) {
+    int top_h = 126;
+    int bottom_h = 156;
+    int gap = 12;
+    int compare_y = y + top_h + gap;
+    int compare_h = h - top_h - bottom_h - gap * 2;
+    if (compare_h < 320) return;
+
+    draw_showcase_header(dst, stride, x, y, w,
+                         "BLEND_PYR：金字塔图像融合",
+                         "数据流：风景/街景基准图生成左清晰/右清晰两路输入 + 中央软边mask -> BLEND_PYR。",
+                         "展示方法：位置完全一致，只比较清晰度过渡，重点看中央接缝带。");
+    draw_blend_pyr_comparison(dst, stride, x, compare_y, w, compare_h, in0, in1, linear, out);
+    draw_showcase_footer(dst, stride, x, y + h - bottom_h, w,
+                         "展示重点：左路左侧清晰，右路右侧清晰；右下为Vulkan BLEND_PYR输出。");
+}
+
 static void draw_mcf_showcase(uint8_t *dst, int stride, int x, int y, int w, int h,
                               const uint8_t *color, const uint8_t *mono,
                               const uint8_t *out) {
@@ -3742,6 +3839,8 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
                              const uint8_t *pano_out,
                              const uint8_t *edof_in0, const uint8_t *edof_in1,
                              const uint8_t *edof_out,
+                             const uint8_t *blend_pyr_linear,
+                             const uint8_t *blend_pyr_out,
                              const uint8_t *mcf_color, const uint8_t *mcf_mono,
                              const uint8_t *mcf_out, const uint8_t *stereo_live,
                              const uint8_t *dual_in0, const uint8_t *dual_in1,
@@ -3821,6 +3920,10 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
     } else if (strcmp(g_tiles[idx].name, "EDOF_CL") == 0 && (edof_in0 || edof_in1 || edof_out)) {
         draw_edof_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38,
                              edof_in0, edof_in1, edof_out);
+    } else if (strcmp(g_tiles[idx].name, "BLEND_PYR") == 0 &&
+               (edof_in0 || edof_in1 || blend_pyr_out)) {
+        draw_blend_pyr_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38,
+                                  edof_in0, edof_in1, blend_pyr_linear, blend_pyr_out);
     } else if (strcmp(g_tiles[idx].name, "MCF_FUSION_CL") == 0 &&
                (mcf_color || mcf_mono || mcf_out)) {
         draw_mcf_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38,
@@ -3873,6 +3976,8 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
                               const uint8_t *pano_out,
                               const uint8_t *edof_in0, const uint8_t *edof_in1,
                               const uint8_t *edof_out,
+                              const uint8_t *blend_pyr_linear,
+                              const uint8_t *blend_pyr_out,
                               const uint8_t *mcf_color, const uint8_t *mcf_mono,
                               const uint8_t *mcf_out, const uint8_t *stereo_live,
                               const uint8_t *dual_in0, const uint8_t *dual_in1,
@@ -4008,6 +4113,13 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
         return;
     }
 
+    if (strcmp(g_tiles[idx].name, "BLEND_PYR") == 0 &&
+        (edof_in0 || edof_in1 || blend_pyr_out)) {
+        draw_blend_pyr_showcase(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                                edof_in0, edof_in1, blend_pyr_linear, blend_pyr_out);
+        return;
+    }
+
     if (strcmp(g_tiles[idx].name, "MCF_FUSION_CL") == 0 &&
         (mcf_color || mcf_mono || mcf_out)) {
         draw_mcf_showcase(dst, stride, x + 12, y + 12, w - 24, h - 24,
@@ -4078,6 +4190,8 @@ static void draw_main_showcase(uint8_t *canvas, int stride, int frame,
                                const uint8_t *pano_out,
                                const uint8_t *edof_in0, const uint8_t *edof_in1,
                                const uint8_t *edof_out,
+                               const uint8_t *blend_pyr_linear,
+                               const uint8_t *blend_pyr_out,
                                const uint8_t *mcf_color, const uint8_t *mcf_mono,
                                const uint8_t *mcf_out, const uint8_t *stereo_live,
                                const uint8_t *dual_in0, const uint8_t *dual_in1,
@@ -4102,6 +4216,8 @@ static void draw_main_showcase(uint8_t *canvas, int stride, int frame,
                           idx, frame, cam, osd_live, resize_live, vpss_live,
                           csc_rga_live, transform_live, cap_live, dcp_live, conv_live, clahe_live,
                           retinex_live, pano_out, edof_in0, edof_in1, edof_out,
+                          blend_pyr_linear,
+                          blend_pyr_out,
                           mcf_color, mcf_mono, mcf_out, stereo_live,
                           dual_in0, dual_in1, dual_sbs, dual_lbl);
         fill_rect_nv12(canvas, stride, x + 14, y + h - 50, w - 28, 34, 0, 0, 0);
@@ -11537,6 +11653,204 @@ static int process_live_edof(const uint8_t *src0, const uint8_t *src1, uint8_t *
     return ret;
 }
 
+static void fill_blend_pyr_mask_frame(uint8_t *dst) {
+    uint8_t *uv = dst + (size_t)CAM_STRIDE * CAM_H;
+    for (int y = 0; y < CAM_H; ++y) {
+        uint8_t *row = dst + (size_t)y * CAM_STRIDE;
+        for (int x = 0; x < CAM_W; ++x) {
+            row[x] = (uint8_t)blend_pyr_demo_alpha_for_x(x, CAM_W);
+        }
+    }
+    for (int y = 0; y < CAM_H / 2; ++y) {
+        memset(uv + (size_t)y * CAM_STRIDE, 128, CAM_STRIDE);
+    }
+}
+
+static void compose_blend_pyr_reference(const uint8_t *src0, const uint8_t *src1, uint8_t *dst) {
+    if (!src0 || !src1 || !dst) return;
+    for (int y = 0; y < CAM_H; ++y) {
+        const uint8_t *r0 = src0 + (size_t)y * CAM_STRIDE;
+        const uint8_t *r1 = src1 + (size_t)y * CAM_STRIDE;
+        uint8_t *ro = dst + (size_t)y * CAM_STRIDE;
+        for (int x = 0; x < CAM_W; ++x) {
+            int a = blend_pyr_demo_alpha_for_x(x, CAM_W);
+            ro[x] = (uint8_t)((r0[x] * (255 - a) + r1[x] * a + 127) / 255);
+        }
+    }
+    for (int y = 0; y < CAM_H / 2; ++y) {
+        const uint8_t *r0 = src0 + (size_t)CAM_STRIDE * CAM_H + (size_t)y * CAM_STRIDE;
+        const uint8_t *r1 = src1 + (size_t)CAM_STRIDE * CAM_H + (size_t)y * CAM_STRIDE;
+        uint8_t *ro = dst + (size_t)CAM_STRIDE * CAM_H + (size_t)y * CAM_STRIDE;
+        for (int x = 0; x < CAM_W; ++x) {
+            int a = blend_pyr_demo_alpha_for_x(x, CAM_W);
+            ro[x] = (uint8_t)((r0[x] * (255 - a) + r1[x] * a + 127) / 255);
+        }
+    }
+}
+
+static void block_blur_nv12(const uint8_t *src, uint8_t *dst, int block) {
+    if (!src || !dst || block <= 0) return;
+    for (int by = 0; by < CAM_H; by += block) {
+        int bh = CAM_H - by;
+        if (bh > block) bh = block;
+        for (int bx = 0; bx < CAM_W; bx += block) {
+            int bw = CAM_W - bx;
+            if (bw > block) bw = block;
+            int sum = 0;
+            for (int y = 0; y < bh; ++y) {
+                const uint8_t *row = src + (size_t)(by + y) * CAM_STRIDE + bx;
+                for (int x = 0; x < bw; ++x) sum += row[x];
+            }
+            uint8_t avg = (uint8_t)(sum / (bw * bh));
+            for (int y = 0; y < bh; ++y) {
+                memset(dst + (size_t)(by + y) * CAM_STRIDE + bx, avg, bw);
+            }
+        }
+    }
+
+    const uint8_t *src_uv = src + (size_t)CAM_STRIDE * CAM_H;
+    uint8_t *dst_uv = dst + (size_t)CAM_STRIDE * CAM_H;
+    int uv_block = block;
+    for (int by = 0; by < CAM_H / 2; by += uv_block) {
+        int bh = CAM_H / 2 - by;
+        if (bh > uv_block) bh = uv_block;
+        for (int bx = 0; bx < CAM_W; bx += uv_block) {
+            int bw = CAM_W - bx;
+            if (bw > uv_block) bw = uv_block;
+            bw &= ~1;
+            if (bw <= 0) continue;
+            int sum_u = 0;
+            int sum_v = 0;
+            int count = 0;
+            for (int y = 0; y < bh; ++y) {
+                const uint8_t *row = src_uv + (size_t)(by + y) * CAM_STRIDE + bx;
+                for (int x = 0; x < bw; x += 2) {
+                    sum_u += row[x];
+                    sum_v += row[x + 1];
+                    count++;
+                }
+            }
+            uint8_t avg_u = count > 0 ? (uint8_t)(sum_u / count) : 128;
+            uint8_t avg_v = count > 0 ? (uint8_t)(sum_v / count) : 128;
+            for (int y = 0; y < bh; ++y) {
+                uint8_t *row = dst_uv + (size_t)(by + y) * CAM_STRIDE + bx;
+                for (int x = 0; x < bw; x += 2) {
+                    row[x] = avg_u;
+                    row[x + 1] = avg_v;
+                }
+            }
+        }
+    }
+}
+
+static void make_lr_focus_pair_nv12(const uint8_t *base, uint8_t *left_clear, uint8_t *right_clear) {
+    if (!base || !left_clear || !right_clear) return;
+    uint8_t *blur = malloc(CAM_FRAME_SIZE);
+    if (!blur) {
+        memcpy(left_clear, base, CAM_FRAME_SIZE);
+        memcpy(right_clear, base, CAM_FRAME_SIZE);
+        return;
+    }
+    block_blur_nv12(base, blur, 14);
+
+    for (int y = 0; y < CAM_H; ++y) {
+        const uint8_t *src_sharp = base + (size_t)y * CAM_STRIDE;
+        const uint8_t *src_blur = blur + (size_t)y * CAM_STRIDE;
+        uint8_t *row_l = left_clear + (size_t)y * CAM_STRIDE;
+        uint8_t *row_r = right_clear + (size_t)y * CAM_STRIDE;
+        for (int x = 0; x < CAM_W; ++x) {
+            int a = blend_pyr_demo_alpha_for_x(x, CAM_W);
+            row_l[x] = (uint8_t)((src_sharp[x] * (255 - a) + src_blur[x] * a + 127) / 255);
+            row_r[x] = (uint8_t)((src_blur[x] * (255 - a) + src_sharp[x] * a + 127) / 255);
+        }
+    }
+
+    for (int y = 0; y < CAM_H / 2; ++y) {
+        const uint8_t *src_sharp = base + (size_t)CAM_STRIDE * CAM_H + (size_t)y * CAM_STRIDE;
+        const uint8_t *src_blur = blur + (size_t)CAM_STRIDE * CAM_H + (size_t)y * CAM_STRIDE;
+        uint8_t *row_l = left_clear + (size_t)CAM_STRIDE * CAM_H + (size_t)y * CAM_STRIDE;
+        uint8_t *row_r = right_clear + (size_t)CAM_STRIDE * CAM_H + (size_t)y * CAM_STRIDE;
+        for (int x = 0; x < CAM_W; ++x) {
+            int a = blend_pyr_demo_alpha_for_x(x, CAM_W);
+            row_l[x] = (uint8_t)((src_sharp[x] * (255 - a) + src_blur[x] * a + 127) / 255);
+            row_r[x] = (uint8_t)((src_blur[x] * (255 - a) + src_sharp[x] * a + 127) / 255);
+        }
+    }
+    free(blur);
+}
+
+static int setup_live_blend_pyr(void) {
+    MEDIA_BUFFER mask = {-1, -1};
+    uint8_t *mask_frame = NULL;
+
+    if (MEDIA_POOL_Create(BLEND_PYR_INPUT0_POOL, CAM_FRAME_SIZE, 2) != 0) return -1;
+    if (MEDIA_POOL_Create(BLEND_PYR_INPUT1_POOL, CAM_FRAME_SIZE, 2) != 0) goto fail;
+    if (MEDIA_POOL_Create(BLEND_PYR_OUTPUT_POOL, CAM_FRAME_SIZE, 4) != 0) goto fail;
+    if (MEDIA_POOL_Create(BLEND_PYR_MASK_POOL, CAM_FRAME_SIZE, 1) != 0) goto fail;
+
+    MEDIA_BLEND_PYR_ATTR attr = {0};
+    attr.width = CAM_W;
+    attr.height = CAM_H;
+    attr.input_stride = CAM_STRIDE;
+    attr.input_depth = 2;
+    attr.input_format = MEDIA_FORMAT_NV12;
+    attr.output_stride = CAM_STRIDE;
+    if (MEDIA_BLEND_PYR_SetAttr(LIVE_BLEND_PYR_GRP, &attr) != 0) goto fail;
+
+    mask_frame = malloc(CAM_FRAME_SIZE);
+    if (!mask_frame) goto fail_module;
+    fill_blend_pyr_mask_frame(mask_frame);
+    if (MEDIA_POOL_GetBuffer(BLEND_PYR_MASK_POOL, &mask) != 0 ||
+        copy_to_buffer(mask, mask_frame, CAM_FRAME_SIZE) != 0 ||
+        MEDIA_BLEND_PYR_SetMask(LIVE_BLEND_PYR_GRP, &mask) != 0 ||
+        MEDIA_BLEND_PYR_GetMaskStatus(LIVE_BLEND_PYR_GRP) != 1 ||
+        MEDIA_BLEND_PYR_Enable(LIVE_BLEND_PYR_GRP) != 0) {
+        if (mask.pool_id >= 0) MEDIA_POOL_PutBuffer(mask);
+        goto fail_module;
+    }
+    free(mask_frame);
+    set_tile_status("BLEND_PYR", TILE_LIVE);
+    return 0;
+
+fail_module:
+    free(mask_frame);
+    MEDIA_BLEND_PYR_DestroyGrp(LIVE_BLEND_PYR_GRP);
+fail:
+    MEDIA_POOL_Destroy(BLEND_PYR_MASK_POOL);
+    MEDIA_POOL_Destroy(BLEND_PYR_OUTPUT_POOL);
+    MEDIA_POOL_Destroy(BLEND_PYR_INPUT1_POOL);
+    MEDIA_POOL_Destroy(BLEND_PYR_INPUT0_POOL);
+    return -1;
+}
+
+static void cleanup_live_blend_pyr(int enabled) {
+    if (!enabled) return;
+    MEDIA_BLEND_PYR_Disable(LIVE_BLEND_PYR_GRP);
+    MEDIA_BLEND_PYR_DestroyGrp(LIVE_BLEND_PYR_GRP);
+    MEDIA_POOL_Destroy(BLEND_PYR_MASK_POOL);
+    MEDIA_POOL_Destroy(BLEND_PYR_OUTPUT_POOL);
+    MEDIA_POOL_Destroy(BLEND_PYR_INPUT1_POOL);
+    MEDIA_POOL_Destroy(BLEND_PYR_INPUT0_POOL);
+}
+
+static int process_live_blend_pyr(const uint8_t *src0, const uint8_t *src1, uint8_t *dst) {
+    MEDIA_BUFFER out = {-1, -1};
+    int ret = -1;
+    if (send_copied_frame("BLEND_PYR", LIVE_BLEND_PYR_GRP, "input0",
+                          BLEND_PYR_INPUT0_POOL, src0, CAM_FRAME_SIZE, 1000) != 0) {
+        return -1;
+    }
+    if (send_copied_frame("BLEND_PYR", LIVE_BLEND_PYR_GRP, "input1",
+                          BLEND_PYR_INPUT1_POOL, src1, CAM_FRAME_SIZE, 1000) != 0) {
+        return -1;
+    }
+    if (MEDIA_BLEND_PYR_GetFrame(LIVE_BLEND_PYR_GRP, &out, 2000) == 0) {
+        ret = copy_from_buffer(out, dst, CAM_FRAME_SIZE);
+        MEDIA_BLEND_PYR_ReleaseFrame(LIVE_BLEND_PYR_GRP, out);
+    }
+    return ret;
+}
+
 static int setup_live_mcf(void) {
     if (MEDIA_POOL_Create(MCF_INPUT0_POOL, CAM_FRAME_SIZE, 2) != 0) return -1;
     if (MEDIA_POOL_Create(MCF_INPUT1_POOL, CAM_FRAME_SIZE, 2) != 0) goto fail;
@@ -12833,6 +13147,7 @@ static const char *module_flow_note(const char *name) {
     if (strcasecmp(name, "CONV_CL") == 0) return "数据流：VI 640x640 -> RGBA -> CONV_CL四核卷积 -> 2x2输出。";
     if (strcasecmp(name, "TRANSFORM") == 0) return "数据流：VI 3840x2160 -> TRANSFORM LUT -> RESIZE_RGA缩放 -> 四宫格显示。";
     if (strcasecmp(name, "VMIX") == 0) return "数据流：VI 640x640 -> VPSS四路 -> VMIX固定2x2合成 -> VO。";
+    if (strcasecmp(name, "BLEND_PYR") == 0) return "数据流：同一EDOF基准图生成左清晰/右清晰输入 + 软边mask -> BLEND_PYR。";
     if (strcasecmp(name, "EDOF_CL") == 0) return "数据流：近焦图和远焦图进入EDOF_CL，输出融合清晰图。";
     if (strcasecmp(name, "MCF_FUSION_CL") == 0) return "数据流：彩色图和单色细节图进入MCF_FUSION_CL，输出彩色细节增强图。";
     if (strcasecmp(name, "DUALVIEW") == 0) return "数据流：两路RGB输入生成左右并排和逐行交错输出。";
@@ -12864,6 +13179,7 @@ static const char *module_showcase_note(const char *name) {
     if (strcasecmp(name, "CONV_CL") == 0) return "展示重点：四路GPU卷积同屏比较。";
     if (strcasecmp(name, "TRANSFORM") == 0) return "展示重点：LUT畸变矫正、旋转缩放和透视变换。";
     if (strcasecmp(name, "VMIX") == 0) return "展示重点：四路实时输入由VMIX合成，观察位置、层级和alpha效果。";
+    if (strcasecmp(name, "BLEND_PYR") == 0) return "展示重点：对比线性alpha和金字塔融合在清晰度接缝处的差异。";
     if (strcasecmp(name, "EDOF_CL") == 0) return "展示重点：近焦和远焦图融合成更清晰输出。";
     if (strcasecmp(name, "MCF_FUSION_CL") == 0) return "展示重点：单色高频细节注入彩色图，观察纹理增强和GPU耗时。";
     if (strcasecmp(name, "DUALVIEW") == 0) return "展示重点：两路输入生成左右并排和逐行交错输出。";
@@ -12906,6 +13222,8 @@ static void draw_single_module_page(uint8_t *canvas, int stride, int frame,
                           refs->cap_live, refs->dcp_live, refs->conv_live,
                           refs->clahe_live, refs->retinex_live, refs->pano_out,
                           refs->edof_in0, refs->edof_in1, refs->edof_out,
+                          refs->blend_pyr_linear,
+                          refs->blend_pyr_out,
                           refs->mcf_color, refs->mcf_mono, refs->mcf_out,
                           refs->stereo_live, refs->dual_in0, refs->dual_in1,
                           refs->dual_sbs, refs->dual_lbl);
@@ -12952,6 +13270,8 @@ static void draw_showcase_page(uint8_t *canvas, int stride, int frame, int rotat
                                const uint8_t *pano_out,
                                const uint8_t *edof_in0, const uint8_t *edof_in1,
                                const uint8_t *edof_out,
+                               const uint8_t *blend_pyr_linear,
+                               const uint8_t *blend_pyr_out,
                                const uint8_t *mcf_color, const uint8_t *mcf_mono,
                                const uint8_t *mcf_out, const uint8_t *stereo_live,
                                const uint8_t *dual_in0, const uint8_t *dual_in1,
@@ -12959,8 +13279,8 @@ static void draw_showcase_page(uint8_t *canvas, int stride, int frame, int rotat
     display_refs_t refs = {
         cam, osd_live, resize_live, vpss_live, csc_rga_live, transform_live,
         cap_live, dcp_live, conv_live, clahe_live, retinex_live, pano_out,
-        edof_in0, edof_in1, edof_out, mcf_color, mcf_mono, mcf_out,
-        stereo_live, dual_in0, dual_in1, dual_sbs, dual_lbl
+        edof_in0, edof_in1, edof_out, blend_pyr_linear, blend_pyr_out, mcf_color,
+        mcf_mono, mcf_out, stereo_live, dual_in0, dual_in1, dual_sbs, dual_lbl
     };
     draw_showcase_page_refs(canvas, stride, frame, rotate_main, only_tile, &refs);
 }
@@ -13110,6 +13430,7 @@ int main(int argc, char **argv) {
     const size_t display_size = (size_t)dstride * SCREEN_H * 3 / 2;
     const int thermal_only_page = only_tile && strcasecmp(only_tile, "THERMAL") == 0;
     const int edof_only_page = only_tile && strcasecmp(only_tile, "EDOF_CL") == 0;
+    const int blend_pyr_only_page = only_tile && strcasecmp(only_tile, "BLEND_PYR") == 0;
     const int mcf_only_page = only_tile && strcasecmp(only_tile, "MCF_FUSION_CL") == 0;
     const int pano_only_page = only_tile && strcasecmp(only_tile, "PANO") == 0;
     const int retinex_offline_only_page = only_tile && strcasecmp(only_tile, "RETINEX_OFFLINE") == 0;
@@ -13134,9 +13455,13 @@ int main(int argc, char **argv) {
     int loaded_retinex_offline_samples = solid_test ? 0 : load_retinex_offline_assets();
     int loaded_avm2d_video = (!solid_test && (!only_tile || strcasecmp(only_tile, "AVM2D") == 0)) ?
         load_avm2d_video() : 0;
-    int loaded_edof_pairs = (!solid_test && (!only_tile || strcasecmp(only_tile, "EDOF_CL") == 0)) ?
+    int loaded_edof_pairs = (!solid_test && (!only_tile ||
+                                             strcasecmp(only_tile, "EDOF_CL") == 0 ||
+                                             strcasecmp(only_tile, "BLEND_PYR") == 0)) ?
         load_edof_pairs() : 0;
-    int loaded_mcf_pairs = (!solid_test && (!only_tile || strcasecmp(only_tile, "MCF_FUSION_CL") == 0)) ?
+    int loaded_mcf_pairs = (!solid_test && (!only_tile ||
+                                            strcasecmp(only_tile, "MCF_FUSION_CL") == 0 ||
+                                            strcasecmp(only_tile, "BLEND_PYR") == 0)) ?
         load_mcf_pairs() : 0;
     int loaded_pano_sample = (!solid_test && (!only_tile || strcasecmp(only_tile, "PANO") == 0)) ?
         load_pano_sample() : 0;
@@ -13229,6 +13554,13 @@ int main(int argc, char **argv) {
         live_edof_ok = 1;
     } else if (!solid_test && loaded_edof_pairs > 0) {
         set_tile_status("EDOF_CL", TILE_LOOP);
+    }
+    int live_blend_pyr_ok = 0;
+    if (!solid_test && blend_pyr_only_page &&
+        loaded_edof_pairs > 0 && setup_live_blend_pyr() == 0) {
+        live_blend_pyr_ok = 1;
+    } else if (!solid_test && loaded_edof_pairs > 0) {
+        set_tile_status("BLEND_PYR", TILE_LOOP);
     }
     int live_mcf_ok = 0;
     if (!solid_test && only_tile && strcasecmp(only_tile, "MCF_FUSION_CL") == 0 &&
@@ -14189,6 +14521,7 @@ int main(int argc, char **argv) {
     int tnr_frames = 0;
     int edof_frames = 0;
     int edof_pair_index = -1;
+    int blend_pyr_frames = 0;
     int mcf_frames = 0;
     int mcf_pair_index = -1;
     int dualview_frames = 0;
@@ -14213,6 +14546,8 @@ int main(int argc, char **argv) {
     uint8_t *last_edof_in0 = malloc(CAM_FRAME_SIZE);
     uint8_t *last_edof_in1 = malloc(CAM_FRAME_SIZE);
     uint8_t *last_edof = malloc(CAM_FRAME_SIZE);
+    uint8_t *last_blend_pyr_linear = malloc(CAM_FRAME_SIZE);
+    uint8_t *last_blend_pyr = malloc(CAM_FRAME_SIZE);
     uint8_t *last_mcf_color = malloc(CAM_FRAME_SIZE);
     uint8_t *last_mcf_mono = malloc(CAM_FRAME_SIZE);
     uint8_t *last_mcf = malloc(CAM_FRAME_SIZE);
@@ -14260,6 +14595,8 @@ int main(int argc, char **argv) {
     if (last_edof_in0) memset(last_edof_in0, 0, CAM_FRAME_SIZE);
     if (last_edof_in1) memset(last_edof_in1, 0, CAM_FRAME_SIZE);
     if (last_edof) memset(last_edof, 0, CAM_FRAME_SIZE);
+    if (last_blend_pyr_linear) memset(last_blend_pyr_linear, 0, CAM_FRAME_SIZE);
+    if (last_blend_pyr) memset(last_blend_pyr, 0, CAM_FRAME_SIZE);
     if (last_mcf_color) memset(last_mcf_color, 0, CAM_FRAME_SIZE);
     if (last_mcf_mono) memset(last_mcf_mono, 0, CAM_FRAME_SIZE);
     if (last_mcf) memset(last_mcf, 0, CAM_FRAME_SIZE);
@@ -14435,16 +14772,37 @@ int main(int argc, char **argv) {
                 tnr_frames++;
             }
         }
-        if (loaded_edof_pairs > 0 && last_edof_in0 && last_edof_in1 && last_edof) {
-            int next_pair = (frame / (FPS * EDOF_PAIR_SECONDS)) % loaded_edof_pairs;
+        int blend_pyr_sample_count = blend_pyr_only_page && loaded_mcf_pairs > 0 ?
+            loaded_mcf_pairs : loaded_edof_pairs;
+        if (blend_pyr_sample_count > 0 && last_edof_in0 && last_edof_in1 && last_edof) {
+            int next_pair = (frame / (FPS * EDOF_PAIR_SECONDS)) % blend_pyr_sample_count;
             if (next_pair != edof_pair_index) {
-                edof_pair_t *pair = get_loaded_edof_pair(next_pair);
-                if (pair) {
-                    image_to_nv12_frame(&pair->left, last_edof_in0);
-                    image_to_nv12_frame(&pair->right, last_edof_in1);
-                    image_to_nv12_frame(&pair->fused, last_edof);
+                edof_pair_t *pair = blend_pyr_only_page ? NULL : get_loaded_edof_pair(next_pair);
+                mcf_pair_t *blend_pair = blend_pyr_only_page ? get_loaded_mcf_pair(next_pair) : NULL;
+                if (pair || blend_pair) {
+                    if (blend_pyr_only_page && blend_pair) {
+                        image_to_nv12_frame(&blend_pair->color, last_edof);
+                        make_lr_focus_pair_nv12(last_edof, last_edof_in0, last_edof_in1);
+                    } else if (pair) {
+                        image_to_nv12_frame(&pair->left, last_edof_in0);
+                        image_to_nv12_frame(&pair->right, last_edof_in1);
+                        image_to_nv12_frame(&pair->fused, last_edof);
+                    }
                     if (live_edof_ok) {
                         (void)process_live_edof(last_edof_in0, last_edof_in1, last_edof);
+                    }
+                    if (last_blend_pyr_linear) {
+                        compose_blend_pyr_reference(last_edof_in0, last_edof_in1,
+                                                    last_blend_pyr_linear);
+                    }
+                    if (last_blend_pyr) {
+                        if (!live_blend_pyr_ok ||
+                            process_live_blend_pyr(last_edof_in0, last_edof_in1,
+                                                   last_blend_pyr) != 0) {
+                            compose_blend_pyr_reference(last_edof_in0, last_edof_in1,
+                                                        last_blend_pyr);
+                        }
+                        blend_pyr_frames++;
                     }
                     edof_pair_index = next_pair;
                     edof_frames++;
@@ -15366,6 +15724,8 @@ int main(int argc, char **argv) {
             last_edof_in0,
             last_edof_in1,
             edof_frames > 0 ? last_edof : NULL,
+            blend_pyr_frames > 0 ? last_blend_pyr_linear : NULL,
+            blend_pyr_frames > 0 ? last_blend_pyr : NULL,
             last_mcf_color,
             last_mcf_mono,
             mcf_frames > 0 ? last_mcf : NULL,
@@ -15476,6 +15836,23 @@ int main(int argc, char **argv) {
             printf("EDOF_CL frames=%d sample=%d/%d updates=%d mode=%s cache=%s cpu=%.0f%% gpu=%s rga=%s\n",
                    frame, sample_number, loaded_edof_pairs, edof_frames,
                    live_edof_ok ? "opencl" : "reference", cache_state,
+                   g_perf.cpu_percent, gpu_text, rga_text);
+        }
+        if (blend_pyr_only_page && (frame % FPS) == 0) {
+            char gpu_text[24];
+            char rga_text[24];
+            int sample_count = loaded_mcf_pairs > 0 ? loaded_mcf_pairs : loaded_edof_pairs;
+            int sample_number = edof_pair_index >= 0 ? edof_pair_index + 1 : 0;
+            const char *sample_state =
+                (sample_count > 0 && edof_pair_index >= 0) ?
+                (loaded_mcf_pairs > 0 ? "landscape-focus" : "edof-pair") : "no-sample";
+            snprintf(gpu_text, sizeof(gpu_text), g_perf.gpu_available ? "%.0f%%" : "N/A",
+                     g_perf.gpu_percent);
+            snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
+                     g_perf.rga_percent);
+            printf("BLEND_PYR frames=%d sample=%d/%d updates=%d mode=%s mask=seam-band source=%s cpu=%.0f%% gpu=%s rga=%s\n",
+                   frame, sample_number, sample_count, blend_pyr_frames,
+                   live_blend_pyr_ok ? "module" : "reference", sample_state,
                    g_perf.cpu_percent, gpu_text, rga_text);
         }
         if (mcf_only_page && (frame % FPS) == 0) {
@@ -15695,6 +16072,7 @@ int main(int argc, char **argv) {
     cleanup_live_pano(live_pano_ok);
     cleanup_live_dualview(live_dualview_ok);
     cleanup_live_mcf(live_mcf_ok);
+    cleanup_live_blend_pyr(live_blend_pyr_ok);
     cleanup_live_edof(live_edof_ok);
     cleanup_live_tnr_cl(live_tnr_cl_ok);
     cleanup_live_retinex(live_retinex_ok);
@@ -15733,6 +16111,8 @@ int main(int argc, char **argv) {
     free(last_mcf);
     free(last_mcf_mono);
     free(last_mcf_color);
+    free(last_blend_pyr);
+    free(last_blend_pyr_linear);
     free(last_edof);
     free(last_edof_in1);
     free(last_edof_in0);
