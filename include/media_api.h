@@ -1050,6 +1050,44 @@ int MEDIA_EIS_ReleaseFrame(int grp, MEDIA_BUFFER buf);
 int MEDIA_EIS_SetPassthrough(int grp, int enable);
 int MEDIA_EIS_GetStats(int grp, MEDIA_EIS_STATS *stats);
 
+// TNR_CL (使用 OpenCL GPU 的 NV12 时域降噪模块)
+typedef struct {
+    int width;
+    int height;
+    int format;
+    int input_depth;
+    int output_pool_id;
+    int input_stride;
+    int output_stride;
+    int block_size;
+    float threshold;
+    float static_alpha;
+    float motion_alpha;
+    int passthrough;
+} MEDIA_TNR_CL_ATTR;
+
+typedef struct {
+    double gpu_motion_ms;
+    double gpu_blend_ms;
+    double gpu_queue_total_ms;
+    int has_prev;
+} MEDIA_TNR_CL_PERF;
+
+int MEDIA_TNR_CL_CreateGrp(int grp, const MEDIA_TNR_CL_ATTR *attr);
+int MEDIA_TNR_CL_DestroyGrp(int grp);
+int MEDIA_TNR_CL_Start(int grp);
+int MEDIA_TNR_CL_Stop(int grp);
+int MEDIA_TNR_CL_Enable(int grp);
+int MEDIA_TNR_CL_Disable(int grp);
+int MEDIA_TNR_CL_SendFrame(int grp, MEDIA_BUFFER buf, int timeout_ms);
+int MEDIA_TNR_CL_GetFrame(int grp, MEDIA_BUFFER *buf, int timeout_ms);
+int MEDIA_TNR_CL_ReleaseFrame(int grp, MEDIA_BUFFER buf);
+int MEDIA_TNR_CL_SetPassthrough(int grp, int enable);
+int MEDIA_TNR_CL_SetThreshold(int grp, float threshold);
+int MEDIA_TNR_CL_SetStaticAlpha(int grp, float alpha);
+int MEDIA_TNR_CL_SetMotionAlpha(int grp, float alpha);
+int MEDIA_TNR_CL_GetLastPerf(int grp, MEDIA_TNR_CL_PERF *perf);
+
 // EDOF_CL (使用 OpenCL GPU 的双输入扩景深融合模块)
 typedef struct {
     int width;
