@@ -139,6 +139,26 @@
 #define NPU_DEMO_VDEC_POOL WORK_POOL_NV12
 #define NPU_DEMO_RGB_POOL WORK_POOL_RGB
 #define NPU_DEMO_VDEC_FRAME_SIZE (CAM_STRIDE * 768 * 3 / 2)
+#define EIS_DEMO_INPUT_PATH "assets/eis/eis_shaky_640x360.h264"
+#define EIS_DEMO_W 640
+#define EIS_DEMO_H 360
+#define EIS_DEMO_FPS 10
+#define EIS_DEMO_DISPLAY_W 1024
+#define EIS_DEMO_PANE_H 576
+#define EIS_DEMO_INFO_H 128
+#define EIS_DEMO_OUT_W EIS_DEMO_DISPLAY_W
+#define EIS_DEMO_OUT_H (EIS_DEMO_PANE_H * 2 + EIS_DEMO_INFO_H)
+#define EIS_DEMO_VDEC_CHN 210
+#define EIS_DEMO_VPSS_GRP 211
+#define EIS_DEMO_GRP 212
+#define EIS_DEMO_VMIX_GRP 213
+#define EIS_DEMO_OSD_GRP 214
+#define EIS_DEMO_VDEC_POOL 0
+#define EIS_DEMO_VPSS_ORIG_POOL 1
+#define EIS_DEMO_VPSS_EIS_POOL 2
+#define EIS_DEMO_EIS_POOL 3
+#define EIS_DEMO_VMIX_POOL 4
+#define EIS_DEMO_OSD_POOL 5
 #define NPU_DEMO_H264_PATH "assets/loop/npu/bus_640x640.h264"
 #define NPU_DEMO_MODEL_PATH "assets/npu/yolov5s-640-640.rknn"
 #define NPU_DEMO_LABEL_PATH "assets/npu/coco_80_labels_list.txt"
@@ -678,6 +698,7 @@ static module_tile_t g_tiles[] = {
     {"CSC_CL", 0, 0, TILE_OFFLINE}, {"OSD", 0, 0, TILE_OFFLINE},
     {"CLAHE", 0, 0, TILE_OFFLINE}, {"RETINEX", 0, 0, TILE_OFFLINE},
     {"RETINEX_OFFLINE", 0, 0, TILE_OFFLINE},
+    {"EIS", 0, 0, TILE_OFFLINE},
     {"CAP_DEHAZE", 0, 0, TILE_OFFLINE}, {"CAP_DEHAZE_OFFLINE", 0, 0, TILE_OFFLINE},
     {"DCP_FAST_DEHAZE", 0, 0, TILE_OFFLINE},
     {"THERMAL", 0, 0, TILE_OFFLINE}, {"CONV_CL", 0, 0, TILE_OFFLINE},
@@ -696,7 +717,7 @@ static module_tile_t g_tiles[] = {
 
 static const char *g_module_pages[] = {
     "VI", "VPSS", "VO", "WBC", "RGA", "RESIZE_RGA", "CSC_RGA", "CSC_CL", "OSD",
-    "CLAHE", "RETINEX", "RETINEX_OFFLINE", "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "DCP_FAST_DEHAZE", "THERMAL", "CONV_CL",
+    "CLAHE", "RETINEX", "RETINEX_OFFLINE", "EIS", "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "DCP_FAST_DEHAZE", "THERMAL", "CONV_CL",
     "TRANSFORM", "VMIX", "EDOF_CL", "MCF_FUSION_CL", "DUALVIEW", "STEREO_3D", "PANO", "AVM2D",
 };
 
@@ -708,7 +729,7 @@ static const char *g_default_pages[] = {
 
 static const char *g_engineering_pages[] = {
     "VI", "VPSS", "VO", "WBC", "OSD", "RESIZE_RGA", "THERMAL", "EDOF_CL",
-    "MCF_FUSION_CL", "RGA", "CSC_RGA", "CSC_CL", "CLAHE", "RETINEX", "RETINEX_OFFLINE",
+    "MCF_FUSION_CL", "RGA", "CSC_RGA", "CSC_CL", "CLAHE", "RETINEX", "RETINEX_OFFLINE", "EIS",
     "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "VMIX", "STEREO_3D", "PANO", "AVM2D",
 };
 
@@ -8290,6 +8311,411 @@ static void unbind_vi_vpss_stereo_vmix_osd_vo(int enabled) {
     }
 }
 
+typedef struct {
+    uint8_t *data;
+    size_t size;
+    int *offsets;
+    int count;
+} eis_demo_stream_t;
+
+static size_t eis_demo_nv12_size(int stride, int height) {
+    return (size_t)stride * (size_t)height * 3u / 2u;
+}
+
+static int eis_demo_read_stream(const char *path, eis_demo_stream_t *stream) {
+    FILE *fp = fopen(path, "rb");
+    long file_size;
+    int cap = 256;
+    memset(stream, 0, sizeof(*stream));
+    if (!fp) {
+        fprintf(stderr, "EIS demo open %s failed: %s\n", path, strerror(errno));
+        return -1;
+    }
+    if (fseek(fp, 0, SEEK_END) != 0 || (file_size = ftell(fp)) <= 0 ||
+        fseek(fp, 0, SEEK_SET) != 0) {
+        fclose(fp);
+        fprintf(stderr, "EIS demo invalid stream: %s\n", path);
+        return -1;
+    }
+    stream->data = malloc((size_t)file_size);
+    stream->offsets = malloc((size_t)cap * sizeof(int));
+    if (!stream->data || !stream->offsets) {
+        fclose(fp);
+        return -1;
+    }
+    if (fread(stream->data, 1, (size_t)file_size, fp) != (size_t)file_size) {
+        fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+    stream->size = (size_t)file_size;
+    for (int i = 0; i + 3 < file_size;) {
+        int sc = 0;
+        if (stream->data[i] == 0 && stream->data[i + 1] == 0 && stream->data[i + 2] == 1) {
+            sc = 3;
+        } else if (i + 4 < file_size && stream->data[i] == 0 && stream->data[i + 1] == 0 &&
+                   stream->data[i + 2] == 0 && stream->data[i + 3] == 1) {
+            sc = 4;
+        }
+        if (sc) {
+            if (stream->count >= cap) {
+                int *tmp;
+                cap *= 2;
+                tmp = realloc(stream->offsets, (size_t)cap * sizeof(int));
+                if (!tmp) return -1;
+                stream->offsets = tmp;
+            }
+            stream->offsets[stream->count++] = i;
+            i += sc;
+        } else {
+            ++i;
+        }
+    }
+    if (stream->count <= 0) stream->offsets[stream->count++] = 0;
+    return 0;
+}
+
+static void eis_demo_free_stream(eis_demo_stream_t *stream) {
+    free(stream->data);
+    free(stream->offsets);
+    memset(stream, 0, sizeof(*stream));
+}
+
+static int eis_demo_nal_is_vcl(const eis_demo_stream_t *stream, int idx) {
+    int start = stream->offsets[idx];
+    int end = (idx + 1 < stream->count) ? stream->offsets[idx + 1] : (int)stream->size;
+    int sc = 0;
+    int nal;
+    if (start + 3 <= end && stream->data[start] == 0 && stream->data[start + 1] == 0 &&
+        stream->data[start + 2] == 1) {
+        sc = 3;
+    } else if (start + 4 <= end && stream->data[start] == 0 && stream->data[start + 1] == 0 &&
+               stream->data[start + 2] == 0 && stream->data[start + 3] == 1) {
+        sc = 4;
+    }
+    if (start + sc >= end) return 0;
+    nal = stream->data[start + sc] & 0x1f;
+    return nal == 1 || nal == 5;
+}
+
+static int update_eis_demo_text_region(int region_id, int x, int y, int scale,
+                                       uint8_t r, uint8_t g, uint8_t b,
+                                       const char *text, uint8_t *mask,
+                                       size_t mask_size) {
+    int w = 0;
+    int h = 0;
+    if (render_text_mask(text, scale, mask, 1024, 64, &w, &h) != 0) return -1;
+
+    MEDIA_OSD_REGION_ATTR attr = {0};
+    attr.enabled = 1;
+    attr.x = x;
+    attr.y = y;
+    attr.width = w;
+    attr.height = h;
+    attr.zorder = 3;
+    attr.global_alpha = 255;
+
+    MEDIA_OSD_MASK_DESC desc = {0};
+    desc.width = w;
+    desc.height = h;
+    desc.stride = 1024;
+    desc.data = mask;
+    desc.data_size = mask_size;
+    desc.color.r = r;
+    desc.color.g = g;
+    desc.color.b = b;
+    desc.color.a = 255;
+
+    if (MEDIA_OSD_UpdateRegion(EIS_DEMO_OSD_GRP, region_id, &attr) != 0 ||
+        MEDIA_OSD_SetRegionMask(EIS_DEMO_OSD_GRP, region_id, &desc) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int update_eis_demo_perf_text(void) {
+    static uint8_t perf_mask[1024 * 64];
+    MEDIA_EIS_STATS stats;
+    char line[160];
+    memset(&stats, 0, sizeof(stats));
+    if (MEDIA_EIS_GetStats(EIS_DEMO_GRP, &stats) == 0 && stats.frame_index > 0) {
+        snprintf(line, sizeof(line),
+                 "GPU OpenCL  total %.2fms  estimate %.2fms  warp %.2fms  crop 8%%  fallback %d",
+                 stats.total_ms, stats.estimate_ms, stats.warp_ms, stats.fallback_used);
+    } else {
+        snprintf(line, sizeof(line),
+                 "GPU OpenCL  waiting EIS stats  crop 8%%  source H264 %dx%d@%dfps",
+                 EIS_DEMO_W, EIS_DEMO_H, EIS_DEMO_FPS);
+    }
+    return update_eis_demo_text_region(6, 24, EIS_DEMO_PANE_H * 2 + 62, 2,
+                                       255, 230, 120, line,
+                                       perf_mask, sizeof(perf_mask));
+}
+
+static int setup_eis_demo_osd_regions(void) {
+    static uint8_t title_mask[1024 * 64];
+    static uint8_t flow_mask[1024 * 64];
+    static uint8_t raw_mask[1024 * 64];
+    static uint8_t stab_mask[1024 * 64];
+    MEDIA_OSD_REGION_ATTR top = {1, 10, 10, EIS_DEMO_DISPLAY_W - 20, EIS_DEMO_PANE_H - 20, 0, 220};
+    MEDIA_OSD_REGION_ATTR bottom = {1, 10, EIS_DEMO_PANE_H + 10,
+                                    EIS_DEMO_DISPLAY_W - 20, EIS_DEMO_PANE_H - 20, 0, 220};
+    MEDIA_OSD_RECT_DESC green = {0, 4, {40, 255, 100, 220}};
+    MEDIA_OSD_RECT_DESC cyan = {0, 4, {40, 220, 255, 220}};
+
+    if (MEDIA_OSD_UpdateRegion(EIS_DEMO_OSD_GRP, 0, &top) != 0 ||
+        MEDIA_OSD_SetRegionRect(EIS_DEMO_OSD_GRP, 0, &green) != 0 ||
+        MEDIA_OSD_UpdateRegion(EIS_DEMO_OSD_GRP, 1, &bottom) != 0 ||
+        MEDIA_OSD_SetRegionRect(EIS_DEMO_OSD_GRP, 1, &cyan) != 0) {
+        return -1;
+    }
+    if (update_eis_demo_text_region(2, 24, EIS_DEMO_PANE_H * 2 + 16, 3,
+                                    160, 255, 220,
+                                    "EIS VIDEO STABILIZATION LIVE DEMO",
+                                    title_mask, sizeof(title_mask)) != 0 ||
+        update_eis_demo_text_region(3, 24, EIS_DEMO_PANE_H * 2 + 42, 1,
+                                    190, 230, 255,
+                                    "H264 -> VDEC -> VPSS SPLIT -> RAW / EIS GPU -> VMIX -> OSD -> VO",
+                                    flow_mask, sizeof(flow_mask)) != 0 ||
+        update_eis_demo_text_region(4, 24, EIS_DEMO_PANE_H - 34, 2,
+                                    40, 255, 100, "RAW VPSS BRANCH",
+                                    raw_mask, sizeof(raw_mask)) != 0 ||
+        update_eis_demo_text_region(5, 24, EIS_DEMO_PANE_H * 2 - 34, 2,
+                                    40, 220, 255, "EIS STABILIZED GPU BRANCH",
+                                    stab_mask, sizeof(stab_mask)) != 0 ||
+        update_eis_demo_perf_text() != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int setup_eis_vdec_vpss_vmix_osd_vo_demo(void) {
+    const int src_stride = ALIGN_UP(EIS_DEMO_W, 64);
+    const int pane_stride = ALIGN_UP(EIS_DEMO_DISPLAY_W, 64);
+    const int out_stride = ALIGN_UP(EIS_DEMO_OUT_W, 64);
+    const size_t pane_size = eis_demo_nv12_size(pane_stride, EIS_DEMO_PANE_H);
+    const size_t vdec_size = (size_t)src_stride * (size_t)ALIGN_UP(EIS_DEMO_H, 16) * 2u;
+    const size_t out_size = eis_demo_nv12_size(out_stride, EIS_DEMO_OUT_H);
+    MEDIA_VDEC_ATTR vdec = {0};
+    MEDIA_VPSS_ATTR vpss = {0};
+    MEDIA_EIS_ATTR eis = {0};
+    MEDIA_VMIX_ATTR vmix = {0};
+    MEDIA_OSD_ATTR osd = {0};
+    MEDIA_VO_ATTR vo = {0};
+
+    if (MEDIA_POOL_Create(EIS_DEMO_VDEC_POOL, vdec_size, 8) != 0 ||
+        MEDIA_POOL_Create(EIS_DEMO_VPSS_ORIG_POOL, pane_size, 8) != 0 ||
+        MEDIA_POOL_Create(EIS_DEMO_VPSS_EIS_POOL, pane_size, 8) != 0 ||
+        MEDIA_POOL_Create(EIS_DEMO_EIS_POOL, pane_size, 8) != 0 ||
+        MEDIA_POOL_Create(EIS_DEMO_VMIX_POOL, out_size, 6) != 0 ||
+        MEDIA_POOL_Create(EIS_DEMO_OSD_POOL, out_size, 6) != 0) {
+        fprintf(stderr, "EIS demo pool create failed\n");
+        return -1;
+    }
+
+    vdec.width = EIS_DEMO_W;
+    vdec.height = EIS_DEMO_H;
+    vdec.stride = src_stride;
+    vdec.buf_cnt = 8;
+    vdec.video_type = MEDIA_VIDEO_H264;
+    vdec.pool_id = EIS_DEMO_VDEC_POOL;
+    if (MEDIA_VDEC_CreateChn(EIS_DEMO_VDEC_CHN, &vdec) != 0) return -1;
+
+    vpss.width = EIS_DEMO_W;
+    vpss.height = EIS_DEMO_H;
+    vpss.input_stride = src_stride;
+    vpss.input_depth = 8;
+    vpss.input_format = MEDIA_FORMAT_NV12;
+    vpss.in_fps = EIS_DEMO_FPS;
+    vpss.out_fps = EIS_DEMO_FPS;
+    vpss.output_count = 2;
+    for (int i = 0; i < 2; ++i) {
+        vpss.outputs[i].output_id = i;
+        vpss.outputs[i].out_width = EIS_DEMO_DISPLAY_W;
+        vpss.outputs[i].out_height = EIS_DEMO_PANE_H;
+        vpss.outputs[i].out_stride = pane_stride;
+        vpss.outputs[i].pool_id = (i == 0) ? EIS_DEMO_VPSS_ORIG_POOL : EIS_DEMO_VPSS_EIS_POOL;
+        vpss.outputs[i].crop_w = EIS_DEMO_W;
+        vpss.outputs[i].crop_h = EIS_DEMO_H;
+        vpss.outputs[i].output_format = MEDIA_FORMAT_NV12;
+    }
+    if (MEDIA_VPSS_SetAttr(EIS_DEMO_VPSS_GRP, &vpss) != 0) return -1;
+
+    eis.width = EIS_DEMO_DISPLAY_W;
+    eis.height = EIS_DEMO_PANE_H;
+    eis.format = MEDIA_FORMAT_NV12;
+    eis.input_depth = 8;
+    eis.output_pool_id = EIS_DEMO_EIS_POOL;
+    eis.input_stride = pane_stride;
+    eis.output_stride = pane_stride;
+    eis.crop_ratio = 0.08f;
+    eis.smoothing_window = 15;
+    eis.estimate_width = 320;
+    eis.search_radius = 16;
+    eis.block_step = 4;
+    if (MEDIA_EIS_CreateGrp(EIS_DEMO_GRP, &eis) != 0) return -1;
+
+    vmix.input_count = 2;
+    vmix.output_width = EIS_DEMO_OUT_W;
+    vmix.output_height = EIS_DEMO_OUT_H;
+    vmix.output_stride = out_stride;
+    vmix.format = MEDIA_FORMAT_NV12;
+    vmix.input_depth = 8;
+    vmix.output_pool_id = EIS_DEMO_VMIX_POOL;
+    vmix.primary_index = 0;
+    for (int i = 0; i < 2; ++i) {
+        vmix.channels[i].enabled = 1;
+        vmix.channels[i].x = 0;
+        vmix.channels[i].y = i * EIS_DEMO_PANE_H;
+        vmix.channels[i].width = EIS_DEMO_DISPLAY_W;
+        vmix.channels[i].height = EIS_DEMO_PANE_H;
+        vmix.channels[i].stride = pane_stride;
+        vmix.channels[i].format = MEDIA_FORMAT_NV12;
+        vmix.channels[i].alpha = 1.0f;
+    }
+    if (MEDIA_VMIX_CreateGrp(EIS_DEMO_VMIX_GRP, &vmix) != 0) return -1;
+
+    osd.input_width = EIS_DEMO_OUT_W;
+    osd.input_height = EIS_DEMO_OUT_H;
+    osd.format = MEDIA_FORMAT_NV12;
+    osd.input_depth = 8;
+    osd.output_pool_id = EIS_DEMO_OSD_POOL;
+    osd.input_stride = out_stride;
+    osd.output_stride = out_stride;
+    osd.max_regions = 8;
+    if (MEDIA_OSD_CreateGrp(EIS_DEMO_OSD_GRP, &osd) != 0) return -1;
+
+    vo.intf = MEDIA_VO_INTF_MIPI;
+    vo.width = EIS_DEMO_OUT_W;
+    vo.height = EIS_DEMO_OUT_H;
+    vo.plane_count = 1;
+    if (MEDIA_VO_SetAttr(0, &vo) != 0 ||
+        MEDIA_VO_CreateChn(0, 0, 0, 0, EIS_DEMO_OUT_W, EIS_DEMO_OUT_H, out_stride, 8,
+                           MEDIA_VO_PLANE_TYPE_AUTO, MEDIA_FORMAT_NV12) != 0) {
+        fprintf(stderr, "EIS demo VO setup failed\n");
+        return -1;
+    }
+
+    if (MEDIA_SYS_Bind("VDEC", EIS_DEMO_VDEC_CHN, "output", "VPSS", EIS_DEMO_VPSS_GRP, "input") != 0 ||
+        MEDIA_SYS_Bind("VPSS", EIS_DEMO_VPSS_GRP, "output0", "VMIX", EIS_DEMO_VMIX_GRP, "input0") != 0 ||
+        MEDIA_SYS_Bind("VPSS", EIS_DEMO_VPSS_GRP, "output1", "EIS", EIS_DEMO_GRP, "input") != 0 ||
+        MEDIA_SYS_Bind("EIS", EIS_DEMO_GRP, "output", "VMIX", EIS_DEMO_VMIX_GRP, "input1") != 0 ||
+        MEDIA_SYS_Bind("VMIX", EIS_DEMO_VMIX_GRP, "output0", "OSD", EIS_DEMO_OSD_GRP, "input") != 0 ||
+        MEDIA_SYS_Bind("OSD", EIS_DEMO_OSD_GRP, "output0", "VO", 0, "input0") != 0) {
+        fprintf(stderr, "EIS demo bind failed\n");
+        return -1;
+    }
+
+    if (setup_eis_demo_osd_regions() != 0) {
+        fprintf(stderr, "EIS demo OSD setup failed\n");
+        return -1;
+    }
+
+    if (MEDIA_VO_Start(0, 0) != 0 ||
+        MEDIA_OSD_Start(EIS_DEMO_OSD_GRP) != 0 ||
+        MEDIA_VMIX_Start(EIS_DEMO_VMIX_GRP) != 0 ||
+        MEDIA_EIS_Start(EIS_DEMO_GRP) != 0 ||
+        MEDIA_VPSS_Enable(EIS_DEMO_VPSS_GRP) != 0 ||
+        MEDIA_VDEC_Start(EIS_DEMO_VDEC_CHN) != 0) {
+        fprintf(stderr, "EIS demo start failed\n");
+        return -1;
+    }
+    return 0;
+}
+
+static void stop_eis_vdec_vpss_vmix_osd_vo_demo(void) {
+    (void)MEDIA_VDEC_Stop(EIS_DEMO_VDEC_CHN);
+    (void)MEDIA_VPSS_Disable(EIS_DEMO_VPSS_GRP);
+    (void)MEDIA_EIS_Stop(EIS_DEMO_GRP);
+    (void)MEDIA_VMIX_Stop(EIS_DEMO_VMIX_GRP);
+    (void)MEDIA_OSD_Stop(EIS_DEMO_OSD_GRP);
+    (void)MEDIA_VO_Stop(0, 0);
+}
+
+static void print_eis_vdec_vpss_vmix_osd_vo_summary(void) {
+    const struct { const char *mod; int id; } mods[] = {
+        {"VDEC", EIS_DEMO_VDEC_CHN}, {"VPSS", EIS_DEMO_VPSS_GRP},
+        {"EIS", EIS_DEMO_GRP}, {"VMIX", EIS_DEMO_VMIX_GRP},
+        {"OSD", EIS_DEMO_OSD_GRP}, {"VO", 0},
+    };
+    MEDIA_EIS_STATS stats;
+    printf("EIS demo frame-counts:");
+    for (size_t i = 0; i < ARRAY_SIZE(mods); ++i) {
+        uint64_t count = 0;
+        if (MEDIA_SYS_GetModuleFrameCount(mods[i].mod, mods[i].id, &count) == 0) {
+            printf(" %s=%llu", mods[i].mod, (unsigned long long)count);
+        }
+    }
+    printf("\n");
+    memset(&stats, 0, sizeof(stats));
+    if (MEDIA_EIS_GetStats(EIS_DEMO_GRP, &stats) == 0) {
+        printf("EIS demo last: frame=%d total=%.3fms estimate=%.3fms warp=%.3fms "
+               "estimate_path=%d warp_path=%d fallback=%d\n",
+               stats.frame_index, stats.total_ms, stats.estimate_ms, stats.warp_ms,
+               stats.estimate_path, stats.warp_path, stats.fallback_used);
+    }
+}
+
+static int run_only_eis_vdec_vpss_vmix_osd_vo_demo(void) {
+    eis_demo_stream_t stream;
+    const char *frames_env = getenv("ALLDEMO_EIS_FRAMES");
+    int frame_limit = frames_env ? atoi(frames_env) : 0;
+    int sent_frames = 0;
+    uint64_t pts = 0;
+    int sleep_us = 1000000 / EIS_DEMO_FPS;
+    int ret = 1;
+
+    if (eis_demo_read_stream(EIS_DEMO_INPUT_PATH, &stream) != 0) return 1;
+    if (setup_eis_vdec_vpss_vmix_osd_vo_demo() != 0) goto out_stream;
+
+    set_tile_status("VDEC", TILE_LIVE);
+    set_tile_status("VPSS", TILE_LIVE);
+    set_tile_status("EIS", TILE_LIVE);
+    set_tile_status("VMIX", TILE_LIVE);
+    set_tile_status("OSD", TILE_LIVE);
+    set_tile_status("VO", TILE_LIVE);
+    printf("EIS demo running: %s %dx%d fps=%d frames=%d\n",
+           EIS_DEMO_INPUT_PATH, EIS_DEMO_W, EIS_DEMO_H, EIS_DEMO_FPS, frame_limit);
+
+    while (g_running && (frame_limit <= 0 || sent_frames < frame_limit)) {
+        for (int i = 0; i < stream.count && g_running; ++i) {
+            int start = stream.offsets[i];
+            int end = (i + 1 < stream.count) ? stream.offsets[i + 1] : (int)stream.size;
+            int len = end - start;
+            if (len <= 0) continue;
+            if (MEDIA_VDEC_SendPacket(EIS_DEMO_VDEC_CHN, stream.data + start, (size_t)len, pts) != 0) {
+                fprintf(stderr, "EIS demo MEDIA_VDEC_SendPacket failed at nal=%d\n", i);
+                goto out_stop;
+            }
+            pts += (uint64_t)(1000 / EIS_DEMO_FPS);
+            if (eis_demo_nal_is_vcl(&stream, i)) {
+                ++sent_frames;
+                if ((sent_frames % EIS_DEMO_FPS) == 0) {
+                    (void)update_eis_demo_perf_text();
+                }
+                if (frame_limit > 0 && sent_frames >= frame_limit) break;
+                usleep((useconds_t)sleep_us);
+            }
+        }
+    }
+    for (int waited_ms = 0; waited_ms < 5000; waited_ms += 20) {
+        uint64_t osd_count = 0;
+        if (MEDIA_SYS_GetModuleFrameCount("OSD", EIS_DEMO_OSD_GRP, &osd_count) == 0 &&
+            (frame_limit <= 0 || osd_count >= (uint64_t)(sent_frames / 2))) {
+            break;
+        }
+        usleep(20000);
+    }
+    print_eis_vdec_vpss_vmix_osd_vo_summary();
+    ret = 0;
+
+out_stop:
+    stop_eis_vdec_vpss_vmix_osd_vo_demo();
+out_stream:
+    eis_demo_free_stream(&stream);
+    return ret;
+}
+
 static int run_only_npu_vdec_demo(int dstride, size_t display_size) {
     h264_stream_t stream;
     memset(&stream, 0, sizeof(stream));
@@ -12452,6 +12878,12 @@ int main(int argc, char **argv) {
         return 1;
     }
     MEDIA_SYS_SetLicense(LICENSE_PATH);
+
+    if (!solid_test && only_tile && strcasecmp(only_tile, "EIS") == 0) {
+        int eis_ret = run_only_eis_vdec_vpss_vmix_osd_vo_demo();
+        MEDIA_SYS_Exit();
+        return eis_ret;
+    }
 
     if (!solid_test) mark_showcase_modules();
     int loaded_assets = solid_test ? 0 : load_loop_assets();

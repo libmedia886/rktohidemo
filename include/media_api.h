@@ -999,6 +999,57 @@ int MEDIA_CLAHE_SetClipLimit(int grp, float clip_limit);
 int MEDIA_CLAHE_SetHighlightProtect(int grp, float start, float strength);
 int MEDIA_CLAHE_SetPassthrough(int grp, int enable);
 
+// EIS (纯图像电子稳像模块，第一版自计算平移补偿矩阵)
+typedef struct {
+    int width;
+    int height;
+    int format;
+    int input_depth;
+    int output_pool_id;
+    int input_stride;
+    int output_stride;
+    float crop_ratio;
+    int smoothing_window;
+    int estimate_width;
+    int search_radius;
+    int block_step;
+    int passthrough;
+} MEDIA_EIS_ATTR;
+
+typedef struct {
+    int frame_index;
+    int fallback_used;
+    int fallback_reason;
+    float raw_dx;
+    float raw_dy;
+    float raw_angle;
+    float smooth_dx;
+    float smooth_dy;
+    float smooth_angle;
+    float comp_dx;
+    float comp_dy;
+    float comp_angle;
+    float matrix[6];
+    double estimate_ms;
+    double warp_ms;
+    double total_ms;
+    int warp_path; /* 0=cpu, 1=rga, 2=opencl */
+    int estimate_path; /* 0=cpu, 1=opencl */
+    double estimate_kernel_ms;
+} MEDIA_EIS_STATS;
+
+int MEDIA_EIS_CreateGrp(int grp, const MEDIA_EIS_ATTR *attr);
+int MEDIA_EIS_DestroyGrp(int grp);
+int MEDIA_EIS_Start(int grp);
+int MEDIA_EIS_Stop(int grp);
+int MEDIA_EIS_Enable(int grp);
+int MEDIA_EIS_Disable(int grp);
+int MEDIA_EIS_SendFrame(int grp, MEDIA_BUFFER buf, int timeout_ms);
+int MEDIA_EIS_GetFrame(int grp, MEDIA_BUFFER *buf, int timeout_ms);
+int MEDIA_EIS_ReleaseFrame(int grp, MEDIA_BUFFER buf);
+int MEDIA_EIS_SetPassthrough(int grp, int enable);
+int MEDIA_EIS_GetStats(int grp, MEDIA_EIS_STATS *stats);
+
 // EDOF_CL (使用 OpenCL GPU 的双输入扩景深融合模块)
 typedef struct {
     int width;
