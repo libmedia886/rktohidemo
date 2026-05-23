@@ -82,6 +82,7 @@
 #define LIVE_TNR_CL_GRP 77
 #define LIVE_WBC_RESIZE_GRP 78
 #define LIVE_WBC_VI_RESIZE_GRP 79
+#define LIVE_HIGHLIGHT_SUPPRESS_GRP 120
 #define LIVE_BLEND_PYR_GRP 118
 #define DISPLAY_VMIX_GRP 80
 #define DISPLAY_OSD_GRP 81
@@ -229,6 +230,11 @@
 #define TNR_CL_STATIC_ALPHA 0.82f
 #define TNR_CL_MOTION_ALPHA 1.0f
 #define TNR_CL_ASSET_PATH "assets/loop/tnr_cl/synthetic_random_spatial_noise_640x640_120.nv12"
+#define HIGHLIGHT_SUPPRESS_THRESHOLD_LOW 0.70f
+#define HIGHLIGHT_SUPPRESS_THRESHOLD_HIGH 0.92f
+#define HIGHLIGHT_SUPPRESS_KNEE 0.72f
+#define HIGHLIGHT_SUPPRESS_RATIO 0.18f
+#define HIGHLIGHT_SUPPRESS_STRENGTH 1.00f
 #define RESIZE_DEMO_UPDATE_FRAMES (FPS * 2)
 #define VO_CAPTURE_SECONDS 5
 #define TILE_FIRST_INDEX 4
@@ -712,6 +718,7 @@ static module_tile_t g_tiles[] = {
     {"CSC_CL", 0, 0, TILE_OFFLINE}, {"OSD", 0, 0, TILE_OFFLINE},
     {"CLAHE", 0, 0, TILE_OFFLINE}, {"RETINEX", 0, 0, TILE_OFFLINE},
     {"RETINEX_OFFLINE", 0, 0, TILE_OFFLINE}, {"TNR_CL", 0, 0, TILE_OFFLINE},
+    {"HIGHLIGHT_SUPPRESS", 0, 0, TILE_OFFLINE},
     {"EIS", 0, 0, TILE_OFFLINE},
     {"CAP_DEHAZE", 0, 0, TILE_OFFLINE}, {"CAP_DEHAZE_OFFLINE", 0, 0, TILE_OFFLINE},
     {"DCP_FAST_DEHAZE", 0, 0, TILE_OFFLINE},
@@ -733,6 +740,7 @@ static const char *g_module_pages[] = {
     "VI", "VPSS", "VO", "WBC", "RGA", "RESIZE_RGA", "CSC_RGA", "CSC_CL", "OSD",
     "CLAHE", "RETINEX", "RETINEX_OFFLINE", "EIS", "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "DCP_FAST_DEHAZE", "THERMAL", "CONV_CL",
     "TRANSFORM", "VMIX", "BLEND_PYR", "EDOF_CL", "MCF_FUSION_CL", "DUALVIEW", "STEREO_3D", "PANO", "AVM2D",
+    "HIGHLIGHT_SUPPRESS",
 };
 
 static const char *g_default_pages[] = {
@@ -743,7 +751,8 @@ static const char *g_default_pages[] = {
 
 static const char *g_engineering_pages[] = {
     "VI", "VPSS", "VO", "WBC", "OSD", "RESIZE_RGA", "THERMAL", "BLEND_PYR", "EDOF_CL",
-    "MCF_FUSION_CL", "RGA", "CSC_RGA", "CSC_CL", "CLAHE", "RETINEX", "RETINEX_OFFLINE", "TNR_CL", "EIS",
+    "MCF_FUSION_CL", "RGA", "CSC_RGA", "CSC_CL", "CLAHE", "RETINEX", "RETINEX_OFFLINE", "TNR_CL",
+    "HIGHLIGHT_SUPPRESS", "EIS",
     "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "VMIX", "STEREO_3D", "PANO", "AVM2D",
 };
 
@@ -3131,6 +3140,56 @@ static void draw_tnr_cl_showcase(uint8_t *dst, int stride, int x, int y, int w, 
     draw_text(dst, stride, x + 24, bottom_y + 144, runtime, 2, 255, 230, 120);
 }
 
+static void draw_highlight_suppress_showcase(uint8_t *dst, int stride, int x, int y, int w, int h,
+                                             const uint8_t *input_nv12,
+                                             const uint8_t *output_nv12) {
+    char runtime[128];
+    char param_line[192];
+    int top_h = 170;
+    int bottom_h = 204;
+    int gap = 12;
+    int compare_y = y + top_h + gap;
+    int compare_h = h - top_h - bottom_h - gap * 2;
+    int bottom_y = y + h - bottom_h;
+
+    if (compare_h < 320) return;
+    format_runtime_status(runtime, sizeof(runtime));
+    snprintf(param_line, sizeof(param_line),
+             "PARAM low=%.2f high=%.2f knee=%.2f ratio=%.2f strength=%.2f",
+             HIGHLIGHT_SUPPRESS_THRESHOLD_LOW, HIGHLIGHT_SUPPRESS_THRESHOLD_HIGH,
+             HIGHLIGHT_SUPPRESS_KNEE, HIGHLIGHT_SUPPRESS_RATIO,
+             HIGHLIGHT_SUPPRESS_STRENGTH);
+
+    fill_rect_nv12(dst, stride, x, y, w, top_h, 6, 13, 24);
+    stroke_rect_nv12(dst, stride, x, y, w, top_h, 2, 66, 150, 210);
+    draw_utf8_text(dst, stride, x + 24, y + 18,
+                   "HIGHLIGHT_SUPPRESS：NV12高光软压制", 28, 170, 255, 220);
+    draw_utf8_text(dst, stride, x + 24, y + 62,
+                   "数据流：合成NV12强反光场景 -> 高光soft-knee压缩 -> 输入/输出上下对比。",
+                   20, 210, 235, 255);
+    draw_utf8_text(dst, stride, x + 24, y + 96,
+                   "为什么这样做：只压低接近白色的刺眼亮部，尽量保留普通高亮和有色区域。",
+                   20, 255, 230, 120);
+    draw_utf8_text(dst, stride, x + 24, y + 130,
+                   "当前模块为OpenCL/EGL GPU路径；CPU/LUT仅作为fallback。",
+                   20, 255, 230, 120);
+
+    draw_nv12_comparison(dst, stride, x, compare_y, w, compare_h,
+                         input_nv12, output_nv12,
+                         "TOP: NV12 GLARE INPUT", "BOTTOM: SOFT-KNEE OUTPUT");
+
+    fill_rect_nv12(dst, stride, x, bottom_y, w, bottom_h, 5, 10, 18);
+    stroke_rect_nv12(dst, stride, x, bottom_y, w, bottom_h, 2, 0, 190, 170);
+    draw_utf8_text(dst, stride, x + 24, bottom_y + 22,
+                   "展示重点：观察白色反光斑是否变柔和，背景层次和有色目标是否保持自然。",
+                   22, 170, 255, 220);
+    draw_utf8_text(dst, stride, x + 24, bottom_y + 66,
+                   "算法边界：这是实时亮度压制，不做RAW域恢复，也不重建过曝丢失纹理。",
+                   20, 210, 235, 255);
+    draw_text(dst, stride, x + 24, bottom_y + 110, param_line, 1, 190, 230, 255);
+    draw_text(dst, stride, x + 24, bottom_y + 144, runtime, 2, 255, 230, 120);
+}
+
 static void vpss_bind_layout(int *start_x, int *start_y, int *cell, int *gap) {
     int c = VPSS_TILE_W;
     int g = 40;
@@ -3913,6 +3972,9 @@ static void draw_effect_tile(uint8_t *dst, int stride, int x, int y, int w, int 
     } else if (strcmp(g_tiles[idx].name, "TNR_CL") == 0 && (retinex_in || retinex_live)) {
         draw_nv12_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38,
                              retinex_in, retinex_live, "NOISY IN", "TNR OUT");
+    } else if (strcmp(g_tiles[idx].name, "HIGHLIGHT_SUPPRESS") == 0 && (retinex_in || retinex_live)) {
+        draw_nv12_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38,
+                             retinex_in, retinex_live, "GLARE IN", "SOFT-KNEE");
     } else if (strcmp(g_tiles[idx].name, "PANO") == 0 && (g_pano_sample.loaded || pano_out)) {
         draw_pano_comparison(dst, stride, x + 6, y + 30, w - 12, h - 38, pano_out);
     } else if (strcmp(g_tiles[idx].name, "AVM2D") == 0 && g_avm2d_video.frame_count > 0) {
@@ -4094,6 +4156,12 @@ static void draw_tile_content(uint8_t *dst, int stride, int x, int y, int w, int
     if (strcmp(g_tiles[idx].name, "TNR_CL") == 0 && (cam || retinex_live)) {
         draw_tnr_cl_showcase(dst, stride, x + 12, y + 12, w - 24, h - 24,
                              cam, retinex_live);
+        return;
+    }
+
+    if (strcmp(g_tiles[idx].name, "HIGHLIGHT_SUPPRESS") == 0 && (cam || retinex_live)) {
+        draw_highlight_suppress_showcase(dst, stride, x + 12, y + 12, w - 24, h - 24,
+                                         cam, retinex_live);
         return;
     }
 
@@ -11453,6 +11521,131 @@ static int process_live_tnr_cl(const uint8_t *src, uint8_t *dst) {
     return ret;
 }
 
+static void draw_nv12_circle_frame(uint8_t *dst, int frame_w, int frame_h, int stride,
+                                   int cx, int cy, int radius,
+                                   uint8_t r, uint8_t g, uint8_t b, int feather) {
+    uint8_t yy, uu, vv;
+    int r2 = radius * radius;
+    int inner = radius - feather;
+    int inner2 = inner > 0 ? inner * inner : 0;
+    rgb_to_yuv(r, g, b, &yy, &uu, &vv);
+    for (int y = cy - radius; y <= cy + radius; ++y) {
+        if (y < 0 || y >= frame_h) continue;
+        uint8_t *yp = dst + (size_t)y * stride;
+        for (int x = cx - radius; x <= cx + radius; ++x) {
+            if (x < 0 || x >= frame_w) continue;
+            int dx = x - cx;
+            int dy = y - cy;
+            int d2 = dx * dx + dy * dy;
+            if (d2 > r2) continue;
+            int alpha = 255;
+            if (d2 > inner2 && feather > 0) {
+                alpha = 255 - ((d2 - inner2) * 255) / (r2 - inner2 + 1);
+                if (alpha < 0) alpha = 0;
+            }
+            int v = yp[x];
+            yp[x] = (uint8_t)((v * (255 - alpha) + yy * alpha) / 255);
+        }
+    }
+
+    uint8_t *uv = dst + (size_t)stride * frame_h;
+    for (int y = (cy - radius) / 2; y <= (cy + radius) / 2; ++y) {
+        if (y < 0 || y >= frame_h / 2) continue;
+        for (int x = (cx - radius) & ~1; x <= (cx + radius); x += 2) {
+            if (x < 0 || x + 1 >= frame_w) continue;
+            int dx = x + 1 - cx;
+            int dy = y * 2 + 1 - cy;
+            if (dx * dx + dy * dy > r2) continue;
+            uint8_t *p = uv + (size_t)y * stride + x;
+            p[0] = uu;
+            p[1] = vv;
+        }
+    }
+}
+
+static void fill_highlight_demo_nv12(uint8_t *dst, int frame) {
+    fill_rect_nv12_frame(dst, CAM_W, CAM_H, CAM_STRIDE, 0, 0, CAM_W, CAM_H, 30, 42, 48);
+    for (int y = 0; y < CAM_H; y += 40) {
+        uint8_t shade = (uint8_t)(42 + (y * 64) / CAM_H);
+        fill_rect_nv12_frame(dst, CAM_W, CAM_H, CAM_STRIDE, 0, y, CAM_W, 20,
+                             shade, (uint8_t)(shade + 18), (uint8_t)(shade + 28));
+    }
+    fill_rect_nv12_frame(dst, CAM_W, CAM_H, CAM_STRIDE, 72, 118, 240, 330, 50, 86, 110);
+    fill_rect_nv12_frame(dst, CAM_W, CAM_H, CAM_STRIDE, 350, 172, 190, 260, 110, 70, 48);
+    fill_rect_nv12_frame(dst, CAM_W, CAM_H, CAM_STRIDE, 90, 470, 460, 54, 68, 92, 102);
+    for (int i = 0; i < 5; ++i) {
+        int x = 130 + i * 86 + ((frame * 3 + i * 17) % 18);
+        int y = 218 + ((i * 41 + frame * 2) % 74);
+        draw_nv12_circle_frame(dst, CAM_W, CAM_H, CAM_STRIDE, x, y, 44 + i * 4,
+                               255, 255, 246, 22);
+    }
+    draw_nv12_circle_frame(dst, CAM_W, CAM_H, CAM_STRIDE,
+                           430 + ((frame * 2) % 34), 242, 96,
+                           255, 255, 255, 42);
+    draw_nv12_circle_frame(dst, CAM_W, CAM_H, CAM_STRIDE, 210, 362, 64,
+                           255, 246, 224, 24);
+    draw_nv12_circle_frame(dst, CAM_W, CAM_H, CAM_STRIDE, 116, 180, 58,
+                           255, 255, 255, 28);
+    draw_nv12_circle_frame(dst, CAM_W, CAM_H, CAM_STRIDE, 520, 492, 34,
+                           238, 170, 70, 18);
+}
+
+static int setup_live_highlight_suppress(void) {
+    if (MEDIA_POOL_Create(OSD_INPUT_POOL, CAM_FRAME_SIZE, 4) != 0) return -1;
+    if (MEDIA_POOL_Create(OSD_OUTPUT_POOL, CAM_FRAME_SIZE, 4) != 0) {
+        MEDIA_POOL_Destroy(OSD_INPUT_POOL);
+        return -1;
+    }
+
+    MEDIA_HIGHLIGHT_SUPPRESS_ATTR attr = {0};
+    attr.width = CAM_W;
+    attr.height = CAM_H;
+    attr.format = MEDIA_FORMAT_NV12;
+    attr.input_depth = 4;
+    attr.output_pool_id = OSD_OUTPUT_POOL;
+    attr.input_stride = CAM_STRIDE;
+    attr.output_stride = CAM_STRIDE;
+    attr.threshold_low = HIGHLIGHT_SUPPRESS_THRESHOLD_LOW;
+    attr.threshold_high = HIGHLIGHT_SUPPRESS_THRESHOLD_HIGH;
+    attr.knee = HIGHLIGHT_SUPPRESS_KNEE;
+    attr.ratio = HIGHLIGHT_SUPPRESS_RATIO;
+    attr.strength = HIGHLIGHT_SUPPRESS_STRENGTH;
+    attr.chroma_low = 0.03f;
+    attr.chroma_high = 0.25f;
+
+    if (MEDIA_HIGHLIGHT_SUPPRESS_CreateGrp(LIVE_HIGHLIGHT_SUPPRESS_GRP, &attr) != 0 ||
+        MEDIA_HIGHLIGHT_SUPPRESS_Start(LIVE_HIGHLIGHT_SUPPRESS_GRP) != 0) {
+        MEDIA_HIGHLIGHT_SUPPRESS_DestroyGrp(LIVE_HIGHLIGHT_SUPPRESS_GRP);
+        MEDIA_POOL_Destroy(OSD_OUTPUT_POOL);
+        MEDIA_POOL_Destroy(OSD_INPUT_POOL);
+        return -1;
+    }
+    set_tile_status("HIGHLIGHT_SUPPRESS", TILE_LIVE);
+    return 0;
+}
+
+static void cleanup_live_highlight_suppress(int enabled) {
+    if (!enabled) return;
+    MEDIA_HIGHLIGHT_SUPPRESS_Stop(LIVE_HIGHLIGHT_SUPPRESS_GRP);
+    MEDIA_HIGHLIGHT_SUPPRESS_DestroyGrp(LIVE_HIGHLIGHT_SUPPRESS_GRP);
+    MEDIA_POOL_Destroy(OSD_OUTPUT_POOL);
+    MEDIA_POOL_Destroy(OSD_INPUT_POOL);
+}
+
+static int process_live_highlight_suppress(const uint8_t *src, uint8_t *dst) {
+    MEDIA_BUFFER out = {-1, -1};
+    int ret = -1;
+    if (send_copied_frame("HIGHLIGHT_SUPPRESS", LIVE_HIGHLIGHT_SUPPRESS_GRP, "input",
+                          OSD_INPUT_POOL, src, CAM_FRAME_SIZE, 20) != 0) {
+        return -1;
+    }
+    if (MEDIA_HIGHLIGHT_SUPPRESS_GetFrame(LIVE_HIGHLIGHT_SUPPRESS_GRP, &out, 1000) == 0) {
+        ret = copy_from_buffer(out, dst, CAM_FRAME_SIZE);
+        MEDIA_HIGHLIGHT_SUPPRESS_ReleaseFrame(LIVE_HIGHLIGHT_SUPPRESS_GRP, out);
+    }
+    return ret;
+}
+
 static int update_retinex_compare_overlay(uint64_t vi_count, uint64_t retinex_count,
                                           uint64_t raw_resize_count,
                                           uint64_t effect_resize_count,
@@ -13140,6 +13333,7 @@ static const char *module_flow_note(const char *name) {
     if (strcasecmp(name, "RETINEX") == 0) return "数据流：VI 3840x2160 -> RETINEX校正/直通 -> RESIZE_RGA缩放 -> 单路显示。";
     if (strcasecmp(name, "RETINEX_OFFLINE") == 0) return "数据流：EXDark静态低照度图 -> RETINEX gain=40 -> 原图/增强图对比。";
     if (strcasecmp(name, "TNR_CL") == 0) return "数据流：合成NV12噪声序列 -> TNR_CL OpenCL时域融合 -> 输入/输出对比。";
+    if (strcasecmp(name, "HIGHLIGHT_SUPPRESS") == 0) return "数据流：合成NV12强反光场景 -> soft-knee高光压制 -> 输入/输出对比。";
     if (strcasecmp(name, "CAP_DEHAZE") == 0) return "数据流：VI 1920x1080有效画面 -> CSC_RGA BGR888 -> CAP_DEHAZE -> VO。";
     if (strcasecmp(name, "CAP_DEHAZE_OFFLINE") == 0) return "数据流：静态低能见度图 -> CAP_DEHAZE refine_scale=0.25 -> 原图/输出图对比。";
     if (strcasecmp(name, "DCP_FAST_DEHAZE") == 0) return "数据流：VI 3840x2160 -> CSC_RGA BGR888 -> DCP_FAST_DEHAZE -> RESIZE_RGA -> VO。";
@@ -13172,6 +13366,7 @@ static const char *module_showcase_note(const char *name) {
     if (strcasecmp(name, "RETINEX") == 0) return "展示重点：1秒直通、1秒增强，观察光照校正和暗部细节增强。";
     if (strcasecmp(name, "RETINEX_OFFLINE") == 0) return "展示重点：100张EXDark低照度图逐张对比，突出暗部提亮效果。";
     if (strcasecmp(name, "TNR_CL") == 0) return "展示重点：块级运动门控时域降噪，观察静态区域噪声收敛和GPU耗时。";
+    if (strcasecmp(name, "HIGHLIGHT_SUPPRESS") == 0) return "展示重点：白色刺眼高光变柔和，同时背景和有色目标不过度变暗。";
     if (strcasecmp(name, "CAP_DEHAZE") == 0) return "展示重点：实时去雾前后对比，突出低能见度细节。";
     if (strcasecmp(name, "CAP_DEHAZE_OFFLINE") == 0) return "展示重点：用固定低能见度图片看清CAP去雾前后差异。";
     if (strcasecmp(name, "DCP_FAST_DEHAZE") == 0) return "展示重点：暗通道快速去雾前后对比。";
@@ -13435,6 +13630,7 @@ int main(int argc, char **argv) {
     const int pano_only_page = only_tile && strcasecmp(only_tile, "PANO") == 0;
     const int retinex_offline_only_page = only_tile && strcasecmp(only_tile, "RETINEX_OFFLINE") == 0;
     const int tnr_cl_only_page = only_tile && strcasecmp(only_tile, "TNR_CL") == 0;
+    const int highlight_suppress_only_page = only_tile && strcasecmp(only_tile, "HIGHLIGHT_SUPPRESS") == 0;
 
     if (MEDIA_SYS_Init() != 0) {
         fprintf(stderr, "MEDIA_SYS_Init failed\n");
@@ -13548,6 +13744,10 @@ int main(int argc, char **argv) {
     if (!solid_test && tnr_cl_only_page && setup_live_tnr_cl() == 0) {
         live_tnr_cl_ok = 1;
     }
+    int live_highlight_suppress_ok = 0;
+    if (!solid_test && highlight_suppress_only_page && setup_live_highlight_suppress() == 0) {
+        live_highlight_suppress_ok = 1;
+    }
     int live_edof_ok = 0;
     if (!solid_test && only_tile && strcasecmp(only_tile, "EDOF_CL") == 0 &&
         loaded_edof_pairs > 0 && edof_live_requested && setup_live_edof() == 0) {
@@ -13596,6 +13796,7 @@ int main(int argc, char **argv) {
         cleanup_live_mcf(live_mcf_ok);
         cleanup_live_edof(live_edof_ok);
         cleanup_live_tnr_cl(live_tnr_cl_ok);
+        cleanup_live_highlight_suppress(live_highlight_suppress_ok);
         cleanup_live_retinex(live_retinex_ok);
         cleanup_live_clahe(live_clahe_ok);
         cleanup_live_conv_cl(live_conv_ok);
@@ -13638,6 +13839,7 @@ int main(int argc, char **argv) {
         cleanup_live_mcf(live_mcf_ok);
         cleanup_live_edof(live_edof_ok);
         cleanup_live_tnr_cl(live_tnr_cl_ok);
+        cleanup_live_highlight_suppress(live_highlight_suppress_ok);
         cleanup_live_retinex(live_retinex_ok);
         cleanup_live_clahe(live_clahe_ok);
         cleanup_live_conv_cl(live_conv_ok);
@@ -14519,6 +14721,7 @@ int main(int argc, char **argv) {
     int retinex_frames = 0;
     int retinex_offline_sample_index = -1;
     int tnr_frames = 0;
+    int highlight_suppress_frames = 0;
     int edof_frames = 0;
     int edof_pair_index = -1;
     int blend_pyr_frames = 0;
@@ -14543,6 +14746,7 @@ int main(int argc, char **argv) {
     uint8_t *last_clahe = malloc(CAM_FRAME_SIZE);
     uint8_t *last_retinex = malloc(CAM_FRAME_SIZE);
     uint8_t *last_tnr_cl = malloc(CAM_FRAME_SIZE);
+    uint8_t *last_highlight_suppress = malloc(CAM_FRAME_SIZE);
     uint8_t *last_edof_in0 = malloc(CAM_FRAME_SIZE);
     uint8_t *last_edof_in1 = malloc(CAM_FRAME_SIZE);
     uint8_t *last_edof = malloc(CAM_FRAME_SIZE);
@@ -14592,6 +14796,7 @@ int main(int argc, char **argv) {
     if (last_clahe) memset(last_clahe, 0, CAM_FRAME_SIZE);
     if (last_retinex) memset(last_retinex, 0, CAM_FRAME_SIZE);
     if (last_tnr_cl) memset(last_tnr_cl, 0, CAM_FRAME_SIZE);
+    if (last_highlight_suppress) memset(last_highlight_suppress, 0, CAM_FRAME_SIZE);
     if (last_edof_in0) memset(last_edof_in0, 0, CAM_FRAME_SIZE);
     if (last_edof_in1) memset(last_edof_in1, 0, CAM_FRAME_SIZE);
     if (last_edof) memset(last_edof, 0, CAM_FRAME_SIZE);
@@ -14770,6 +14975,12 @@ int main(int argc, char **argv) {
             }
             if (process_live_tnr_cl(last_cam, last_tnr_cl) == 0) {
                 tnr_frames++;
+            }
+        }
+        if (live_highlight_suppress_ok && last_cam && last_highlight_suppress) {
+            fill_highlight_demo_nv12(last_cam, frame);
+            if (process_live_highlight_suppress(last_cam, last_highlight_suppress) == 0) {
+                highlight_suppress_frames++;
             }
         }
         int blend_pyr_sample_count = blend_pyr_only_page && loaded_mcf_pairs > 0 ?
@@ -15708,7 +15919,8 @@ int main(int argc, char **argv) {
             (cam_frames > 0 ||
              (only_tile && strcasecmp(only_tile, "CAP_DEHAZE_OFFLINE") == 0 && cap_frames > 0) ||
              (retinex_offline_only_page && retinex_frames > 0) ||
-             (tnr_cl_only_page && tnr_frames > 0)) ? last_cam : NULL,
+             (tnr_cl_only_page && tnr_frames > 0) ||
+             (highlight_suppress_only_page && highlight_suppress_frames > 0)) ? last_cam : NULL,
             osd_frames > 0 ? last_osd : NULL,
             resize_frames > 0 ? last_resize : NULL,
             vpss_frames > 0 ? last_vpss : NULL,
@@ -15718,8 +15930,9 @@ int main(int argc, char **argv) {
             dcp_frames > 0 ? last_dcp : NULL,
             conv_frames > 0 ? last_conv : NULL,
             clahe_frames > 0 ? last_clahe : NULL,
-            tnr_cl_only_page && tnr_frames > 0 ? last_tnr_cl :
-                (retinex_frames > 0 ? last_retinex : NULL),
+            highlight_suppress_only_page && highlight_suppress_frames > 0 ? last_highlight_suppress :
+                (tnr_cl_only_page && tnr_frames > 0 ? last_tnr_cl :
+                (retinex_frames > 0 ? last_retinex : NULL)),
             pano_frames > 0 ? last_pano : NULL,
             last_edof_in0,
             last_edof_in1,
@@ -15961,6 +16174,32 @@ int main(int argc, char **argv) {
                    TNR_CL_STATIC_ALPHA, TNR_CL_MOTION_ALPHA,
                    g_perf.cpu_percent, gpu_text, rga_text, cl_text);
         }
+        if (highlight_suppress_only_page && (frame % FPS) == 0) {
+            MEDIA_HIGHLIGHT_SUPPRESS_PERF hs_perf = {0};
+            char gpu_text[24];
+            char rga_text[24];
+            char module_text[32];
+            snprintf(gpu_text, sizeof(gpu_text), g_perf.gpu_available ? "%.0f%%" : "N/A",
+                     g_perf.gpu_percent);
+            snprintf(rga_text, sizeof(rga_text), g_perf.rga_available ? "%.0f%%" : "N/A",
+                     g_perf.rga_percent);
+            if (live_highlight_suppress_ok &&
+                MEDIA_HIGHLIGHT_SUPPRESS_GetLastPerf(LIVE_HIGHLIGHT_SUPPRESS_GRP, &hs_perf) == 0) {
+                if (hs_perf.gpu_enabled) {
+                    snprintf(module_text, sizeof(module_text), "GPU %.3f/%.3fms",
+                             hs_perf.gpu_kernel_ms, hs_perf.gpu_queue_ms);
+                } else {
+                    snprintf(module_text, sizeof(module_text), "CPU %.3fms", hs_perf.cpu_ms);
+                }
+            } else {
+                snprintf(module_text, sizeof(module_text), "N/A");
+            }
+            printf("HIGHLIGHT_SUPPRESS frames=%d processed=%d low=%.2f high=%.2f ratio=%.2f strength=%.2f cpu=%.0f%% gpu=%s rga=%s module=%s\n",
+                   frame, highlight_suppress_frames,
+                   HIGHLIGHT_SUPPRESS_THRESHOLD_LOW, HIGHLIGHT_SUPPRESS_THRESHOLD_HIGH,
+                   HIGHLIGHT_SUPPRESS_RATIO, HIGHLIGHT_SUPPRESS_STRENGTH,
+                   g_perf.cpu_percent, gpu_text, rga_text, module_text);
+        }
         if (only_tile && strcasecmp(only_tile, "CONV_CL") == 0 &&
             (frame % FPS) == 0) {
             const conv_cl_kernel_stage_t *stage = current_conv_cl_stage();
@@ -16075,6 +16314,7 @@ int main(int argc, char **argv) {
     cleanup_live_blend_pyr(live_blend_pyr_ok);
     cleanup_live_edof(live_edof_ok);
     cleanup_live_tnr_cl(live_tnr_cl_ok);
+    cleanup_live_highlight_suppress(live_highlight_suppress_ok);
     cleanup_live_retinex(live_retinex_ok);
     cleanup_live_clahe(live_clahe_ok);
     cleanup_live_conv_cl(live_conv_ok);
@@ -16116,6 +16356,7 @@ int main(int argc, char **argv) {
     free(last_edof);
     free(last_edof_in1);
     free(last_edof_in0);
+    free(last_highlight_suppress);
     free(last_retinex);
     free(last_tnr_cl);
     free(last_clahe);

@@ -1088,6 +1088,46 @@ int MEDIA_TNR_CL_SetStaticAlpha(int grp, float alpha);
 int MEDIA_TNR_CL_SetMotionAlpha(int grp, float alpha);
 int MEDIA_TNR_CL_GetLastPerf(int grp, MEDIA_TNR_CL_PERF *perf);
 
+// HIGHLIGHT_SUPPRESS (NV12 高光软压制模块)
+typedef struct {
+    int width;
+    int height;
+    int format;
+    int input_depth;
+    int output_pool_id;
+    int input_stride;
+    int output_stride;
+    float threshold_low;
+    float threshold_high;
+    float knee;
+    float ratio;
+    float strength;
+    float chroma_low;
+    float chroma_high;
+    int passthrough;
+} MEDIA_HIGHLIGHT_SUPPRESS_ATTR;
+
+typedef struct {
+    double cpu_ms;
+    double gpu_kernel_ms;
+    double gpu_queue_ms;
+    int gpu_enabled;
+} MEDIA_HIGHLIGHT_SUPPRESS_PERF;
+
+int MEDIA_HIGHLIGHT_SUPPRESS_CreateGrp(int grp, const MEDIA_HIGHLIGHT_SUPPRESS_ATTR *attr);
+int MEDIA_HIGHLIGHT_SUPPRESS_DestroyGrp(int grp);
+int MEDIA_HIGHLIGHT_SUPPRESS_Start(int grp);
+int MEDIA_HIGHLIGHT_SUPPRESS_Stop(int grp);
+int MEDIA_HIGHLIGHT_SUPPRESS_Enable(int grp);
+int MEDIA_HIGHLIGHT_SUPPRESS_Disable(int grp);
+int MEDIA_HIGHLIGHT_SUPPRESS_SendFrame(int grp, MEDIA_BUFFER buf, int timeout_ms);
+int MEDIA_HIGHLIGHT_SUPPRESS_GetFrame(int grp, MEDIA_BUFFER *buf, int timeout_ms);
+int MEDIA_HIGHLIGHT_SUPPRESS_ReleaseFrame(int grp, MEDIA_BUFFER buf);
+int MEDIA_HIGHLIGHT_SUPPRESS_SetPassthrough(int grp, int enable);
+int MEDIA_HIGHLIGHT_SUPPRESS_SetStrength(int grp, float strength);
+int MEDIA_HIGHLIGHT_SUPPRESS_SetKnee(int grp, float knee);
+int MEDIA_HIGHLIGHT_SUPPRESS_GetLastPerf(int grp, MEDIA_HIGHLIGHT_SUPPRESS_PERF *perf);
+
 // EDOF_CL (使用 OpenCL GPU 的双输入扩景深融合模块)
 typedef struct {
     int width;
