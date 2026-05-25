@@ -69,6 +69,7 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --only CLAHE
 /userdata/alldemo/scripts/run_alldemo.sh --only RETINEX
 /userdata/alldemo/scripts/run_alldemo.sh --only RETINEX_OFFLINE
+/userdata/alldemo/scripts/run_alldemo.sh --only EIS_VI
 /userdata/alldemo/scripts/run_alldemo.sh --only EDOF_CL
 /userdata/alldemo/scripts/run_alldemo.sh --only MCF_FUSION_CL
 /userdata/alldemo/scripts/run_alldemo.sh --only DUALVIEW
@@ -96,6 +97,7 @@ cmake --build build -j
 `CLAHE` 单独模式使用 3840x2160 实时摄像头输入，走 `VI 3840x2160 -> CLAHE 3840x2160 -> RESIZE_RGA 1080x608 -> VMIX_RGA -> OSD -> VO`；后置缩放保持 16:9 比例，CLAHE 每 1 秒在 passthrough 原图和正常增强之间切换，屏幕动态展示当前模式、clip limit、8x8 tile grid、CLAHE/RESIZE 帧计数和 CPU/GPU/RGA 指标，并保存 `vo_captures/clahe_vo_*.bmp` 供复看。
 `RETINEX` 单独模式使用 3840x2160 实时摄像头输入，走 `VI 3840x2160 -> RETINEX 3840x2160 -> RESIZE_RGA 1080x608 -> VMIX_RGA -> OSD -> VO`；后置缩放保持 16:9 比例，RETINEX 每 1 秒在 passthrough 原图和正常增强之间切换，屏幕显示 gain=40、threshold、log range、RETINEX/RESIZE 帧计数和 CPU/GPU/RGA 指标，并保存 `vo_captures/retinex_vo_*.bmp` 供复看。
 `RETINEX_OFFLINE` 单独模式不占用摄像头，使用 `scripts/run_alldemo.sh` 从 `/userdata/rktohi/research/retinex/normalized/exdark_boat` 同步到 `assets/loop/retinex/exdark` 的前 100 张 EXDark 低照度图片；每 1 秒切换一张，将原图缩放为 640x640 NV12 后送入 RETINEX，使用 gain=40 生成目标增强图，并做上下等尺寸对比。默认客户循环中该页紧跟实时 `RETINEX` 页，完整播放约 100 秒，并保存 `vo_captures/retinex_offline_vo_*.bmp` 供复看。
+`EIS_VI` 单独模式使用实时摄像头输入，走 `VI 3840x2160 -> EIS -> VPSS 1072x608 -> OSD -> VO`；该页保留 `EIS` 离线素材对比页不变，专门用于验证真实 VI 输入进入电子稳像后的显示链路。屏幕 OSD 叠加标题、真实链路、输入/输出尺寸、EIS total/estimate/warp 耗时和画面标签，日志同步输出 VI/EIS/VPSS/OSD/VO 帧计数。
 `EDOF_CL` 单独模式使用 `assets/loop/edof/mfi_whu` 的 `a.jpg/b.jpg/fused.png` 样张做三栏对比，每 3 秒切换一组；默认客户页使用参考融合结果稳定展示并避免慢速 OpenCL 线程影响 Ctrl+C 清理，页面按样张索引缓存整页 NV12 结果，日志输出帧数、样张索引、更新次数、模式、cache 状态和 CPU/GPU/RGA 指标，并保存 `vo_captures/edof_cl_vo_*.bmp` 供复看。需要验证实时模块路径时可显式设置 `ALLDEMO_EDOF_CL_LIVE=1`。
 `MCF_FUSION_CL` 单独模式使用 `assets/loop/mcf_fusion` 的彩色图、单色细节图和参考融合图做对比，每 3 秒切换一组；程序优先调用 `MEDIA_MCF_FUSION_CL` 的 OpenCL 模块生成输出，如果当前 GPU/OpenCL 路径初始化失败则保留参考融合结果上屏，避免展示页空白。页面按样张索引缓存整页 NV12 结果，日志输出帧数、样张索引、更新次数、模式、cache 状态、CPU/GPU/RGA 和 CL total/stats/fusion 耗时，并保存 `vo_captures/mcf_fusion_cl_vo_*.bmp` 供复看。
 `DUALVIEW` 单独模式参考 `/userdata/rktohi/demo/dualview` 示例生成两路 RGB888 输入：input0 纯红、input1 纯蓝，主画面同时显示 input0、input1、side-by-side 输出和 line-by-line 输出，不占用摄像头；屏幕上显示中文数据流和实测 FPS/CPU/GPU/RGA 指标。

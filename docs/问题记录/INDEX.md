@@ -5,6 +5,7 @@ Update it whenever adding or editing issue notes.
 
 | Date | Status | Kind | Issue | Summary | Related |
 | --- | --- | --- | --- | --- | --- |
+| 2026-05-25 08:44:09 | fixed | runtime | [VI EIS VPSS OSD VO demo VPSS output width alignment](20260525-0844-vi-eis-vpss-osd-vo-demo-vpss-output-width-alignment.md) | New VI->EIS->VPSS->OSD->VO demo failed until VPSS output width was changed from 1080 to 1072 because VPSS requires 16-aligned output width. |  |
 | 2026-05-23 18:05:59 | fixed | runtime | [EIS VDEC demo VDEC pool size must match MPP info_change](20260523-1805-eis-vdec-demo-vdec-pool-size-must-match-mpp-info-change.md) | VDEC H264 elementary stream output pool sized as plain NV12 was too small for MPP aligned decode buffers. |  |
 | 2026-05-23 18:05:59 | fixed | runtime | [EIS VDEC demo must drain outputs before MEDIA_SYS_Exit](20260523-1805-eis-vdec-demo-must-drain-outputs-before-media-sys-exit.md) | The demo could segfault inside MPP when MEDIA_SYS_Exit ran immediately after packet submission. |  |
 | 2026-05-19 19:18:44 | resolved | runtime | [TRANSFORM four-way 4K demo stalls perspective mode](20260519-1918-transform-four-way-4k-demo-stalls-perspective-mode.md) | TRANSFORM --only previously ran three 4K transform branches in parallel, saturating GPU and starving the final PERSPECTIVE branch. |  |

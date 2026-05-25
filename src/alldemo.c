@@ -166,6 +166,21 @@
 #define EIS_DEMO_EIS_POOL 3
 #define EIS_DEMO_VMIX_POOL 4
 #define EIS_DEMO_OSD_POOL 5
+#define EIS_VI_W VI_BIG_W
+#define EIS_VI_H VI_BIG_H
+#define EIS_VI_STRIDE VI_BIG_STRIDE
+#define EIS_VI_OUT_W 1072
+#define EIS_VI_OUT_H VI_BIG_VIEW_H
+#define EIS_VI_OUT_STRIDE ALIGN_UP(EIS_VI_OUT_W, 64)
+#define EIS_VI_OUT_X ((SCREEN_W - EIS_VI_OUT_W) / 2)
+#define EIS_VI_OUT_Y VI_BIG_VIEW_Y
+#define EIS_VI_EIS_GRP 215
+#define EIS_VI_VPSS_GRP 216
+#define EIS_VI_OSD_GRP 217
+#define EIS_VI_INPUT_POOL 0
+#define EIS_VI_EIS_POOL 1
+#define EIS_VI_VPSS_POOL 2
+#define EIS_VI_OSD_POOL 3
 #define NPU_DEMO_H264_PATH "assets/loop/npu/bus_640x640.h264"
 #define NPU_DEMO_MODEL_PATH "assets/npu/yolov5s-640-640.rknn"
 #define NPU_DEMO_LABEL_PATH "assets/npu/coco_80_labels_list.txt"
@@ -721,7 +736,7 @@ static module_tile_t g_tiles[] = {
     {"CLAHE", 0, 0, TILE_OFFLINE}, {"RETINEX", 0, 0, TILE_OFFLINE},
     {"RETINEX_OFFLINE", 0, 0, TILE_OFFLINE}, {"TNR_CL", 0, 0, TILE_OFFLINE},
     {"HIGHLIGHT_SUPPRESS", 0, 0, TILE_OFFLINE},
-    {"EIS", 0, 0, TILE_OFFLINE},
+    {"EIS", 0, 0, TILE_OFFLINE}, {"EIS_VI", 0, 0, TILE_OFFLINE},
     {"CAP_DEHAZE", 0, 0, TILE_OFFLINE}, {"CAP_DEHAZE_OFFLINE", 0, 0, TILE_OFFLINE},
     {"DCP_FAST_DEHAZE", 0, 0, TILE_OFFLINE},
     {"THERMAL", 0, 0, TILE_OFFLINE}, {"CONV_CL", 0, 0, TILE_OFFLINE},
@@ -740,7 +755,7 @@ static module_tile_t g_tiles[] = {
 
 static const char *g_module_pages[] = {
     "VI", "VPSS", "VO", "WBC", "RGA", "RESIZE_RGA", "CSC_RGA", "CSC_CL", "OSD",
-    "CLAHE", "RETINEX", "RETINEX_OFFLINE", "EIS", "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "DCP_FAST_DEHAZE", "THERMAL", "CONV_CL",
+    "CLAHE", "RETINEX", "RETINEX_OFFLINE", "EIS", "EIS_VI", "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "DCP_FAST_DEHAZE", "THERMAL", "CONV_CL",
     "TRANSFORM", "VMIX", "BLEND_PYR", "EDOF_CL", "MCF_FUSION_CL", "DUALVIEW", "STEREO_3D", "PANO", "AVM2D",
     "HIGHLIGHT_SUPPRESS",
 };
@@ -754,7 +769,7 @@ static const char *g_default_pages[] = {
 static const char *g_engineering_pages[] = {
     "VI", "VPSS", "VO", "WBC", "OSD", "RESIZE_RGA", "THERMAL", "BLEND_PYR", "EDOF_CL",
     "MCF_FUSION_CL", "RGA", "CSC_RGA", "CSC_CL", "CLAHE", "RETINEX", "RETINEX_OFFLINE", "TNR_CL",
-    "HIGHLIGHT_SUPPRESS", "EIS",
+    "HIGHLIGHT_SUPPRESS", "EIS", "EIS_VI",
     "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "VMIX", "STEREO_3D", "PANO", "AVM2D",
 };
 
@@ -9043,6 +9058,316 @@ out_stream:
     return ret;
 }
 
+static int update_eis_vi_text_region(int region_id, int x, int y, int scale,
+                                     uint8_t r, uint8_t g, uint8_t b,
+                                     const char *text, uint8_t *mask,
+                                     size_t mask_size) {
+    int w = 0;
+    int h = 0;
+    if (render_text_mask(text, scale, mask, 1024, 64, &w, &h) != 0) return -1;
+
+    MEDIA_OSD_REGION_ATTR attr = {0};
+    attr.enabled = 1;
+    attr.x = x;
+    attr.y = y;
+    attr.width = w;
+    attr.height = h;
+    attr.zorder = 3;
+    attr.global_alpha = 255;
+
+    MEDIA_OSD_MASK_DESC desc = {0};
+    desc.width = w;
+    desc.height = h;
+    desc.stride = 1024;
+    desc.data = mask;
+    desc.data_size = mask_size;
+    desc.color.r = r;
+    desc.color.g = g;
+    desc.color.b = b;
+    desc.color.a = 255;
+
+    if (MEDIA_OSD_UpdateRegion(EIS_VI_OSD_GRP, region_id, &attr) != 0 ||
+        MEDIA_OSD_SetRegionMask(EIS_VI_OSD_GRP, region_id, &desc) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int update_eis_vi_perf_text(void) {
+    static uint8_t perf_mask[1024 * 64];
+    MEDIA_EIS_STATS stats;
+    char line[160];
+    memset(&stats, 0, sizeof(stats));
+    if (MEDIA_EIS_GetStats(EIS_VI_EIS_GRP, &stats) == 0 && stats.frame_index > 0) {
+        snprintf(line, sizeof(line),
+                 "EIS total %.2fms  estimate %.2fms  warp %.2fms  fallback %d",
+                 stats.total_ms, stats.estimate_ms, stats.warp_ms, stats.fallback_used);
+    } else {
+        snprintf(line, sizeof(line),
+                 "EIS waiting stats  crop 8%%  live camera %dx%d@%dfps",
+                 EIS_VI_W, EIS_VI_H, FPS);
+    }
+    return update_eis_vi_text_region(6, 32, 114, 2, 255, 230, 120,
+                                     line, perf_mask, sizeof(perf_mask));
+}
+
+static int setup_eis_vi_osd_regions(void) {
+    static uint8_t title_mask[1024 * 64];
+    static uint8_t flow_mask[1024 * 64];
+    static uint8_t io_mask[1024 * 64];
+    static uint8_t label_mask[1024 * 64];
+    MEDIA_OSD_REGION_ATTR border_attr = {0};
+    MEDIA_OSD_REGION_ATTR panel_attr = {0};
+    MEDIA_OSD_RECT_DESC border = {0};
+    MEDIA_OSD_RECT_DESC panel = {0};
+    char io_line[160];
+
+    border_attr.enabled = 1;
+    border_attr.x = 8;
+    border_attr.y = 8;
+    border_attr.width = EIS_VI_OUT_W - 16;
+    border_attr.height = EIS_VI_OUT_H - 16;
+    border_attr.zorder = 0;
+    border_attr.global_alpha = 255;
+    border.filled = 0;
+    border.line_width = 4;
+    border.color.r = 40;
+    border.color.g = 220;
+    border.color.b = 255;
+    border.color.a = 255;
+
+    panel_attr.enabled = 1;
+    panel_attr.x = 18;
+    panel_attr.y = 18;
+    panel_attr.width = EIS_VI_OUT_W - 36;
+    panel_attr.height = 132;
+    panel_attr.zorder = 1;
+    panel_attr.global_alpha = 180;
+    panel.filled = 1;
+    panel.line_width = 1;
+    panel.color.r = 4;
+    panel.color.g = 16;
+    panel.color.b = 20;
+    panel.color.a = 220;
+
+    if (MEDIA_OSD_UpdateRegion(EIS_VI_OSD_GRP, 0, &border_attr) != 0 ||
+        MEDIA_OSD_SetRegionRect(EIS_VI_OSD_GRP, 0, &border) != 0 ||
+        MEDIA_OSD_UpdateRegion(EIS_VI_OSD_GRP, 1, &panel_attr) != 0 ||
+        MEDIA_OSD_SetRegionRect(EIS_VI_OSD_GRP, 1, &panel) != 0) {
+        return -1;
+    }
+
+    snprintf(io_line, sizeof(io_line), "INPUT VI %dx%d  OUTPUT VPSS %dx%d  CROP 8%%",
+             EIS_VI_W, EIS_VI_H, EIS_VI_OUT_W, EIS_VI_OUT_H);
+    if (update_eis_vi_text_region(2, 32, 34, 3, 160, 255, 220,
+                                  "EIS_VI LIVE CAMERA STABILIZATION",
+                                  title_mask, sizeof(title_mask)) != 0 ||
+        update_eis_vi_text_region(3, 32, 66, 2, 190, 230, 255,
+                                  "VI -> EIS -> VPSS -> OSD -> VO",
+                                  flow_mask, sizeof(flow_mask)) != 0 ||
+        update_eis_vi_text_region(4, 32, 90, 2, 210, 255, 230,
+                                  io_line, io_mask, sizeof(io_mask)) != 0 ||
+        update_eis_vi_perf_text() != 0 ||
+        update_eis_vi_text_region(7, 32, EIS_VI_OUT_H - 36, 2, 40, 220, 255,
+                                  "STABILIZED LIVE VI INPUT",
+                                  label_mask, sizeof(label_mask)) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int setup_eis_vi_vpss_osd_vo_demo(void) {
+    const size_t input_size = eis_demo_nv12_size(EIS_VI_STRIDE, ALIGN_UP(EIS_VI_H, 16));
+    const size_t eis_size = eis_demo_nv12_size(EIS_VI_STRIDE, EIS_VI_H);
+    const size_t out_size = eis_demo_nv12_size(EIS_VI_OUT_STRIDE, EIS_VI_OUT_H);
+    MEDIA_VI_ATTR vi = {0};
+    MEDIA_EIS_ATTR eis = {0};
+    MEDIA_VPSS_ATTR vpss = {0};
+    MEDIA_OSD_ATTR osd = {0};
+    MEDIA_VO_ATTR vo = {0};
+
+    if (MEDIA_POOL_Create(EIS_VI_INPUT_POOL, input_size, 6) != 0 ||
+        MEDIA_POOL_Create(EIS_VI_EIS_POOL, eis_size, 6) != 0 ||
+        MEDIA_POOL_Create(EIS_VI_VPSS_POOL, out_size, 6) != 0 ||
+        MEDIA_POOL_Create(EIS_VI_OSD_POOL, out_size, 6) != 0) {
+        fprintf(stderr, "EIS_VI pool create failed\n");
+        return -1;
+    }
+
+    vi.device = CAMERA_DEVICE;
+    vi.width = EIS_VI_W;
+    vi.height = EIS_VI_H;
+    vi.stride = EIS_VI_STRIDE;
+    vi.fps = FPS;
+    vi.buf_cnt = 4;
+    vi.pool_id = EIS_VI_INPUT_POOL;
+    vi.format = MEDIA_FORMAT_NV12;
+    if (MEDIA_VI_SetAttr(0, &vi) != 0) return -1;
+
+    eis.width = EIS_VI_W;
+    eis.height = EIS_VI_H;
+    eis.format = MEDIA_FORMAT_NV12;
+    eis.input_depth = 6;
+    eis.output_pool_id = EIS_VI_EIS_POOL;
+    eis.input_stride = EIS_VI_STRIDE;
+    eis.output_stride = EIS_VI_STRIDE;
+    eis.crop_ratio = 0.08f;
+    eis.smoothing_window = 15;
+    eis.estimate_width = 320;
+    eis.search_radius = 16;
+    eis.block_step = 4;
+    if (MEDIA_EIS_CreateGrp(EIS_VI_EIS_GRP, &eis) != 0) return -1;
+
+    vpss.width = EIS_VI_W;
+    vpss.height = EIS_VI_H;
+    vpss.input_stride = EIS_VI_STRIDE;
+    vpss.input_depth = 6;
+    vpss.input_format = MEDIA_FORMAT_NV12;
+    vpss.in_fps = -1;
+    vpss.out_fps = -1;
+    vpss.output_count = 1;
+    vpss.outputs[0].output_id = 0;
+    vpss.outputs[0].out_width = EIS_VI_OUT_W;
+    vpss.outputs[0].out_height = EIS_VI_OUT_H;
+    vpss.outputs[0].out_stride = EIS_VI_OUT_STRIDE;
+    vpss.outputs[0].pool_id = EIS_VI_VPSS_POOL;
+    vpss.outputs[0].crop_x = 0;
+    vpss.outputs[0].crop_y = 0;
+    vpss.outputs[0].crop_w = EIS_VI_W;
+    vpss.outputs[0].crop_h = EIS_VI_H;
+    vpss.outputs[0].in_fps = -1;
+    vpss.outputs[0].out_fps = -1;
+    vpss.outputs[0].output_format = MEDIA_FORMAT_NV12;
+    if (MEDIA_VPSS_SetAttr(EIS_VI_VPSS_GRP, &vpss) != 0) return -1;
+
+    osd.input_width = EIS_VI_OUT_W;
+    osd.input_height = EIS_VI_OUT_H;
+    osd.format = MEDIA_FORMAT_NV12;
+    osd.input_depth = 6;
+    osd.output_pool_id = EIS_VI_OSD_POOL;
+    osd.input_stride = EIS_VI_OUT_STRIDE;
+    osd.output_stride = EIS_VI_OUT_STRIDE;
+    osd.max_regions = 8;
+    if (MEDIA_OSD_CreateGrp(EIS_VI_OSD_GRP, &osd) != 0) return -1;
+
+    if (setup_eis_vi_osd_regions() != 0) {
+        fprintf(stderr, "EIS_VI OSD setup failed\n");
+        return -1;
+    }
+
+    vo.intf = MEDIA_VO_INTF_MIPI;
+    vo.width = SCREEN_W;
+    vo.height = SCREEN_H;
+    vo.plane_count = 1;
+    if (MEDIA_VO_SetAttr(0, &vo) != 0 ||
+        MEDIA_VO_CreateChn(0, 0, EIS_VI_OUT_X, EIS_VI_OUT_Y,
+                           EIS_VI_OUT_W, EIS_VI_OUT_H, EIS_VI_OUT_STRIDE, 6,
+                           MEDIA_VO_PLANE_TYPE_AUTO, MEDIA_FORMAT_NV12) != 0) {
+        fprintf(stderr, "EIS_VI VO setup failed\n");
+        return -1;
+    }
+
+    if (MEDIA_SYS_Bind("VI", 0, "output", "EIS", EIS_VI_EIS_GRP, "input") != 0 ||
+        MEDIA_SYS_Bind("EIS", EIS_VI_EIS_GRP, "output", "VPSS", EIS_VI_VPSS_GRP, "input") != 0 ||
+        MEDIA_SYS_Bind("VPSS", EIS_VI_VPSS_GRP, "output0", "OSD", EIS_VI_OSD_GRP, "input") != 0 ||
+        MEDIA_SYS_Bind("OSD", EIS_VI_OSD_GRP, "output0", "VO", 0, "input0") != 0) {
+        fprintf(stderr, "EIS_VI bind failed\n");
+        return -1;
+    }
+
+    if (MEDIA_VO_Start(0, 0) != 0 ||
+        MEDIA_OSD_Start(EIS_VI_OSD_GRP) != 0 ||
+        MEDIA_VPSS_Enable(EIS_VI_VPSS_GRP) != 0 ||
+        MEDIA_EIS_Start(EIS_VI_EIS_GRP) != 0 ||
+        MEDIA_VI_Enable(0) != 0) {
+        fprintf(stderr, "EIS_VI start failed\n");
+        return -1;
+    }
+
+    set_tile_status("VI", TILE_LIVE);
+    set_tile_status("EIS", TILE_LIVE);
+    set_tile_status("EIS_VI", TILE_LIVE);
+    set_tile_status("VPSS", TILE_LIVE);
+    set_tile_status("OSD", TILE_LIVE);
+    set_tile_status("VO", TILE_LIVE);
+    return 0;
+}
+
+static void stop_eis_vi_vpss_osd_vo_demo(void) {
+    (void)MEDIA_VI_Disable(0);
+    (void)MEDIA_EIS_Stop(EIS_VI_EIS_GRP);
+    (void)MEDIA_VPSS_Disable(EIS_VI_VPSS_GRP);
+    (void)MEDIA_OSD_Stop(EIS_VI_OSD_GRP);
+    (void)MEDIA_VO_Stop(0, 0);
+
+    (void)MEDIA_SYS_UnBind("OSD", EIS_VI_OSD_GRP, "output0", "VO", 0, "input0");
+    (void)MEDIA_SYS_UnBind("VPSS", EIS_VI_VPSS_GRP, "output0", "OSD", EIS_VI_OSD_GRP, "input");
+    (void)MEDIA_SYS_UnBind("EIS", EIS_VI_EIS_GRP, "output", "VPSS", EIS_VI_VPSS_GRP, "input");
+    (void)MEDIA_SYS_UnBind("VI", 0, "output", "EIS", EIS_VI_EIS_GRP, "input");
+
+    (void)MEDIA_VO_DestroyChn(0, 0);
+    (void)MEDIA_OSD_DestroyGrp(EIS_VI_OSD_GRP);
+    (void)MEDIA_VPSS_DestroyGrp(EIS_VI_VPSS_GRP);
+    (void)MEDIA_EIS_DestroyGrp(EIS_VI_EIS_GRP);
+
+    (void)MEDIA_POOL_Destroy(EIS_VI_OSD_POOL);
+    (void)MEDIA_POOL_Destroy(EIS_VI_VPSS_POOL);
+    (void)MEDIA_POOL_Destroy(EIS_VI_EIS_POOL);
+    (void)MEDIA_POOL_Destroy(EIS_VI_INPUT_POOL);
+}
+
+static void print_eis_vi_vpss_osd_vo_summary(void) {
+    const struct { const char *mod; int id; } mods[] = {
+        {"VI", 0}, {"EIS", EIS_VI_EIS_GRP}, {"VPSS", EIS_VI_VPSS_GRP},
+        {"OSD", EIS_VI_OSD_GRP}, {"VO", 0},
+    };
+    MEDIA_EIS_STATS stats;
+    printf("EIS_VI frame-counts:");
+    for (size_t i = 0; i < ARRAY_SIZE(mods); ++i) {
+        uint64_t count = 0;
+        if (MEDIA_SYS_GetModuleFrameCount(mods[i].mod, mods[i].id, &count) == 0) {
+            printf(" %s=%llu", mods[i].mod, (unsigned long long)count);
+        }
+    }
+    printf("\n");
+    memset(&stats, 0, sizeof(stats));
+    if (MEDIA_EIS_GetStats(EIS_VI_EIS_GRP, &stats) == 0) {
+        printf("EIS_VI last: frame=%d total=%.3fms estimate=%.3fms warp=%.3fms "
+               "estimate_path=%d warp_path=%d fallback=%d comp=(%.2f,%.2f,%.4f)\n",
+               stats.frame_index, stats.total_ms, stats.estimate_ms, stats.warp_ms,
+               stats.estimate_path, stats.warp_path, stats.fallback_used,
+               stats.comp_dx, stats.comp_dy, stats.comp_angle);
+    }
+}
+
+static int run_only_eis_vi_vpss_osd_vo_demo(void) {
+    const char *seconds_env = getenv("ALLDEMO_EIS_VI_SECONDS");
+    int seconds_limit = seconds_env ? atoi(seconds_env) : 0;
+    time_t start = time(NULL);
+    int tick = 0;
+    int ret = 1;
+
+    if (setup_eis_vi_vpss_osd_vo_demo() != 0) goto out;
+
+    printf("EIS_VI demo running: VI %s %dx%d@%d -> EIS -> VPSS %dx%d -> OSD -> VO\n",
+           CAMERA_DEVICE, EIS_VI_W, EIS_VI_H, FPS, EIS_VI_OUT_W, EIS_VI_OUT_H);
+    while (g_running) {
+        sleep(1);
+        ++tick;
+        if ((tick % 2) == 0) {
+            (void)update_eis_vi_perf_text();
+            print_eis_vi_vpss_osd_vo_summary();
+        }
+        if (seconds_limit > 0 && (int)(time(NULL) - start) >= seconds_limit) break;
+    }
+    print_eis_vi_vpss_osd_vo_summary();
+    ret = 0;
+
+out:
+    stop_eis_vi_vpss_osd_vo_demo();
+    return ret;
+}
+
 static int run_only_npu_vdec_demo(int dstride, size_t display_size) {
     h264_stream_t stream;
     memset(&stream, 0, sizeof(stream));
@@ -12506,6 +12831,7 @@ static int tile_needs_camera(const char *name) {
            strcasecmp(name, "VMIX") == 0 ||
            strcasecmp(name, "CLAHE") == 0 ||
            strcasecmp(name, "RETINEX") == 0 ||
+           strcasecmp(name, "EIS_VI") == 0 ||
            strcasecmp(name, "STEREO_3D") == 0;
 }
 
@@ -12520,6 +12846,7 @@ static int tile_uses_4k_camera_input(const char *name) {
            strcasecmp(name, "RESIZE_RGA") == 0 ||
            strcasecmp(name, "CLAHE") == 0 ||
            strcasecmp(name, "RETINEX") == 0 ||
+           strcasecmp(name, "EIS_VI") == 0 ||
            strcasecmp(name, "CONV_CL") == 0 ||
            strcasecmp(name, "TRANSFORM") == 0;
 }
@@ -13644,6 +13971,11 @@ int main(int argc, char **argv) {
         int eis_ret = run_only_eis_vdec_vpss_vmix_osd_vo_demo();
         MEDIA_SYS_Exit();
         return eis_ret;
+    }
+    if (!solid_test && only_tile && strcasecmp(only_tile, "EIS_VI") == 0) {
+        int eis_vi_ret = run_only_eis_vi_vpss_osd_vo_demo();
+        MEDIA_SYS_Exit();
+        return eis_vi_ret;
     }
 
     if (!solid_test) mark_showcase_modules();
