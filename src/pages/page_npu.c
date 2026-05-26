@@ -694,6 +694,9 @@ int page_npu_run(volatile sig_atomic_t *running) {
 
         if (is_vcl) {
             frame++;
+            if ((frame % NPU_FPS) != 0) {
+                (void)update_npu_box_regions(&last_det);
+            }
             if ((frame % NPU_FPS) == 0) {
                 uint64_t vdec_count = 0;
                 uint64_t pre_count = 0;
