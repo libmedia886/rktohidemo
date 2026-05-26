@@ -1,0 +1,25 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-047"
+  case_name: "ALLDEMO_STANDALONE_CSC_RGA_VI_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "CSC_RGA 页面拆分后必须继续使用真实摄像头 VI 输入，并在屏幕上展示 RGA 颜色空间转换链路和性能状态。"
+  scope:
+    - "修改 src/pages/page_csc.c 中 page_csc_rga_run，替换合成 NV12 输入路径。"
+    - "创建真实绑定链：VI 3840x2160 -> RESIZE_RGA 1080x608 -> CSC_RGA NV12->RGBA -> CSC_RGA RGBA->NV12 -> OSD -> VO。"
+    - "OSD 文本显示标题、数据流、CPU/GPU/RGA、格式路径和 VI/RESIZE_RGA/CSC_RGA/OSD/VO 帧计数。"
+    - "page_ops.c 将 CSC_RGA 注册为 PAGE_IMPL_STANDALONE。"
+  non_scope:
+    - "本阶段不迁移 CSC_CL 页面。"
+    - "本阶段不迁移 legacy CSC_RGA 的全部中文说明卡片。"
+    - "本阶段不修改 CSC_RGA SDK 接口。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only CSC_RGA 可以进入 standalone 页面。"
+    - "运行日志显示 standalone=1、overlay=perf_text，VI/RESIZE_RGA/CSC_RGA front/back/OSD/VO 帧计数增长。"
+    - "退出后无 run_alldemo.sh 或 alldemo 残留进程。"
+  developer_rule_after_this_stage:
+    - "CSC_RGA standalone 必须使用真实 VI 输入，不能回到 page_surface 合成图案。"
+    - "实时链路页面迁移时必须保留屏幕 OSD 说明，不能只输出终端 printf。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

@@ -1,0 +1,76 @@
+software_requirement_specification:
+  requirement_id: "SRS-EIS-CUSTOMER-PAGE-001"
+  case_name: "EIS_CUSTOMER_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-EIS-CUSTOMER-PAGE.yaml"
+  user_value: "客户需要看到电子稳像不是离线 Python 效果，而是在 alldemo 中由 H264/VDEC/VPSS/EIS/VMIX/OSD/VO 真实链路实时展示并可录制复看的 GPU 效果。"
+  scope:
+    - "EIS 支持独立 --only EIS 单页运行。"
+    - "输入素材为 assets/eis/eis_shaky_640x360.h264。"
+    - "链路为 H264 文件 -> VDEC -> VPSS 两路输出。"
+    - "VPSS output0 作为原始分支进入 VMIX input0。"
+    - "VPSS output1 进入 EIS，EIS 输出进入 VMIX input1。"
+    - "VMIX 上下排布原始分支和 EIS GPU 分支，后接 OSD 和 VO。"
+    - "EIS 配置 crop_ratio=0.08、smoothing_window=15、estimate_width=320、search_radius=16、block_step=4。"
+    - "OSD 显示标题、数据流、RAW/EIS 分支标签和 GPU OpenCL total/estimate/warp/crop/fallback。"
+    - "运行结束输出 VDEC/VPSS/EIS/VMIX/OSD/VO 帧计数和 EIS 最后一帧 stats。"
+    - "刷新 README 和 assets/effect_manifest.json 中 EIS 的独立页说明。"
+    - "通过 WBC+H264 录制当前 EIS 页面，转 MP4 发送给产品复看。"
+  non_scope:
+    - "不修改 rktohi EIS 算法源码。"
+    - "不引入 IMU 或其它传感器输入。"
+    - "不把 EIS 加入默认客户轮播，除非产品另行确认。"
+    - "不把 Python 离线效果作为最终验收证据。"
+  target_screen:
+    layout: "竖屏单模块页；上方 RAW VPSS BRANCH，下方 EIS STABILIZED GPU BRANCH，底部为标题、链路和 GPU 耗时。"
+    input_source: "assets/eis/eis_shaky_640x360.h264"
+    output_view: "1024x1280 上下对比输出，经 VO 显示并可由 WBC 录制。"
+    overlay_text:
+      - "EIS VIDEO STABILIZATION LIVE DEMO"
+      - "H264 -> VDEC -> VPSS SPLIT -> RAW / EIS GPU -> VMIX -> OSD -> VO"
+      - "RAW VPSS BRANCH"
+      - "EIS STABILIZED GPU BRANCH"
+      - "GPU OpenCL total/estimate/warp crop 8% fallback"
+    runtime_metrics:
+      - "VDEC frame count"
+      - "VPSS frame count"
+      - "EIS frame count"
+      - "VMIX frame count"
+      - "OSD frame count"
+      - "VO frame count"
+      - "EIS total_ms"
+      - "EIS estimate_ms"
+      - "EIS warp_ms"
+      - "EIS fallback_used"
+  implementation_boundary:
+    alldemo_files:
+      - "src/alldemo.c"
+      - "README.md"
+      - "assets/effect_manifest.json"
+      - "assets/eis/eis_shaky_640x360.h264"
+      - "docs/AI团队/demo需求/PRODUCT-EIS-CUSTOMER-PAGE.yaml"
+      - "docs/AI团队/demo需求/SRS-EIS-CUSTOMER-PAGE-001.yaml"
+    rktohi_dependency: "使用当前已同步的 media_api.h、libmedia.a 和 libmedia.so；本需求不改 rktohi 源码。"
+    copied_artifacts_only: true
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 在 /userdata/alldemo 通过。"
+    - "./scripts/run_alldemo.sh --asset-check 可以执行通过。"
+    - "ALLDEMO_EIS_FRAMES=120 ./scripts/run_alldemo.sh --only EIS 能完成短运行并退出。"
+    - "日志出现 EIS demo frame-counts 和 EIS demo last，且 EIS stats 包含 total/estimate/warp/fallback。"
+    - "运行日志中 EIS demo bind failed、EIS demo start failed、MEDIA_VDEC_SendPacket failed、segmentation fault 计数为 0。"
+    - "通过 WBC+H264 录制 EIS 页面并转 MP4。"
+    - "退出后无残留 alldemo/run_alldemo/wbc_h264_record 进程。"
+  validation_plan:
+    build:
+      - "git diff --check"
+      - "cmake --build build -j"
+    run:
+      - "./scripts/run_alldemo.sh --asset-check"
+      - "ALLDEMO_EIS_FRAMES=120 ./scripts/run_alldemo.sh --only EIS"
+      - "grep for EIS demo frame-counts, EIS demo last, bind failed, start failed, MEDIA_VDEC_SendPacket failed"
+      - "WBC+H264 record and ffmpeg MP4 conversion"
+      - "pgrep -af 'alldemo|run_alldemo|wbc_h264_record'"
+  open_questions:
+    - "最终视觉效果仍需要产品观看 MP4 后确认是否比当前版本更好。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

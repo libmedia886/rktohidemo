@@ -1,0 +1,27 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-006"
+  case_name: "ALLDEMO_STANDALONE_PAGE_SURFACE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "独立页面不能每个都复制媒体初始化和 NV12 绘制代码，需要一个可复用的页面显示面，后续新增单页才足够轻。"
+  scope:
+    - "新增 src/pages/page_surface.h 和 src/pages/page_surface.c，封装 standalone 页面常用的 MEDIA_SYS、license、display pool、VO 和送帧流程。"
+    - "page_surface 提供 NV12 矩形填充和 5x7 文本绘制接口，作为简单页面的最小绘制能力。"
+    - "LICENSE 独立页面改用 page_surface，只保留 LICENSE 页面自身的状态和绘制内容。"
+    - "CMakeLists.txt 将 page_surface.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不把 camera/bind 类 live 页面抽到 page_surface。"
+    - "本阶段不改变 page_registry、loop_player 或现有客户循环顺序。"
+    - "本阶段不改变 LICENSE 页面视觉布局。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only LICENSE 仍可进入 standalone 页面并持续送帧。"
+    - "timeout -s INT -k 3s 5s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI 仍可走 legacy live 页面，帧计数增长。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "新增不依赖 camera bind 的简单页面应优先复用 page_surface。"
+    - "页面文件只写页面业务内容；媒体系统、VO、pool、送帧细节放在公共层。"
+    - "复杂 live 页面迁移前应先抽取对应的 camera/bind 公共上下文，不直接复制大段 src/alldemo.c。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

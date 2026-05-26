@@ -1,0 +1,35 @@
+implementation_summary:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-049"
+  case_name: "ALLDEMO_STANDALONE_CLAHE_VI_PAGE"
+  changed_files:
+    - "src/pages/page_clahe.c"
+    - "src/pages/page_ops.c"
+    - "docs/问题记录/20260526-1330-clahe-bind-path-uses-output-port-not-output0.md"
+    - "docs/问题记录/INDEX.md"
+    - "docs/AI团队/demo需求/SRS-ALLDEMO-ARCHITECTURE-SPLIT-049.yaml"
+    - "docs/AI团队/demo实现/IMPL-ALLDEMO-ARCHITECTURE-SPLIT-20260526-049.yaml"
+    - "docs/AI团队/demo验收/ACCEPT-ALLDEMO-ARCHITECTURE-SPLIT-20260526-049.yaml"
+  implementation_scope:
+    - "删除 CLAHE page_surface 合成画面路径，改为独立真实 VI 绑定链。"
+    - "配置 VI /dev/video-camera0 3840x2160@30fps，pool 2。"
+    - "配置 CLAHE_69 处理 4K NV12，pool 15；注意输出端口为 output。"
+    - "配置 RESIZE_RGA_61 输出 1080x608 stride 1088，pool 9。"
+    - "配置 OSD_81 输出 1080x608，pool 8，叠加标题、流程、CPU/GPU/RGA、mode/clip/grid/bins 和帧计数。"
+  validation:
+    - command: "git diff --check -- src/pages/page_clahe.c src/pages/page_ops.c"
+      result: "PASS"
+      evidence: "No whitespace errors."
+    - command: "cmake --build build -j"
+      result: "PASS"
+      evidence: "alldemo target rebuilt successfully."
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only CLAHE"
+      result: "PASS"
+      evidence: "CLAHE standalone=1 overlay=perf_text, VI/CLAHE/RESIZE_RGA/OSD/VO counters grew to 214."
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      result: "PASS"
+      evidence: "No residual alldemo or run_alldemo.sh process."
+  issue_records:
+    - "docs/问题记录/20260526-1330-clahe-bind-path-uses-output-port-not-output0.md"
+  remaining_work:
+    - "继续迁移仍保留 legacy proxy 的 WBC/RETINEX/DEHAZE/CONV_CL/VMIX/STEREO_3D 等页面。"
+  next_skill: "alldemo-software-acceptance"

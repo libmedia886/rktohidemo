@@ -1,0 +1,28 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-045"
+  case_name: "ALLDEMO_STANDALONE_RESIZE_RGA_VI_PAGE"
+  date: "2026-05-26"
+  status: "Accepted"
+  validation_commands:
+    - command: "git diff --check -- src/pages/page_resize_rga.c src/pages/page_ops.c"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only RESIZE_RGA"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+  observed_runtime:
+    resize_rga_standalone:
+      - "RESIZE_RGA standalone opened VI /dev/video-camera0 3840x2160 and bound VI -> RESIZE_RGA -> OSD -> VO."
+      - "Frame counters grew with overlay=perf_text; observed vi=215 resize=37 osd=215 vo=215 after the last crop recreate."
+      - "Dynamic crop recreate succeeded for crop windows 0,0,520,520; 180,180,400,400; 40,200,360,360; 60,100,480,480."
+      - "Cleanup stopped VI, disconnected OSD/RESIZE_RGA/VI binds, removed OSD_81 and RESIZE_RGA_61, and destroyed pools 8/9/2."
+      - "Post-run pgrep found no residual alldemo or run_alldemo.sh process."
+  acceptance_limits:
+    - "本阶段只验收 RESIZE_RGA 真实 VI standalone 页面。"
+    - "不声明 legacy RESIZE_RGA 的全量中文说明面板已迁移。"

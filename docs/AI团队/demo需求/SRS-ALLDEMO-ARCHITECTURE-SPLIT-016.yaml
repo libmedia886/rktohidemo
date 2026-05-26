@@ -1,0 +1,30 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-016"
+  case_name: "ALLDEMO_STANDALONE_DUALVIEW_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "DUALVIEW 双输入合成页应从 legacy proxy 迁出，独立生成两路 RGB 输入并保留真实 DUALVIEW side-by-side 与 line-by-line 模块输出。"
+  scope:
+    - "新增 src/pages/page_dualview.c，基于 page_surface 独立创建显示面。"
+    - "页面生成两路 640x640 RGB888 动态输入。"
+    - "页面创建两个 MEDIA_DUALVIEW group，分别输出 side-by-side 与 line-by-line。"
+    - "page_ops.c 将 DUALVIEW 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_dualview.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不迁移 camera/bind 类页面。"
+    - "本阶段不把 RGB888 绘制和 buffer 复制抽成公共 helper。"
+    - "本阶段不改变客户循环或工程循环页面顺序。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 5s ./scripts/run_alldemo.sh --only DUALVIEW 可以进入 standalone 页面。"
+    - "DUALVIEW standalone 页面必须显示 module=live，两个 group 都启动，processed 计数随 frames 增长。"
+    - "退出时 DUALVIEW_71、DUALVIEW_72 和输入/输出/display pool 均释放。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only CAP_DEHAZE_OFFLINE 仍可运行真实模块 standalone 页面。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "双输入模块迁移时必须验证每个 group 都收到 input0/input1，不能按端口名推断 group。"
+    - "多 group 页面必须在退出时逐个 stop/destroy，并按 pool 创建顺序反向释放。"
+    - "迁移 Vulkan/OpenCL 页时，验收日志必须包含 backend/module 启动证据和 processed 计数。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

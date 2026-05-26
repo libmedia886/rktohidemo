@@ -1,0 +1,29 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-033"
+  case_name: "ALLDEMO_STANDALONE_VMIX_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "VMIX 页面应从 legacy proxy 迁出，使用单页文件验证多路视频混流。"
+  scope:
+    - "新增 src/pages/page_vmix.c，提供 page_vmix_run。"
+    - "页面生成 4 路 synthetic 320x320 NV12 输入。"
+    - "创建 MEDIA_VMIX_80，输出 640x640 NV12 混流画面。"
+    - "页面显示 VMIX 输出、4 路输入缩略图、processed 计数和 module live/fallback 状态。"
+    - "page_ops.c 将 VMIX 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_vmix.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不恢复 VI/VPSS -> VMIX -> OSD/VO 的实时绑定链路。"
+    - "本阶段不迁移 VI、WBC、NPU、EIS 系列页面。"
+    - "本阶段不修改媒体 SDK 的 VMIX 接口。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only VMIX 可以进入 standalone 页面并显示 processed 增长。"
+    - "退出时 VMIX 模块、input/output/display pool 均释放。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only VPSS 仍可运行真实模块 standalone 页面。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "VMIX standalone 使用真实 MEDIA_SYS_SendFrame 到 input0..inputN 和 MEDIA_VMIX_GetFrame，不用 legacy proxy。"
+    - "多输入混流页面必须在日志中暴露 inputs 数量和 processed 计数。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

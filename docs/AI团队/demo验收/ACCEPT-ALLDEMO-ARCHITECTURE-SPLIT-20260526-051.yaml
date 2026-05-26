@@ -1,0 +1,35 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-051"
+  case_name: "ALLDEMO_STANDALONE_DEHAZE_VI_PAGES"
+  date: "2026-05-26"
+  status: "Accepted"
+  validation_commands:
+    - command: "git diff --check -- src/pages/page_cap_dehaze_offline.c src/pages/page_ops.c CMakeLists.txt"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only CAP_DEHAZE"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only DCP_FAST_DEHAZE"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+  observed_runtime:
+    cap_dehaze:
+      - "CAP_DEHAZE opened VI /dev/video-camera0 1920x1080@30fps stride 3840 and bound VI -> CSC_RGA -> CAP_DEHAZE -> RESIZE_RGA -> OSD -> VO."
+      - "Frame counters grew to vi=215 csc=215 dehaze=214 resize=214 osd=214 vo=214 with overlay=perf_text."
+      - "Observed passthrough toggling 0/1 and normal pool cleanup for ids 8/9/11/10/2."
+    dcp_fast_dehaze:
+      - "DCP_FAST_DEHAZE opened VI /dev/video-camera0 1920x1080@20fps stride 3840 and bound VI -> PRE_RESIZE 960x540 -> CSC_RGA -> DCP_FAST_DEHAZE -> RESIZE_RGA -> OSD -> VO."
+      - "Frame counters grew to vi=214 csc=214 dehaze=213 resize=213 osd=213 vo=213 with overlay=perf_text."
+      - "After reducing the DCP processing size to 960x540, the run completed without CSC_RGA output buffer errors and destroyed pools 8/9/11/10/12/2."
+      - "Post-run pgrep found no residual alldemo or run_alldemo.sh process."
+  acceptance_limits:
+    - "本阶段只验收 CAP_DEHAZE 和 DCP_FAST_DEHAZE 的真实 VI standalone 页面。"
+    - "CAP_DEHAZE_OFFLINE 仍按既有离线样张页面保留，不纳入本条验收。"
+    - "DCP_FAST_DEHAZE 实时链路验收处理尺寸为 960x540，不声明 1280x720 实时链路已满足无后压。"

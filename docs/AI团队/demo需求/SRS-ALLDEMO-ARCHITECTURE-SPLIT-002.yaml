@@ -1,0 +1,28 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-002"
+  case_name: "ALLDEMO_PAGE_DESCRIPTOR_REGISTRY"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "后续新增页面时，不应该在 src/alldemo.c 的 main 和绘制函数里到处追加 strcasecmp；页面的展示文字、输入尺寸需求和 bind-display 类型应集中登记。"
+  scope:
+    - "扩展 page_registry，新增 page_desc_t 页面描述表。"
+    - "把 module_flow_note 和 module_showcase_note 从 src/alldemo.c 移入 page_registry。"
+    - "把页面是否需要摄像头、是否使用 4K/1080p 输入、是否使用 VMIX/OSD bind-display 的判断集中到 page_registry。"
+    - "让 src/alldemo.c 的 bind-display 选择改为读取 page_bind_display，而不是维护一组页面名列表。"
+  non_scope:
+    - "本阶段不迁移具体页面媒体链路函数，例如 bind_vi_highlight_suppress_vmix_osd_vo。"
+    - "本阶段不改变客户默认循环顺序。"
+    - "本阶段不改变页面视觉内容。"
+    - "本阶段不修改 libmedia 或 /userdata/rktohi。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "timeout -s INT -k 3s 7s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI 可以启动真实 VI 高光压制页面，帧计数增长并 clean shutdown。"
+    - "timeout -s INT -k 3s 5s ./scripts/run_alldemo.sh --customer-demo 可以启动默认 loop 并运行 --only VI 子页。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "新增页面先在 page_registry 的 g_page_descs 登记 name、flow_note、showcase_note、flags、bind_display。"
+    - "需要进入单页和循环时，再登记模块页表、客户页表或工程页表。"
+    - "页面实现仍可暂时留在 src/alldemo.c，后续再迁移到 src/pages/page_*.c。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

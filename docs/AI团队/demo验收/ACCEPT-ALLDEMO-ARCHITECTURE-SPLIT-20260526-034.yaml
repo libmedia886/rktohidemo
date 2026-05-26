@@ -1,0 +1,37 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-034"
+  case_name: "ALLDEMO_STANDALONE_VI_PAGE"
+  date: "2026-05-26"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "git diff --check -- CMakeLists.txt src/pages/page_ops.c src/pages/page_vi.c docs/AI团队/demo需求/SRS-ALLDEMO-ARCHITECTURE-SPLIT-034.yaml docs/AI团队/demo实现/IMPL-ALLDEMO-ARCHITECTURE-SPLIT-20260526-034.yaml docs/AI团队/demo验收/ACCEPT-ALLDEMO-ARCHITECTURE-SPLIT-20260526-034.yaml"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only VI"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only VMIX"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "pass_no_process"
+  observed_runtime:
+    vi_standalone:
+      - "VI no longer uses PAGE_IMPL_LEGACY_PROXY; it dispatches to page_vi_run."
+      - "Standalone page creates VI_0, RESIZE_RGA_61, and VO_0."
+      - "Probe reports VI/RESIZE_RGA/VO frame counts growing from 28 to 215."
+      - "Shutdown disconnects RESIZE_RGA_61 -> VO_0 and VI_0 -> RESIZE_RGA_61, then destroys pool 9 and pool 2."
+    regression:
+      - "VMIX standalone short probe continues to run with module=live and processed growth."
+    assets:
+      - "asset-check continues to pass after the VI migration."
+  acceptance_limits:
+    - "本阶段只验收 VI standalone camera bind-display 页面。"
+    - "不声明 VI -> VMIX/OSD/VO legacy 大屏说明链路已迁移。"

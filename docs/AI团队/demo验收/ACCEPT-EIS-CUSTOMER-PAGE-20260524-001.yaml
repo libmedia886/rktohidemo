@@ -1,0 +1,48 @@
+acceptance_record:
+  requirement_id: "SRS-EIS-CUSTOMER-PAGE-001"
+  case_name: "EIS_CUSTOMER_PAGE"
+  date: "2026-05-24"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "git diff --check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "ALLDEMO_EIS_FRAMES=120 ./scripts/run_alldemo.sh --only EIS"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "./build/wbc_h264_record recordings/eis_vdec_vpss_vmix_osd_vo_wbc_20260524_193248.h264 12 1024 1920 30 8000000"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "ffmpeg -framerate 30 -i recordings/eis_vdec_vpss_vmix_osd_vo_wbc_20260524_193248.h264 -c copy recordings/eis_vdec_vpss_vmix_osd_vo_wbc_20260524_193248.mp4"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+  observed_runtime:
+    processing_chain:
+      - "H264 file -> VDEC_210"
+      - "VDEC_210.output -> VPSS_211.input"
+      - "VPSS_211.output0 -> VMIX_213.input0 RAW"
+      - "VPSS_211.output1 -> EIS_212.input -> VMIX_213.input1 STABILIZED"
+      - "VMIX_213.output0 -> OSD_214.input -> VO_0.input0"
+    frame_counts:
+      - "short run: VDEC=118 VPSS=118 EIS=118 VMIX=118 OSD=118 VO=118"
+      - "record run: VDEC=178 VPSS=178 EIS=178 VMIX=178 OSD=178 VO=178"
+    gpu_stats:
+      - "short run: frame=118 total=6.499ms estimate=5.726ms warp=0.732ms estimate_path=1 warp_path=2 fallback=0"
+      - "record run: frame=178 total=4.952ms estimate=4.219ms warp=0.715ms estimate_path=1 warp_path=2 fallback=0"
+    recording:
+      - "recordings/eis_vdec_vpss_vmix_osd_vo_wbc_20260524_193248.h264 packets=359 bytes=11642882"
+      - "recordings/eis_vdec_vpss_vmix_osd_vo_wbc_20260524_193248.mp4 1024x1920 30fps duration=11.966548s size=11647602"
+  negative_checks:
+    - "EIS demo bind failed count must be 0."
+    - "EIS demo start failed count must be 0."
+    - "MEDIA_VDEC_SendPacket failed count must be 0."
+    - "segmentation fault count must be 0."
+    - "pgrep must find no residual alldemo/run_alldemo/wbc_h264_record process."
+  acceptance_limits:
+    - "Runtime proof covers the chain, counters, stats, recording, and clean shutdown; final visual judgment depends on product review of the MP4."

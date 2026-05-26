@@ -1,0 +1,31 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-027"
+  case_name: "ALLDEMO_STANDALONE_CONV_CL_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "CONV_CL 页面应从 legacy proxy 迁出，先用合成 RGBA 输入验证真实 MEDIA_CONV_CL OpenCL 卷积模块。"
+  scope:
+    - "新增 src/pages/page_conv_cl.c，基于 page_surface 独立创建显示面。"
+    - "页面生成 synthetic RGBA8888 输入。"
+    - "页面创建 MEDIA_CONV_CL_68，设置 3x3 sharpen 卷积核。"
+    - "页面同屏展示 RGBA 输入和 sharpen 输出，并输出 OpenCL perf。"
+    - "page_ops.c 将 CONV_CL 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_conv_cl.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不恢复 CONV_CL 的四路 VPSS/CSC/VMIX 对比链路。"
+    - "本阶段不迁移 CSC_CL、CSC_RGA 或 RGA 页面。"
+    - "本阶段不改变 MEDIA_CONV_CL SDK 接口。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only CONV_CL 可以进入 standalone 页面。"
+    - "CONV_CL standalone 页面必须显示 module=live，processed 随帧数增长，并输出 gpu perf。"
+    - "退出时 CONV_CL 模块和 input/output/display pool 均释放。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only DCP_FAST_DEHAZE 仍可运行真实模块 standalone 页面。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "CONV_CL 先拆单模块热路径，四路对比链路后续归入共享 bind runtime。"
+    - "OpenCL 页面日志必须包含 processed、kernel、gpu perf 和 standalone 标记。"
+    - "RGBA 模块显示时要显式转换到 NV12 页面预览，不改变模块输入格式。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

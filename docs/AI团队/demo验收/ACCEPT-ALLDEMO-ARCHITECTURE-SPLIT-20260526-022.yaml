@@ -1,0 +1,39 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-022"
+  case_name: "ALLDEMO_STANDALONE_STEREO_3D_PAGE"
+  date: "2026-05-26"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "git diff --check -- CMakeLists.txt src/pages/page_ops.c src/pages/page_stereo_3d.c docs/AI团队/demo需求/SRS-ALLDEMO-ARCHITECTURE-SPLIT-022.yaml docs/AI团队/demo实现/IMPL-ALLDEMO-ARCHITECTURE-SPLIT-20260526-022.yaml docs/AI团队/demo验收/ACCEPT-ALLDEMO-ARCHITECTURE-SPLIT-20260526-022.yaml"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only STEREO_3D"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only PANO"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "pass_no_process"
+  observed_runtime:
+    stereo_3d_standalone:
+      - "STEREO_3D no longer uses PAGE_IMPL_LEGACY_PROXY; it dispatches to page_stereo_3d_run."
+      - "Standalone page creates STEREO_3D_62 with side-by-side mode."
+      - "Probe reports module=live and mode=module-sbs."
+      - "Processed count grows from 1 to 2 after sample switch."
+      - "Shutdown removes STEREO_3D_62 and destroys pool 10, pool 11, pool 12, and display pool 1."
+    regression:
+      - "PANO standalone short probe continues to run with mode=module-preview."
+    assets:
+      - "asset-check continues to pass after the STEREO_3D migration."
+  acceptance_limits:
+    - "This stage accepts only the synthetic-input STEREO_3D standalone page."
+    - "It does not claim the realtime VI/VPSS rotate bind path has been reimplemented outside legacy."
+    - "It does not claim remaining PAGE_IMPL_LEGACY_PROXY pages are migrated."

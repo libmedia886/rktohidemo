@@ -1,0 +1,31 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-011"
+  case_name: "ALLDEMO_STANDALONE_HIGHLIGHT_SUPPRESS_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "HIGHLIGHT_SUPPRESS 合成页应从 legacy proxy 迁出，成为可独立运行、可验证真实模块处理效果的 standalone 页面，方便后续继续逐页拆分。"
+  scope:
+    - "新增 src/pages/page_highlight_suppress.c，基于 page_surface 独立创建显示面。"
+    - "页面内部生成 640x640 NV12 高光测试帧，不依赖 VI 摄像头。"
+    - "页面创建 MEDIA_HIGHLIGHT_SUPPRESS 真实模块，展示 input glare 与 soft knee output 对比。"
+    - "page_ops.c 将 HIGHLIGHT_SUPPRESS 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_highlight_suppress.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不迁移 HIGHLIGHT_SUPPRESS_VI；4K VI bypass/suppress 页面仍保持 legacy proxy。"
+    - "本阶段不改变客户循环或工程循环页面顺序。"
+    - "本阶段不新增交互按键，只保留高光压制参数与处理帧数展示。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 6s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS 可以进入 standalone 页面。"
+    - "HIGHLIGHT_SUPPRESS standalone 页面必须显示 module=live，processed 计数随 frames 增长。"
+    - "退出时 HIGHLIGHT_SUPPRESS 模块和输入/输出/display pool 均释放。"
+    - "timeout -s INT -k 3s 5s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI 仍可运行，VI/suppress/resize 帧计数增长。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only VO 仍可运行 standalone VO。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "合成类效果页优先迁移为 standalone 页面，用页面私有上下文维护输入、输出、perf 和计数。"
+    - "工作 pool id 必须沿用 SDK 可接受范围，优先参考 legacy 已验证的 pool 编号。"
+    - "功能页从 legacy proxy 迁出后，必须保留相邻 legacy 页面回归验证，避免影响未迁移页面。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

@@ -10,8 +10,8 @@
 
 #include "media_api.h"
 
-#define WBC_POOL_ID 14
-#define VENC_POOL_ID 15
+#define DEFAULT_WBC_POOL_ID 14
+#define DEFAULT_VENC_POOL_ID 15
 #define WBC_POOL_COUNT 8
 #define VENC_POOL_COUNT 8
 #define WBC_NV12_WIDTH_ALIGN 64
@@ -48,6 +48,24 @@ static int parse_positive_int(const char *arg, int *value) {
     errno = 0;
     v = strtol(arg, &end, 10);
     if (errno != 0 || !end || *end != '\0' || v <= 0 || v > INT_MAX) {
+        return -1;
+    }
+
+    *value = (int)v;
+    return 0;
+}
+
+static int parse_nonnegative_int(const char *arg, int *value) {
+    char *end = NULL;
+    long v;
+
+    if (!arg || arg[0] == '\0' || !value) {
+        return -1;
+    }
+
+    errno = 0;
+    v = strtol(arg, &end, 10);
+    if (errno != 0 || !end || *end != '\0' || v < 0 || v > INT_MAX) {
         return -1;
     }
 
@@ -120,7 +138,7 @@ static int ensure_parent_dir(const char *path) {
 }
 
 static void print_usage(const char *prog) {
-    printf("Usage: %s [out.h264] [duration_sec] [width] [height] [fps] [bitrate] [target] [license]\n", prog);
+    printf("Usage: %s [out.h264] [duration_sec] [width] [height] [fps] [bitrate] [target] [license] [wbc_pool_id] [venc_pool_id]\n", prog);
     printf("Default: %s %s %d %d %d %d %d\n",
            prog,
            DEFAULT_OUT_PATH,
@@ -142,6 +160,8 @@ int main(int argc, char **argv) {
     int bitrate = DEFAULT_BITRATE;
     const char *target = NULL;
     const char *license_path = DEFAULT_LICENSE_PATH;
+    int wbc_pool_id = DEFAULT_WBC_POOL_ID;
+    int venc_pool_id = DEFAULT_VENC_POOL_ID;
     int stride;
     size_t wbc_frame_size;
     int ret = 1;
@@ -190,7 +210,15 @@ int main(int argc, char **argv) {
     if (argc > 8 && argv[8][0] != '\0' && strcmp(argv[8], "-") != 0) {
         license_path = argv[8];
     }
-    if (argc > 9) {
+    if (argc > 9 && parse_nonnegative_int(argv[9], &wbc_pool_id) != 0) {
+        print_usage(argv[0]);
+        return 1;
+    }
+    if (argc > 10 && parse_nonnegative_int(argv[10], &venc_pool_id) != 0) {
+        print_usage(argv[0]);
+        return 1;
+    }
+    if (argc > 11) {
         print_usage(argv[0]);
         return 1;
     }
@@ -226,8 +254,9 @@ int main(int argc, char **argv) {
     }
 
     printf("VO_WBC -> VENC(H.264) file recorder\n");
-    printf("capture: %dx%d stride=%d fps=%d bitrate=%d target=%s duration=%ds\n",
-           width, height, stride, fps, bitrate, target ? target : "auto", duration_sec);
+    printf("capture: %dx%d stride=%d fps=%d bitrate=%d target=%s duration=%ds pools=%d/%d\n",
+           width, height, stride, fps, bitrate, target ? target : "auto", duration_sec,
+           wbc_pool_id, venc_pool_id);
     printf("output: %s\n", out_path);
 
     if (MEDIA_SYS_Init() != 0) {
@@ -242,13 +271,13 @@ int main(int argc, char **argv) {
         printf("license: %s\n", license_path);
     }
 
-    if (MEDIA_POOL_Create(WBC_POOL_ID, wbc_frame_size, WBC_POOL_COUNT) != 0) {
+    if (MEDIA_POOL_Create(wbc_pool_id, wbc_frame_size, WBC_POOL_COUNT) != 0) {
         fprintf(stderr, "MEDIA_POOL_Create WBC failed\n");
         goto cleanup;
     }
     wbc_pool_created = 1;
 
-    if (MEDIA_POOL_Create(VENC_POOL_ID, 8 * 1024 * 1024, VENC_POOL_COUNT) != 0) {
+    if (MEDIA_POOL_Create(venc_pool_id, 8 * 1024 * 1024, VENC_POOL_COUNT) != 0) {
         fprintf(stderr, "MEDIA_POOL_Create VENC failed\n");
         goto cleanup;
     }
@@ -262,7 +291,7 @@ int main(int argc, char **argv) {
     wbc_attr.stride = stride;
     wbc_attr.fps = fps;
     wbc_attr.format = MEDIA_FORMAT_NV12;
-    wbc_attr.pool_id = WBC_POOL_ID;
+    wbc_attr.pool_id = wbc_pool_id;
     wbc_attr.output_depth = 4;
 
     if (MEDIA_VO_WBC_CreateChn(0, &wbc_attr) != 0) {
@@ -278,7 +307,7 @@ int main(int argc, char **argv) {
                              fps,
                              4,
                              4,
-                             VENC_POOL_ID,
+                             venc_pool_id,
                              bitrate,
                              fps * 2,
                              MEDIA_FORMAT_H264) != 0) {
@@ -368,10 +397,10 @@ cleanup:
         MEDIA_VO_WBC_DestroyChn(0);
     }
     if (venc_pool_created) {
-        MEDIA_POOL_Destroy(VENC_POOL_ID);
+        MEDIA_POOL_Destroy(venc_pool_id);
     }
     if (wbc_pool_created) {
-        MEDIA_POOL_Destroy(WBC_POOL_ID);
+        MEDIA_POOL_Destroy(wbc_pool_id);
     }
     if (sys_inited) {
         MEDIA_SYS_Exit();

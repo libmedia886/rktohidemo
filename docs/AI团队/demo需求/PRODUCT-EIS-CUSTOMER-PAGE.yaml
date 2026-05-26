@@ -1,0 +1,39 @@
+product_brief:
+  case_name: "EIS_CUSTOMER_PAGE"
+  target_user: "到现场观看 AllDemo 的客户和售前演示人员"
+  demo_goal: "把 EIS 电子稳像页讲成可看懂的纯图像防抖能力展示：H264 抖动视频经 VDEC 解码后由 VPSS 分成原始分支和 EIS GPU 分支，上下对比显示稳像前后差异。"
+  first_screen_message: "客户一眼看到上方原始抖动画面、下方 GPU 电子稳像输出，并能看到裁剪比例、OpenCL 耗时和 fallback 状态。"
+  must_show:
+    - "EIS 作为独立 --only EIS 展示页存在，不混入 tools 或外部脚本入口。"
+    - "输入使用 H264 抖动视频素材，通过 VDEC 解码进入 VPSS。"
+    - "VPSS 输出分成两路：一路原始画面进入 VMIX，一路进入 EIS GPU 后再进入 VMIX。"
+    - "屏幕上下显示 RAW VPSS BRANCH 和 EIS STABILIZED GPU BRANCH。"
+    - "OSD 显示 H264 -> VDEC -> VPSS SPLIT -> RAW / EIS GPU -> VMIX -> OSD -> VO 数据流。"
+    - "OSD 显示 GPU OpenCL、total/estimate/warp 耗时、crop 8% 和 fallback 状态。"
+    - "运行后能通过 WBC+H264 录制并转成 MP4，供产品复看最终 GPU 效果。"
+  should_show:
+    - "原始分支和稳像分支使用同一解码源，差异只来自 EIS。"
+    - "README 和 effect manifest 明确 EIS 的输入素材、数据流、上下对比布局和 GPU 性能指标。"
+    - "短运行验证应看到 VDEC/VPSS/EIS/VMIX/OSD/VO 计数增长，EIS stats 输出 estimate/warp/total。"
+  avoid_showing:
+    - "不要把 EIS 展示写成纯算法截图或 Python 离线效果。"
+    - "不要用 LUT 固定表替代 EIS 模块内部自计算补偿矩阵。"
+    - "不要复制 rktohi/src 到 alldemo；alldemo 只消费已同步的库、头文件和素材。"
+  input_source_preference: "h264_shaky_video"
+  visual_layout: "竖屏单模块页；上方为原始抖动 VPSS 分支，下方为 EIS GPU 稳像分支，底部显示数据流、裁剪比例和 GPU 耗时。"
+  comparison_rule: "同一 H264 解码源经 VPSS 分成两路，原始分支与 EIS 分支同步显示，允许 EIS 裁剪 8% 和必要黑边。"
+  overlay_text:
+    data_flow: "H264 -> VDEC -> VPSS SPLIT -> RAW / EIS GPU -> VMIX -> OSD -> VO"
+    rationale: "纯图像电子稳像，不依赖 IMU；模块内部估计帧间平移并通过 OpenCL warp 输出稳定画面。"
+    runtime_metrics: "GPU OpenCL total/estimate/warp/crop/fallback/frame counts"
+  acceptance_feel:
+    - "客户能看懂下方画面比上方更稳定。"
+    - "演示人员能用 MP4 复看原始和 GPU 输出对比。"
+    - "EIS 页面能短运行、录制并干净退出。"
+  product_defects:
+    - id: "PROD-EIS-001"
+      description: "EIS 已有独立运行入口和录制素材，但缺少独立需求、SRS、实现和验收台账。"
+      expected_change: "补齐独立页文档闭环，并刷新最终 GPU 效果 MP4。"
+      severity: "Major"
+  product_verdict: "Implemented"
+  next_skill: "alldemo-runtime-acceptance"

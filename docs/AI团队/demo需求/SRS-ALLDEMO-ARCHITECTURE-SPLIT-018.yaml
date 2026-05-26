@@ -1,0 +1,30 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-018"
+  case_name: "ALLDEMO_STANDALONE_MCF_FUSION_CL_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "MCF_FUSION_CL 彩色/单色细节融合页应从 legacy proxy 迁出，独立加载素材并保留真实 OpenCL MCF_FUSION_CL 模块输出。"
+  scope:
+    - "新增 src/pages/page_mcf_fusion_cl.c，基于 page_surface 独立创建显示面。"
+    - "页面加载 street/urban/country 三组 color 与 mono JPEG 输入。"
+    - "页面创建 MEDIA_MCF_FUSION_CL 真实模块，展示 color input、mono detail、fusion output 三窗格。"
+    - "page_ops.c 将 MCF_FUSION_CL 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_mcf_fusion_cl.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不迁移 BLEND_PYR 或其他多输入融合页。"
+    - "本阶段不加载 reference.jpg，只验证模块真实输出。"
+    - "本阶段不改变客户循环或工程循环页面顺序。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only MCF_FUSION_CL 可以进入 standalone 页面。"
+    - "MCF_FUSION_CL standalone 页面必须显示 module=live，samples=3，updates 随样本切换增长。"
+    - "退出时 MCF_FUSION_CL 模块和输入/输出/display pool 均释放。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only EDOF_CL 仍可运行真实模块 standalone 页面。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "双输入 OpenCL 模块页面迁移时要保留真实 input0/input1 送帧和 GetFrame 输出链路。"
+    - "页面日志必须包含 sample、updates、mode、OpenCL 耗时和 standalone 标记。"
+    - "reference 图可以作为后续显示增强，但不能替代真实模块输出验收。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

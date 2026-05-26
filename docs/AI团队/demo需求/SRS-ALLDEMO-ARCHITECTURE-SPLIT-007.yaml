@@ -1,0 +1,30 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-007"
+  case_name: "ALLDEMO_STANDALONE_INFO_PAGES"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "工程探测类页面不应继续穿过 src/alldemo.c 的大循环；它们可以先用统一 info 页面独立运行，给后续逐页实现保留清晰入口。"
+  scope:
+    - "新增 src/pages/page_info.c，基于 page_surface 实现通用 standalone info 页面。"
+    - "page_info 从 page_registry 读取 flow_note 和 showcase_note，并在 console 输出页面说明。"
+    - "page_info 在屏幕上显示 ASCII 页面名、standalone 状态和帧计数。"
+    - "将 AVM、SVM3D、VMIX_RGA、EXPOSURE_FUSION_CL、VENC、VDEC、RTSP_SEND、RTSP_RECV、PIC_IO 接入 PAGE_IMPL_STANDALONE。"
+    - "LICENSE 保持独立专用页面，其他复杂页面继续走 legacy fallback。"
+  non_scope:
+    - "本阶段不实现 VENC 实际编码、VDEC 实际解码、RTSP 实际收发或 AVM/SVM3D 算法链路。"
+    - "本阶段不改变默认客户循环和工程循环顺序。"
+    - "本阶段不迁移 camera/bind 类 live 页面。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only VENC 可以进入 VENC standalone info 页面并输出 frame 计数。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only RTSP_SEND 可以进入 RTSP_SEND standalone info 页面并输出 frame 计数。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only LICENSE 仍可进入 LICENSE 专用 standalone 页面。"
+    - "timeout -s INT -k 3s 5s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI 仍可运行 legacy live 页面。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "probe/info 类工程页先接 page_info，后续有真实链路时再替换为专用 page_xxx.c。"
+    - "新增页面必须在 page_registry 有描述，再在 page_ops 选择 standalone 或 legacy。"
+    - "验收记录必须区分 standalone info 页面和真实媒体算法页面。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

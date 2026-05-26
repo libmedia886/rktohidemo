@@ -1,0 +1,30 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-037"
+  case_name: "ALLDEMO_STANDALONE_NPU_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "NPU 页面应从 legacy proxy 迁出，保留真实 H264 视频、VDEC、RGA、YOLOv5 NPU 推理和显示链路。"
+  scope:
+    - "新增 src/pages/page_npu.c，提供 page_npu_run。"
+    - "页面加载 assets/loop/npu/bus_640x640.h264 和 assets/npu/yolov5s-640-640.rknn。"
+    - "创建真实绑定链：VDEC -> RGA(NV12/RGB) -> NPU(YOLOv5) -> RGA(RGB/NV12) -> VO。"
+    - "运行时循环喂 H264 NAL 包，轮询 MEDIA_NPU_GetResult 并打印检测数量与 top object。"
+    - "page_ops.c 将 NPU 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_npu.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不迁移 legacy NPU 的 VMIX/OSD 中文叠字和画框显示。"
+    - "本阶段不修改 NPU 模型、labels 或媒体 SDK NPU 接口。"
+    - "本阶段不迁移 EIS、EIS_VI 页面。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only NPU 可以进入 standalone 页面。"
+    - "运行日志显示 VDEC/RGA/NPU/VO 帧计数增长，并打印检测结果数量。"
+    - "退出时 VDEC、RGA、NPU、VO 与 pool 3/4/5 均释放。"
+    - "上一个已拆页面短探针仍可运行。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "NPU standalone 必须使用真实 RKNN 模型和 H264 输入，不回落到 legacy proxy。"
+    - "验收以模块帧计数增长、NPU result 轮询和 pool 释放为准。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

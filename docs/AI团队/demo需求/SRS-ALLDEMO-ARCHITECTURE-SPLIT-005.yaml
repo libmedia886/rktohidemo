@@ -1,0 +1,29 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-005"
+  case_name: "ALLDEMO_FIRST_STANDALONE_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "页面框架需要至少有一个真实独立页面落地，证明后续新增页面可以放在 src/pages 下开发，而不是继续扩大 src/alldemo.c。"
+  scope:
+    - "扩展 page_ops_t，使页面可以声明 PAGE_IMPL_LEGACY_MAIN 或 PAGE_IMPL_STANDALONE。"
+    - "新增 src/pages/page_license.c，作为第一个独立页面实现。"
+    - "--only LICENSE 必须直接进入独立页面 run 函数，不再执行 src/alldemo.c 的 legacy 大初始化路径。"
+    - "legacy fallback 必须保留，其他页面继续按现有媒体链路运行。"
+    - "LICENSE 独立页面需要完成 MEDIA_SYS、license 设置、VO、display pool、NV12 绘制、循环送帧和 clean shutdown。"
+  non_scope:
+    - "本阶段不迁移 HIGHLIGHT_SUPPRESS_VI、VI、VPSS 等复杂 live camera 页面。"
+    - "本阶段不改变客户循环和工程循环的页面顺序。"
+    - "本阶段不改变 LICENSE 授权语义，只验证页面独立运行链路。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only LICENSE 可以打印 LICENSE standalone page，并持续输出 frames。"
+    - "timeout -s INT -k 3s 7s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI 仍可走 legacy live 页面，帧计数增长且 bypass/suppress 切换。"
+    - "timeout -s INT -k 3s 5s ./scripts/run_alldemo.sh --customer-demo 仍可启动默认循环子页。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "新增简单页面优先新建 src/pages/page_xxx.c，并在 page_ops.c 注册 PAGE_IMPL_STANDALONE。"
+    - "复杂页面迁移时先保留 legacy fallback，验证独立 run 通过后再切 page_ops。"
+    - "src/alldemo.c 不再承接新的工程页占位绘制逻辑。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

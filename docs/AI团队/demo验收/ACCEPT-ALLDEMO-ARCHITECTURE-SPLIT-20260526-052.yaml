@@ -1,0 +1,47 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-052"
+  case_name: "ALLDEMO_REMAINING_LEGACY_PROXY_PAGES_TO_VI_STANDALONE"
+  date: "2026-05-26"
+  status: "Accepted"
+  validation_commands:
+    - command: "grep -n \"PAGE_IMPL_LEGACY_PROXY\" src/pages/page_ops.c"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "git diff --check -- src/pages/page_ops.c src/pages/page_vpss.c src/pages/page_wbc.c src/pages/page_conv_cl.c src/pages/page_stereo_3d.c"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only VMIX"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only WBC"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only CONV_CL"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only STEREO_3D"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+  observed_runtime:
+    vmix:
+      - "VMIX opened VI /dev/video-camera0 3840x2160 and bound VI -> VPSS four outputs -> VMIX -> OSD -> VO."
+      - "Counters reached vi=183 vpss=183 vmix=183 osd=183 vo=183 with overlay=perf_text."
+    wbc:
+      - "WBC opened VI /dev/video-camera0 3840x2160 and bound VI -> RESIZE_RGA -> OSD -> VO while VO_WBC captured 1024x1920."
+      - "Counters reached vi=216 resize=216 osd=216 vo=216 wbc=222 captured=8 with overlay=perf_text."
+    conv_cl:
+      - "CONV_CL opened VI /dev/video-camera0 1920x1080 and bound VI -> PRE_RESIZE 960x540 -> CSC_RGA -> CONV_CL -> CSC_RGA -> RESIZE_RGA -> OSD -> VO."
+      - "Counters reached vi=216 pre=216 csc=216 conv=216 back=216 resize=216 osd=216 vo=216 with overlay=perf_text."
+      - "Observed dynamic kernels SHARPEN3, EDGE3, BLUR3 and CL perf around 0.52/0.84 ms."
+    stereo_3d:
+      - "STEREO_3D opened VI /dev/video-camera0 3840x2160 and bound VI -> VPSS two crops -> STEREO_3D side-by-side -> RESIZE_RGA -> OSD -> VO."
+      - "Counters reached vi=182 vpss=182 stereo=182 resize=182 osd=182 vo=182 with overlay=perf_text."
+  acceptance_limits:
+    - "旧 page_surface 合成函数仍保留在源码中，但 page_ops registry 不再指向 legacy proxy。"
+    - "CONV_CL 本阶段验收真实 VI 单路 live kernel 轮播，不声明 legacy 四宫格比较布局已完全复刻。"

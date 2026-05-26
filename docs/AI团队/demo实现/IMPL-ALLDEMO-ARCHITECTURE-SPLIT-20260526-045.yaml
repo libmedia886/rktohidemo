@@ -1,0 +1,31 @@
+implementation_summary:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-045"
+  case_name: "ALLDEMO_STANDALONE_RESIZE_RGA_VI_PAGE"
+  changed_files:
+    - "src/pages/page_resize_rga.c"
+    - "src/pages/page_ops.c"
+    - "docs/AI团队/demo需求/SRS-ALLDEMO-ARCHITECTURE-SPLIT-045.yaml"
+    - "docs/AI团队/demo实现/IMPL-ALLDEMO-ARCHITECTURE-SPLIT-20260526-045.yaml"
+    - "docs/AI团队/demo验收/ACCEPT-ALLDEMO-ARCHITECTURE-SPLIT-20260526-045.yaml"
+  implementation_scope:
+    - "删除 RESIZE_RGA page_surface 合成画面路径，改为独立真实 VI 绑定链。"
+    - "配置 VI /dev/video-camera0 3840x2160@30fps，pool 2。"
+    - "配置 RESIZE_RGA_61 输出 1080x608 stride 1088，pool 9。"
+    - "配置 OSD_81 输出 1080x608，pool 8，叠加标题、流程、CPU/GPU/RGA、crop/zoom 和帧计数。"
+    - "按原 legacy 的 640x640 虚拟 crop 逻辑映射到 3840x2160 源图，并通过 unbind/destroy/recreate/bind 完成动态裁剪重配。"
+  validation:
+    - command: "git diff --check -- src/pages/page_resize_rga.c src/pages/page_ops.c"
+      result: "PASS"
+      evidence: "No whitespace errors."
+    - command: "cmake --build build -j"
+      result: "PASS"
+      evidence: "alldemo target rebuilt successfully."
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only RESIZE_RGA"
+      result: "PASS"
+      evidence: "RESIZE_RGA standalone=1 overlay=perf_text, VI/RGA/OSD/VO counters grew and dynamic crop rebinds succeeded."
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      result: "PASS"
+      evidence: "No residual alldemo or run_alldemo.sh process."
+  remaining_work:
+    - "继续迁移仍保留 legacy proxy 的 WBC/RGA/CSC_RGA/CSC_CL/CLAHE/RETINEX/DEHAZE/CONV_CL/VMIX/STEREO_3D 等页面。"
+  next_skill: "alldemo-software-acceptance"

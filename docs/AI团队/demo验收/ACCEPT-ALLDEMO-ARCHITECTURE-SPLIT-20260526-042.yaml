@@ -1,0 +1,23 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-042"
+  case_name: "ALLDEMO_STANDALONE_VPSS_VI_PAGE"
+  date: "2026-05-26"
+  status: "Accepted"
+  validation_commands:
+    - command: "git diff --check -- src/pages/page_vpss.c src/pages/page_ops.c"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "timeout -s INT -k 3s 10s ./scripts/run_alldemo.sh --only VPSS"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+  observed_runtime:
+    vpss_standalone:
+      - "VPSS standalone opened VI /dev/video-camera0 3840x2160 and bound VI -> VPSS -> VMIX -> OSD -> VO."
+      - "Frame counters grew to vi=242 vpss=242 vmix=242 osd=242 vo=242."
+      - "Cleanup stopped VI/VPSS and destroyed pools 8/7/14/2."
+  acceptance_limits:
+    - "本阶段只验收 VPSS 真实 VI standalone 页面。"
+    - "不声明 legacy VPSS 的全部中文说明 OSD 已迁移。"

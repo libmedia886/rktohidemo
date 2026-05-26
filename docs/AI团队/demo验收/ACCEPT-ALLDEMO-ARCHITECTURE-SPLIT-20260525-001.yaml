@@ -1,0 +1,59 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-001"
+  case_name: "ALLDEMO_ARCHITECTURE_SPLIT"
+  date: "2026-05-25"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "git diff --check -- CMakeLists.txt src/alldemo.c src/app/page_registry.h src/app/page_registry.c src/app/loop_player.h src/app/loop_player.c docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml docs/AI团队/demo需求/SRS-ALLDEMO-ARCHITECTURE-SPLIT-001.yaml"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 6s ./scripts/run_alldemo.sh --customer-demo"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "pass_no_process"
+  observed_runtime:
+    single_page:
+      page: "HIGHLIGHT_SUPPRESS_VI"
+      processing_chain:
+        - "VI_0.output -> HIGHLIGHT_SUPPRESS_120.input"
+        - "HIGHLIGHT_SUPPRESS_120.output0 -> RESIZE_RGA_116.input0"
+        - "RESIZE_RGA_116.output0 -> VMIX_RGA_80.input0"
+        - "VMIX_RGA_80.output0 -> OSD_81.input"
+        - "OSD_81.output0 -> VO_0.input0"
+      frame_counts:
+        - "vi_frames=210"
+        - "suppress_frames=210"
+        - "resize_frames=210"
+      mode_switch:
+        - "passthrough=1 at start and later samples"
+        - "passthrough=0 at alternate samples"
+    loop_playback:
+      profile: "customer demo"
+      child_page: "--only VI"
+      evidence:
+        - "loop_player printed customer demo reuses --only module pages."
+        - "navigation keys were initialized."
+        - "customer demo page: --only VI (auto)."
+        - "VI frame counter reached 149 before timeout interrupt."
+    clean_shutdown:
+      - "HIGHLIGHT_SUPPRESS_VI run disconnected OSD, VMIX_RGA, RESIZE_RGA, HIGHLIGHT_SUPPRESS and VI links."
+      - "customer demo child VI run disconnected OSD, VMIX, RESIZE_RGA and VI links."
+      - "pgrep found no residual alldemo/run_alldemo.sh process."
+  negative_checks:
+    - "Build must not fail after multi-file split."
+    - "The HIGHLIGHT_SUPPRESS_VI alias and page registry behavior must not regress."
+    - "Timeout interrupt must not leave a child alldemo process running."
+  acceptance_limits:
+    - "This accepts stage 1 architecture split only. It does not claim that all page implementations have been migrated out of src/alldemo.c."
+    - "Full visual regression is not performed; validation is compile plus runtime probe and clean shutdown."

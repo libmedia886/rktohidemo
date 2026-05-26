@@ -1,0 +1,25 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-048"
+  case_name: "ALLDEMO_STANDALONE_CSC_CL_VI_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "CSC_CL 页面拆分后必须继续使用真实摄像头 VI 输入，并在屏幕上展示 OpenCL 颜色转换链路、耗时和性能状态。"
+  scope:
+    - "修改 src/pages/page_csc.c 中 page_csc_cl_run，替换合成 NV12 输入路径。"
+    - "创建真实绑定链：VI 3840x2160 -> CSC_CL ARGB8888 -> RESIZE_RGA 1080x608 ARGB8888 -> OSD -> VO。"
+    - "OSD 文本显示标题、数据流、CPU/GPU/RGA、OpenCL kernel/queue 耗时和 VI/CSC_CL/RESIZE_RGA/OSD/VO 帧计数。"
+    - "page_ops.c 将 CSC_CL 注册为 PAGE_IMPL_STANDALONE。"
+  non_scope:
+    - "本阶段不迁移 legacy CSC_CL 的全部中文说明卡片。"
+    - "本阶段不修改 CSC_CL SDK 接口或 OpenCL kernel。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only CSC_CL 可以进入 standalone 页面。"
+    - "运行日志显示 standalone=1、overlay=perf_text，VI/CSC_CL/RESIZE_RGA/OSD/VO 帧计数增长。"
+    - "运行日志显示 OpenCL kernel/queue 耗时。"
+    - "退出后无 run_alldemo.sh 或 alldemo 残留进程。"
+  developer_rule_after_this_stage:
+    - "CSC_CL standalone 必须使用真实 VI 输入，不能回到 page_surface 合成图案。"
+    - "实时链路页面迁移时必须保留屏幕 OSD 说明，不能只输出终端 printf。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

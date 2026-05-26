@@ -1,0 +1,28 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-050"
+  case_name: "ALLDEMO_STANDALONE_RETINEX_VI_PAGE"
+  date: "2026-05-26"
+  status: "Accepted"
+  validation_commands:
+    - command: "git diff --check -- src/pages/page_retinex.c src/pages/page_ops.c CMakeLists.txt"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only RETINEX"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+  observed_runtime:
+    retinex_standalone:
+      - "RETINEX standalone opened VI /dev/video-camera0 3840x2160 and bound VI -> RETINEX -> RESIZE_RGA -> OSD -> VO."
+      - "Frame counters grew to vi=215 retinex=215 resize=215 osd=215 vo=215 with overlay=perf_text."
+      - "Observed passthrough toggling 0/1 with gain=40.0."
+      - "Cleanup stopped VI, disconnected all binds, removed OSD_81, RESIZE_RGA_61, RETINEX_73, and destroyed pools 8/9/2."
+      - "Post-run pgrep found no residual alldemo or run_alldemo.sh process."
+  acceptance_limits:
+    - "本阶段只验收 RETINEX 真实 VI standalone 页面。"
+    - "不声明 RETINEX_OFFLINE 或 legacy RETINEX 全量中文说明卡片已迁移。"

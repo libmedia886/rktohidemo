@@ -1,0 +1,28 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-046"
+  case_name: "ALLDEMO_STANDALONE_RGA_VI_PAGE"
+  date: "2026-05-26"
+  status: "Accepted"
+  validation_commands:
+    - command: "git diff --check -- src/pages/page_rga.c src/pages/page_ops.c"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "timeout -s INT -k 3s 13s ./scripts/run_alldemo.sh --only RGA"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+  observed_runtime:
+    rga_standalone:
+      - "RGA standalone opened VI /dev/video-camera0 3840x2160 and bound VI -> RGA -> OSD -> VO."
+      - "Frame counters grew to vi=365 rga=365 osd=365 vo=365 with overlay=perf_text."
+      - "Observed OP sequence COPY, CROP_ZOOM, FLIP_H, FLIP_V, ROTATE90."
+      - "Cleanup stopped VI, disconnected OSD/RGA/VI binds, removed OSD_81 and RGA_59, and destroyed pools 8/9/2."
+      - "Post-run pgrep found no residual alldemo or run_alldemo.sh process."
+  acceptance_limits:
+    - "本阶段只验收 RGA 真实 VI standalone 页面。"
+    - "不声明 legacy RGA 的全量中文说明卡片已迁移。"

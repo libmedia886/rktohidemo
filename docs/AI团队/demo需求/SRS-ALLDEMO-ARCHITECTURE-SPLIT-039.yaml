@@ -1,0 +1,28 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-039"
+  case_name: "ALLDEMO_STANDALONE_EIS_VI_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "EIS_VI 页面应从 legacy proxy 迁出，保留真实 4K 相机输入、EIS 稳像处理和显示链路。"
+  scope:
+    - "新增 src/pages/page_eis_vi.c，提供 page_eis_vi_run。"
+    - "页面创建真实绑定链：VI 3840x2160 -> EIS -> VPSS 1072x608 -> VO。"
+    - "运行时日志输出 VI/EIS/VPSS/VO 帧计数和 EIS stats。"
+    - "page_ops.c 将 EIS_VI 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_eis_vi.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不迁移 legacy EIS_VI 的 OSD 中文叠字。"
+    - "本阶段不修改媒体 SDK 的 EIS 或 VPSS 接口。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only EIS_VI 可以进入 standalone 页面。"
+    - "运行日志显示 VI/EIS/VPSS/VO 帧计数增长，并打印 EIS stats。"
+    - "退出时 VI、EIS、VPSS、VO 与 pool 0/1/2 均释放。"
+    - "上一个已拆页面短探针仍可运行。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "EIS_VI standalone 必须使用真实 VI/EIS/VPSS/VO 链路，不能回落到 legacy proxy。"
+    - "验收以模块帧计数增长、EIS stats 和 pool 释放为准。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

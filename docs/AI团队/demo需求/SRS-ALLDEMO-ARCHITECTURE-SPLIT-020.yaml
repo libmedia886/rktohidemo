@@ -1,0 +1,31 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-020"
+  case_name: "ALLDEMO_STANDALONE_AVM2D_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "AVM2D 泊车俯视环视研究页应从 legacy proxy 迁出，独立加载四路视频抽帧和 BEV 输出结果，方便后续继续增加页面。"
+  scope:
+    - "新增 src/pages/page_avm2d.c，基于 page_surface 独立创建显示面。"
+    - "页面加载 assets/loop/avm2d/video 下 25 组 front/rear/left/right JPEG 输入。"
+    - "页面加载 dyfcalid 下 calibrated reference 和 GPU LUT output 两张 BEV 输出图。"
+    - "页面同屏展示四路输入视频帧、标定参考输出和 GPU LUT 输出。"
+    - "page_ops.c 将 AVM2D 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_avm2d.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不实现真实 AVM2D 算法模块或正式车模叠加。"
+    - "本阶段不迁移 PANO、NPU 或摄像头绑定类页面。"
+    - "本阶段不改变客户循环或工程循环页面顺序。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only AVM2D 可以进入 standalone 页面。"
+    - "AVM2D standalone 页面必须显示 frames=25/25，outputs=yes，页面帧计数增长。"
+    - "退出时 VO/display pool 释放。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only BLEND_PYR 仍可运行真实模块 standalone 页面。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过并显示 AVM2D 25/25 outputs=yes。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "素材播放型页面可以先独立成 page_surface 页面，不阻塞后续真实模块接入。"
+    - "页面日志必须包含 frame/sample、输出素材状态和 standalone 标记。"
+    - "asset-check 中已有覆盖的素材页，迁移后必须继续保持 asset-check 通过。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

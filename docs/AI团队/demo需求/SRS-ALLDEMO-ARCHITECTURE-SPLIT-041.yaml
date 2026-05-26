@@ -1,0 +1,48 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-041"
+  case_name: "ALLDEMO_CAMERA_PAGE_VI_FIDELITY_GUARD"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "原始测试例子使用摄像头 VI 的页面，拆分后不能被合成图案页面替代。"
+  problem_statement:
+    - "部分 PAGE_FLAG_CAMERA 页面已经有 standalone page_surface 实现，但这些实现使用合成画面，不等价于原始 VI 测试例子。"
+    - "页面拆分验收必须同时检查行为保真，不能只检查是否有独立 page_*.c 文件。"
+  scope:
+    - "审计 PAGE_FLAG_CAMERA 页面和 standalone 是否调用 MEDIA_VI_SetAttr/MEDIA_VI_Enable。"
+    - "已完成真实 VI standalone 的页面保持独立实现。"
+    - "尚未完成真实 VI standalone 的 camera 页面切回 legacy proxy，恢复原始 --only 摄像头链路。"
+    - "后续迁移 camera 页面时，必须以真实 VI 链路和下游帧计数增长为验收依据。"
+  affected_pages:
+    restored_to_legacy_proxy:
+      - "WBC"
+      - "RGA"
+      - "RESIZE_RGA"
+      - "CSC_RGA"
+      - "CSC_CL"
+      - "CLAHE"
+      - "RETINEX"
+      - "CAP_DEHAZE"
+      - "DCP_FAST_DEHAZE"
+      - "CONV_CL"
+      - "VMIX"
+      - "STEREO_3D"
+    kept_true_vi_standalone:
+      - "VI"
+      - "VPSS"
+      - "OSD"
+      - "HIGHLIGHT_SUPPRESS_VI"
+      - "EIS_VI"
+      - "TRANSFORM"
+  non_scope:
+    - "本阶段不删除已写的 page_surface standalone 文件，它们可作为后续离线/示意页素材，但不再替代 camera 页面入口。"
+    - "本阶段不一次性重写全部 legacy VI 绑定链为 standalone。"
+  acceptance_criteria:
+    - "cmake --build build -j 可以通过。"
+    - "--only TRANSFORM 运行日志显示 VI/VPSS/TRANSFORM/RESIZE_RGA/VO 帧计数增长。"
+    - "--only VPSS 运行日志显示 standalone=1，真实 VI 采集和 VPSS/VMIX/OSD/VO 帧计数增长。"
+    - "--only CAP_DEHAZE 运行日志显示真实 VI/CSC_RGA/CAP_DEHAZE/RESIZE_RGA/OSD 帧计数增长。"
+    - "page_ops.c 中尚未 VI 保真的 camera 页面注册为 PAGE_IMPL_LEGACY_PROXY；已完成 VI standalone 的页面注册为 PAGE_IMPL_STANDALONE。"
+  developer_rule_after_this_stage:
+    - "拆分 camera 页面时，不能用 page_surface 合成图替代原始 VI 输入。"
+    - "如果 standalone 尚未保留 VI 行为，页面入口必须继续走 legacy proxy。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

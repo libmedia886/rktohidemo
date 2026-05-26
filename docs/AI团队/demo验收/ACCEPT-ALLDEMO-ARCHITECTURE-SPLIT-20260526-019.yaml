@@ -1,0 +1,38 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-019"
+  case_name: "ALLDEMO_STANDALONE_BLEND_PYR_PAGE"
+  date: "2026-05-26"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "git diff --check -- CMakeLists.txt src/pages/page_ops.c src/pages/page_blend_pyr.c docs/AI团队/demo需求/SRS-ALLDEMO-ARCHITECTURE-SPLIT-019.yaml docs/AI团队/demo实现/IMPL-ALLDEMO-ARCHITECTURE-SPLIT-20260526-019.yaml docs/AI团队/demo验收/ACCEPT-ALLDEMO-ARCHITECTURE-SPLIT-20260526-019.yaml"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only BLEND_PYR"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only MCF_FUSION_CL"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "pass_no_process"
+  observed_runtime:
+    blend_pyr_standalone:
+      - "BLEND_PYR no longer uses PAGE_IMPL_LEGACY_PROXY; it dispatches to page_blend_pyr_run."
+      - "Standalone page creates BLEND_PYR_118, sets seam-band mask from pool 14, and enables the module."
+      - "Probe reports module=live and samples=3."
+      - "Probe reaches sample 2/3 and updates=2, showing real module processing."
+      - "Shutdown removes BLEND_PYR_118 and destroys pool 14, pool 12, pool 11, pool 10, and display pool 1."
+    regression:
+      - "MCF_FUSION_CL standalone short probe continues to run with module=live."
+    assets:
+      - "asset-check continues to pass after the BLEND_PYR migration."
+  acceptance_limits:
+    - "This stage accepts only the BLEND_PYR standalone page."
+    - "It does not claim remaining PAGE_IMPL_LEGACY_PROXY pages are migrated."

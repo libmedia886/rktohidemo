@@ -1,0 +1,31 @@
+implementation_summary:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-048"
+  case_name: "ALLDEMO_STANDALONE_CSC_CL_VI_PAGE"
+  changed_files:
+    - "src/pages/page_csc.c"
+    - "src/pages/page_ops.c"
+    - "docs/AI团队/demo需求/SRS-ALLDEMO-ARCHITECTURE-SPLIT-048.yaml"
+    - "docs/AI团队/demo实现/IMPL-ALLDEMO-ARCHITECTURE-SPLIT-20260526-048.yaml"
+    - "docs/AI团队/demo验收/ACCEPT-ALLDEMO-ARCHITECTURE-SPLIT-20260526-048.yaml"
+  implementation_scope:
+    - "保留共享 page_csc.c 结构，将 page_csc_cl_run 改为真实 VI standalone。"
+    - "配置 VI /dev/video-camera0 3840x2160@30fps，pool 2。"
+    - "配置 CSC_CL_76 做 NV12->ARGB8888 4K OpenCL 转换，pool 12。"
+    - "配置 RESIZE_RGA_61 将 4K ARGB 缩放到 1080x608 stride 4352，pool 13。"
+    - "配置 OSD_81 处理 ARGB8888 输出，pool 14，叠加标题、流程、CPU/GPU/RGA、OpenCL 耗时和帧计数。"
+  validation:
+    - command: "git diff --check -- src/pages/page_csc.c src/pages/page_ops.c"
+      result: "PASS"
+      evidence: "No whitespace errors."
+    - command: "cmake --build build -j"
+      result: "PASS"
+      evidence: "alldemo target rebuilt successfully."
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only CSC_CL"
+      result: "PASS"
+      evidence: "CSC_CL standalone=1 overlay=perf_text, VI/CSC_CL/RESIZE_RGA/OSD/VO counters grew to 215."
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      result: "PASS"
+      evidence: "No residual alldemo or run_alldemo.sh process."
+  remaining_work:
+    - "继续迁移仍保留 legacy proxy 的 WBC/CLAHE/RETINEX/DEHAZE/CONV_CL/VMIX/STEREO_3D 等页面。"
+  next_skill: "alldemo-software-acceptance"

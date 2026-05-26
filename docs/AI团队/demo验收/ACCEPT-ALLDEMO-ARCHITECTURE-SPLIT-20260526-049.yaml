@@ -1,0 +1,28 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-049"
+  case_name: "ALLDEMO_STANDALONE_CLAHE_VI_PAGE"
+  date: "2026-05-26"
+  status: "Accepted"
+  validation_commands:
+    - command: "git diff --check -- src/pages/page_clahe.c src/pages/page_ops.c"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only CLAHE"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+  observed_runtime:
+    clahe_standalone:
+      - "CLAHE standalone opened VI /dev/video-camera0 3840x2160 and bound VI -> CLAHE -> RESIZE_RGA -> OSD -> VO."
+      - "Frame counters grew to vi=214 clahe=214 resize=214 osd=214 vo=214 with overlay=perf_text."
+      - "Observed passthrough toggling 0/1 and clip changing from 1.52 to 2.36."
+      - "Cleanup stopped VI, disconnected all binds, removed OSD_81, RESIZE_RGA_61, CLAHE_69, and destroyed pools 8/9/15/2."
+      - "Post-run pgrep found no residual alldemo or run_alldemo.sh process."
+  acceptance_limits:
+    - "本阶段只验收 CLAHE 真实 VI standalone 页面。"
+    - "不声明 legacy CLAHE 的全量中文说明卡片已迁移。"

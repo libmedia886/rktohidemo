@@ -1,0 +1,36 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-002"
+  case_name: "ALLDEMO_PAGE_DESCRIPTOR_REGISTRY"
+  date: "2026-05-26"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "git diff --check -- src/alldemo.c src/app/page_registry.h src/app/page_registry.c"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 3s 7s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 5s ./scripts/run_alldemo.sh --customer-demo"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "pass_no_process"
+  observed_runtime:
+    descriptor_regression_check:
+      - "HIGHLIGHT_SUPPRESS_VI 仍走 PAGE_BIND_HIGHLIGHT_SUPPRESS_VI，对应真实 bind 链路没有回退到 CPU copy。"
+      - "VI 仍被 page_desc 标记为 4K camera + VMIX/OSD bind-display，customer demo 子页可运行。"
+      - "module_flow_note/module_showcase_note 从 page_registry 返回，编译链接通过。"
+    clean_shutdown:
+      - "HIGHLIGHT_SUPPRESS_VI run disconnect HIGHLIGHT_SUPPRESS/RESIZE_RGA/VMIX_RGA/OSD/VO links and destroy pools."
+      - "customer demo child VI run disconnect RESIZE_RGA/VMIX/OSD/VO links and destroy pools."
+      - "pgrep found no residual process."
+  acceptance_limits:
+    - "本次只接受页面描述表拆分，不代表完整页面实现已经迁出 src/alldemo.c。"
+    - "视觉人工验收未执行；本次以编译、运行链路、帧计数和退出清理为准。"

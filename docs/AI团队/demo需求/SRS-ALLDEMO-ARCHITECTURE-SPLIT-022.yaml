@@ -1,0 +1,31 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-022"
+  case_name: "ALLDEMO_STANDALONE_STEREO_3D_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "STEREO_3D 页面应从 legacy proxy 迁出，先用合成左右 NV12 输入验证真实 MEDIA_STEREO_3D 模块，后续再接实时 VI/VPSS 绑定链路。"
+  scope:
+    - "新增 src/pages/page_stereo_3d.c，基于 page_surface 独立创建显示面。"
+    - "页面生成 synthetic left/right NV12 输入，避免依赖真实摄像头。"
+    - "页面创建 MEDIA_STEREO_3D_62 side-by-side 模块，发送 input0/input1 并取 output0。"
+    - "页面同屏展示 LEFT、RIGHT 和 STEREO_3D OUTPUT。"
+    - "page_ops.c 将 STEREO_3D 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_stereo_3d.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不迁移实时 VI -> VPSS rotate -> STEREO_3D -> VMIX -> OSD -> VO 绑定链路。"
+    - "本阶段不改变 MEDIA_STEREO_3D SDK 接口。"
+    - "本阶段不改变客户循环或工程循环页面顺序。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only STEREO_3D 可以进入 standalone 页面。"
+    - "STEREO_3D standalone 页面必须显示 module=live，mode=module-sbs，processed 随样本切换增长。"
+    - "退出时 STEREO_3D 模块和 input/output/display pool 均释放。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only PANO 仍可运行真实模块 standalone 页面。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "实时绑定页可先拆出 synthetic standalone 模块热路径，摄像头 bind runtime 后续统一抽。"
+    - "页面日志必须包含 module/mode、sample、processed 和 standalone 标记。"
+    - "如果模块失败并使用 CPU fallback，验收必须明确写 fallback，不能冒充 live。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

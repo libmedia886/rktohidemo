@@ -1,0 +1,30 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-012"
+  case_name: "ALLDEMO_STANDALONE_THERMAL_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "THERMAL 素材展示页应从 legacy proxy 迁出，成为独立页面文件，降低新增离线素材页时对 legacy 大文件的依赖。"
+  scope:
+    - "新增 src/pages/page_thermal.c，基于 page_surface 独立创建显示面。"
+    - "页面加载 assets/loop/thermal/thermal_1.png 与 thermal_2.png。"
+    - "页面独立绘制 16 种热成像伪彩模式网格。"
+    - "page_ops.c 将 THERMAL 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_thermal.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不迁移 camera/bind 类页面。"
+    - "本阶段不新增图片加载公共库；PNG 加载逻辑先封装在 THERMAL 页面内，后续可在更多素材页迁移时抽成共享 helper。"
+    - "本阶段不改变客户循环或工程循环页面顺序。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 5s ./scripts/run_alldemo.sh --only THERMAL 可以进入 standalone 页面。"
+    - "THERMAL standalone 页面必须加载到 2 个素材并输出 modes=16。"
+    - "退出时 display pool 释放，MEDIA_SYS 正常退出。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS 仍可运行真实模块 standalone 页面。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "离线素材展示页可优先迁出为 page_surface standalone 页面。"
+    - "迁移素材页时必须保留 asset-check 作为验收项。"
+    - "页面私有 loader 可以先随页面落地；当第二个以上页面复用时再抽公共 helper。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

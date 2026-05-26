@@ -1,0 +1,31 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-025"
+  case_name: "ALLDEMO_STANDALONE_CLAHE_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "CLAHE 页面应从 legacy proxy 迁出，先用合成低对比 NV12 输入验证真实 MEDIA_CLAHE 模块，后续再接实时摄像头链路。"
+  scope:
+    - "新增 src/pages/page_clahe.c，基于 page_surface 独立创建显示面。"
+    - "页面生成 synthetic low-contrast NV12 输入。"
+    - "页面创建 MEDIA_CLAHE_69，使用 8x8 tile grid、256 bins、clip_limit=2.5。"
+    - "页面同屏展示低对比输入和 CLAHE 输出。"
+    - "page_ops.c 将 CLAHE 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_clahe.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不恢复 CLAHE 的 4K VI -> CLAHE -> RESIZE -> VO 实时绑定链路。"
+    - "本阶段不改变 MEDIA_CLAHE SDK 接口或算法参数。"
+    - "本阶段不迁移 CSC/RGA/CONV_CL 等剩余页面。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only CLAHE 可以进入 standalone 页面。"
+    - "CLAHE standalone 页面必须显示 module=live，processed 随帧数增长。"
+    - "退出时 CLAHE 模块和 input/output/display pool 均释放。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only RETINEX 仍可运行真实模块 standalone 页面。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "实时增强页可先使用 synthetic standalone 输入验证模块热路径。"
+    - "页面日志必须包含 module/mode、processed、clip/grid 和 standalone 标记。"
+    - "迁移后必须明确本阶段未恢复实时摄像头绑定链路。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

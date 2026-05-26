@@ -1,0 +1,30 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-034"
+  case_name: "ALLDEMO_STANDALONE_VI_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "VI 页面应从 legacy proxy 迁出，使用单页文件验证真实相机采集和下游显示链路。"
+  scope:
+    - "新增 src/pages/page_vi.c，提供 page_vi_run。"
+    - "页面创建 MEDIA_VI_0，采集 /dev/video-camera0 3840x2160 NV12。"
+    - "页面创建 RESIZE_RGA_61，将 VI 输出缩放为 1072x608。"
+    - "页面绑定 VI -> RESIZE_RGA -> VO，并输出 VI/RESIZE/VO 帧计数。"
+    - "page_ops.c 将 VI 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_vi.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不恢复 VI -> VMIX/OSD/VO 的 legacy 大屏说明链路。"
+    - "本阶段不迁移 WBC、NPU、EIS 系列页面。"
+    - "本阶段不修改媒体 SDK 的 VI 接口。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only VI 可以进入 standalone 页面。"
+    - "日志 VI/RESIZE_RGA/VO 帧计数增长。"
+    - "退出时 VI disable、RESIZE_RGA/VO 停止销毁、camera/resize pool 均释放。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only VMIX 仍可运行真实模块 standalone 页面。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "VI standalone 使用真实 VI -> RESIZE_RGA -> VO 绑定链，不用 legacy proxy。"
+    - "相机页验收以 VI/RESIZE/VO 下游帧计数增长为准。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

@@ -1,0 +1,32 @@
+implementation_summary:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-041"
+  case_name: "ALLDEMO_CAMERA_PAGE_VI_FIDELITY_GUARD"
+  changed_files:
+    - "src/pages/page_ops.c"
+    - "docs/AI团队/demo需求/SRS-ALLDEMO-ARCHITECTURE-SPLIT-041.yaml"
+    - "docs/AI团队/demo实现/IMPL-ALLDEMO-ARCHITECTURE-SPLIT-20260526-041.yaml"
+    - "docs/AI团队/demo验收/ACCEPT-ALLDEMO-ARCHITECTURE-SPLIT-20260526-041.yaml"
+  implementation_scope:
+    - "将尚未真实 VI standalone 的 camera 页面从 PAGE_IMPL_STANDALONE 改为 PAGE_IMPL_LEGACY_PROXY。"
+    - "保留 VI、VPSS、OSD、HIGHLIGHT_SUPPRESS_VI、EIS_VI、TRANSFORM 的真实 VI standalone 入口。"
+    - "用 legacy proxy 临时恢复 WBC、CAP_DEHAZE 等尚未 VI 保真迁移页面的原始 --only 摄像头链路。"
+    - "记录新的开发约束：PAGE_FLAG_CAMERA 页面必须做 VI 保真迁移。"
+  validation:
+    - command: "cmake --build build -j"
+      result: "PASS"
+      evidence: "alldemo target rebuilt successfully after page_ops.c change."
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only TRANSFORM"
+      result: "PASS"
+      evidence: "VI/VPSS/TRANSFORM/RESIZE_RGA/VO counts grew to about 181."
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only VPSS"
+      result: "PASS"
+      evidence: "Standalone VI/VPSS/VMIX/OSD/VO counts grew to about 242."
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only CAP_DEHAZE"
+      result: "PASS"
+      evidence: "VI/CSC_RGA/CAP_DEHAZE/RESIZE_RGA/display OSD counts grew beyond 180."
+    - command: "timeout -s INT -k 3s 10s ./scripts/run_alldemo.sh --only OSD"
+      result: "PASS"
+      evidence: "Standalone VI/RESIZE_RGA/OSD/VMIX/VO counts grew to about 277."
+  remaining_work:
+    - "逐页把剩余 restored_to_legacy_proxy 清单迁移为真实 VI standalone，并用帧计数验收。"
+  next_skill: "alldemo-software-acceptance"

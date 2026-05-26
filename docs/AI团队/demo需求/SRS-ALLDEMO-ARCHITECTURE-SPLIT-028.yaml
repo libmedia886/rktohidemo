@@ -1,0 +1,31 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-028"
+  case_name: "ALLDEMO_STANDALONE_CSC_CL_AND_CSC_RGA_PAGES"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "CSC_CL 和 CSC_RGA 页面应从 legacy proxy 迁出，使用合成 NV12 输入分别验证 OpenCL 与 RGA 颜色转换模块。"
+  scope:
+    - "新增 src/pages/page_csc.c，提供 page_csc_cl_run 和 page_csc_rga_run。"
+    - "页面生成 synthetic NV12 输入。"
+    - "CSC_CL 页面创建 MEDIA_CSC_CL_76，执行 NV12 -> RGBA8888。"
+    - "CSC_RGA 页面创建 MEDIA_CSC_RGA_64，执行 NV12 -> RGBA8888。"
+    - "page_ops.c 将 CSC_CL 和 CSC_RGA 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_csc.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不恢复 CSC_CL/CSC_RGA 的实时 VI/VPSS/OSD/RESIZE 绑定链路。"
+    - "本阶段不迁移 RGA 或 RESIZE_RGA 页面。"
+    - "本阶段不改变 CSC 模块 SDK 接口。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only CSC_CL 可以进入 standalone 页面并显示 processed 增长。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only CSC_RGA 可以进入 standalone 页面并显示 processed 增长。"
+    - "退出时 CSC_CL/CSC_RGA 模块和 input/output/display pool 均释放。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only CONV_CL 仍可运行真实模块 standalone 页面。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "CSC_CL standalone 输出使用 RGBA8888；RGB888 dma-buf 输出在本机触发 OpenCL image create -10。"
+    - "同类 OpenCL/RGA 页面可以共享 page_csc.c，但日志必须区分 mode=opencl 和 mode=rga。"
+    - "颜色转换页必须保留 input/output 格式和 processed 计数日志。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

@@ -1,0 +1,30 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-009"
+  case_name: "ALLDEMO_ALL_PAGE_OPS_RUN_ENTRIES"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "所有界面必须先有统一 page_ops 运行入口，后续才能逐页把 legacy 实现替换成独立 page_xxx.c，而不是继续在主入口里加分支。"
+  scope:
+    - "扩展 page_impl_kind_t，新增 PAGE_IMPL_LEGACY_PROXY。"
+    - "新增 src/pages/page_legacy_proxy.c，为尚未迁移的页面提供统一 legacy proxy run 函数。"
+    - "page_ops.c 为全部已登记页面补齐 run 入口：已迁移页面使用 standalone，未迁移页面使用 legacy proxy。"
+    - "轻量 src/alldemo.c 对任意带 run 的 page_ops 直接执行，避免主入口继续理解具体页面类型。"
+    - "CMakeLists.txt 将 page_legacy_proxy.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不声称 legacy proxy 页面已经完成真实实现体迁移。"
+    - "本阶段不改变 legacy 页面原有媒体链路、视觉效果或资产加载方式。"
+    - "本阶段不改变客户循环和工程循环顺序。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 4s ./scripts/run_alldemo.sh --only VI 可以通过 page_ops legacy proxy 进入原 VI 页面，VI/resize 帧计数增长。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only VENC 仍走 standalone info 页面。"
+    - "timeout -s INT -k 3s 5s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI 可以通过 legacy proxy 进入原 live 页面，VI/suppress/resize 帧计数增长。"
+    - "timeout -s INT -k 3s 4s ./scripts/run_alldemo.sh --customer-demo 可以继续 fork --only VI 子页。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "新增页面必须直接使用 PAGE_IMPL_STANDALONE，不再新增 PAGE_IMPL_LEGACY_PROXY。"
+    - "迁移旧页面时，只把 page_ops.c 中对应条目从 legacy proxy 改为 standalone 专用 run。"
+    - "legacy proxy 仅用于保持行为不破坏，验收记录必须注明它不是实现体迁移完成。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

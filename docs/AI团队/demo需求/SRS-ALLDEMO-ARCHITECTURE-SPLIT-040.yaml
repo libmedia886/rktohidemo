@@ -1,0 +1,31 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-040"
+  case_name: "ALLDEMO_STANDALONE_TRANSFORM_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "TRANSFORM 页面应从 legacy main 兜底迁出，保留真实 4K 相机输入和 LUT 变换模式切换。"
+  scope:
+    - "新增 src/pages/page_transform.c，提供 page_transform_run。"
+    - "页面创建真实绑定链：VI 3840x2160 -> VPSS -> TRANSFORM LUT -> RESIZE_RGA 1072x608 -> VO。"
+    - "运行时每秒切换 RAW、UNDISTORT、ROTATE ZOOM、PERSPECTIVE 四种 LUT。"
+    - "日志输出 VI/VPSS/TRANSFORM/RESIZE_RGA/VO 帧计数。"
+    - "page_ops.c 将 TRANSFORM 注册为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_transform.c 编入 alldemo。"
+    - "page_registry.c 更新 TRANSFORM 页面描述。"
+  non_scope:
+    - "本阶段不迁移 legacy TRANSFORM 的 OSD 中文叠字和四宫格说明面板。"
+    - "本阶段不修改媒体 SDK 的 TRANSFORM 接口。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only TRANSFORM 可以进入 standalone 页面。"
+    - "运行日志显示四种 LUT mode 切换，VI/VPSS/TRANSFORM/RESIZE_RGA/VO 帧计数增长。"
+    - "退出时 VI、VPSS、TRANSFORM、RESIZE_RGA、VO 与 pool 2/14/15/9 均释放。"
+    - "注册表中所有 page_desc 均能在 page_ops 中找到 standalone 实现。"
+    - "上一个已拆页面短探针仍可运行。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "TRANSFORM standalone 必须使用真实 VI/VPSS/TRANSFORM/RESIZE_RGA/VO 链路，不能回落到 legacy main。"
+    - "验收以模块帧计数增长、LUT mode 切换和 pool 释放为准。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

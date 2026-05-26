@@ -1,0 +1,31 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-051"
+  case_name: "ALLDEMO_STANDALONE_DEHAZE_VI_PAGES"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "CAP_DEHAZE 和 DCP_FAST_DEHAZE 页面拆分后必须保持原测试例子的真实摄像头 VI 输入，并在屏幕 OSD 上保留链路说明、性能状态和帧计数。"
+  scope:
+    - "将 CAP_DEHAZE 从 legacy proxy 切到 standalone live 页面，保留 CAP_DEHAZE_OFFLINE 作为离线样张页面。"
+    - "将 DCP_FAST_DEHAZE 从 legacy proxy 切到 standalone live 页面。"
+    - "CAP_DEHAZE live 链路使用 VI /dev/video-camera0 1920x1080 -> CSC_RGA BGR888 -> CAP_DEHAZE -> RESIZE_RGA 1080x608 -> OSD -> VO。"
+    - "DCP_FAST_DEHAZE live 链路使用 VI /dev/video-camera0 1920x1080 -> RESIZE_RGA 960x540 -> CSC_RGA BGR888 -> DCP_FAST_DEHAZE -> RESIZE_RGA 1080x608 -> OSD -> VO。"
+    - "两个页面运行时交替 passthrough/enhance，终端和 OSD 均能看到 overlay=perf_text、CPU/GPU/RGA 状态和 VI/CSC/DEHAZE/RESIZE_RGA/OSD/VO 帧计数。"
+    - "page_ops.c 将 CAP_DEHAZE 和 DCP_FAST_DEHAZE 注册为 PAGE_IMPL_STANDALONE。"
+  non_scope:
+    - "本阶段不修改 CAP_DEHAZE_OFFLINE 的离线样张渲染逻辑。"
+    - "本阶段不修改 CAP_DEHAZE/DCP_FAST_DEHAZE SDK 算法实现。"
+    - "本阶段不承诺 1280x720 DCP 实时处理；验收处理尺寸为 960x540。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only CAP_DEHAZE 可以进入真实 VI standalone 页面。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only DCP_FAST_DEHAZE 可以进入真实 VI standalone 页面。"
+    - "CAP/DCP 运行日志显示 standalone=1、overlay=perf_text，VI/CSC/DEHAZE/RESIZE_RGA/OSD/VO 帧计数增长。"
+    - "运行日志不得出现 CSC_RGA 输出 buffer 持续申请失败；退出后各 pool 正常销毁。"
+    - "退出后无 run_alldemo.sh 或 alldemo 残留进程。"
+  developer_rule_after_this_stage:
+    - "原测试例子使用摄像头 VI 的页面，standalone 迁移时必须继续使用真实 VI，不能替换成 page_surface 合成图案。"
+    - "实时链路页面必须保留屏幕 OSD 说明和性能/计数信息，不能只依赖终端 printf。"
+    - "绑定模块前必须确认真实端口名；CAP_DEHAZE/DCP_FAST_DEHAZE 输入端口为 input，不是 input0。"
+    - "DCP_FAST_DEHAZE live 页面需要用 960x540 预处理尺寸避免 CSC_RGA 输出池后压。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

@@ -1,0 +1,30 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-014"
+  case_name: "ALLDEMO_STANDALONE_RETINEX_OFFLINE_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "RETINEX_OFFLINE 离线低照度增强页应从 legacy proxy 迁出，独立扫描素材并保留真实 MEDIA_RETINEX 模块处理路径。"
+  scope:
+    - "新增 src/pages/page_retinex_offline.c，基于 page_surface 独立创建显示面。"
+    - "页面扫描 assets/loop/retinex/exdark 下前 100 张 JPEG 样本。"
+    - "页面创建 MEDIA_RETINEX 真实模块，展示 EXDark input 与 Retinex gain=40 output 对比。"
+    - "page_ops.c 将 RETINEX_OFFLINE 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_retinex_offline.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不迁移实时 VI RETINEX 页面。"
+    - "本阶段不抽取通用 JPEG/PNG loader；先保持页面内 JPEG loader，后续离线素材页增加后再统一。"
+    - "本阶段不改变客户循环或工程循环页面顺序。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 6s ./scripts/run_alldemo.sh --only RETINEX_OFFLINE 可以进入 standalone 页面。"
+    - "RETINEX_OFFLINE standalone 页面必须显示 module=live，samples=100，retinex_frames 随样本切换增长。"
+    - "退出时 RETINEX 模块和输入/display pool 均释放。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only TNR_CL 仍可运行真实模块 standalone 页面。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "离线图片效果页迁移时必须保留真实模块处理路径和素材数量检查。"
+    - "样本型页面应在 console 输出 sample index、file name、processed count，便于无屏验收。"
+    - "实时版和离线版页面分阶段迁移，避免把 camera/bind 重构和离线页面重构混在一起。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

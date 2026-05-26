@@ -1,0 +1,42 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-007"
+  case_name: "ALLDEMO_STANDALONE_INFO_PAGES"
+  date: "2026-05-26"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "git diff --check -- CMakeLists.txt src/pages/page_ops.c src/pages/page_info.c src/pages/page_surface.c src/pages/page_surface.h src/pages/page_license.c"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only VENC"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only RTSP_SEND"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only LICENSE"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 5s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected_with_cleanup_warning"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "pass_no_process"
+  observed_runtime:
+    standalone_info_pages:
+      - "VENC and RTSP_SEND now bypass legacy main and use page_info standalone rendering."
+      - "Both info pages print page_registry flow/showcase notes and reach frame 60."
+    standalone_special_pages:
+      - "LICENSE remains a dedicated standalone page and reaches frame 60."
+    legacy_regression:
+      - "HIGHLIGHT_SUPPRESS_VI remains on legacy live path and reaches vi=119/suppress=119/resize=119."
+      - "Forced timeout observed pool_id=15 buffer cleanup warning on HIGHLIGHT_SUPPRESS output pool; no residual process remained."
+  acceptance_limits:
+    - "This stage accepts standalone info-page wiring for probe/info pages only."
+    - "It does not claim VENC/VDEC/RTSP/AVM/SVM3D real processing chains are implemented as standalone pages."

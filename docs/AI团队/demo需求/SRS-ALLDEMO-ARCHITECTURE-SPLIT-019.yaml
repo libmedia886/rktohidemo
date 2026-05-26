@@ -1,0 +1,30 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-019"
+  case_name: "ALLDEMO_STANDALONE_BLEND_PYR_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "BLEND_PYR 金字塔融合页应从 legacy proxy 迁出，独立加载输入和 mask，并保留真实 MEDIA_BLEND_PYR 模块输出。"
+  scope:
+    - "新增 src/pages/page_blend_pyr.c，基于 page_surface 独立创建显示面。"
+    - "页面加载 EDOF 样本作为融合输入源，并生成左右清晰输入、线性 mask 参考和 BLEND_PYR 输出。"
+    - "页面创建 MEDIA_BLEND_PYR 真实模块，设置 mask 后通过 input0/input1 送帧并取 output0。"
+    - "page_ops.c 将 BLEND_PYR 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_blend_pyr.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不迁移 AVM2D、PANO 或其他剩余 legacy proxy 页面。"
+    - "本阶段不改动 BLEND_PYR SDK 接口或模块内部 mask 生命周期。"
+    - "本阶段不改变客户循环或工程循环页面顺序。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only BLEND_PYR 可以进入 standalone 页面。"
+    - "BLEND_PYR standalone 页面必须显示 module=live，samples=3，updates 随样本切换增长。"
+    - "退出时 BLEND_PYR 模块和 mask/input/output/display pool 均释放。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only MCF_FUSION_CL 仍可运行真实模块 standalone 页面。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "需要 mask 的双输入融合页面迁移时，必须验证 SetMask/GetMaskStatus 后再 Enable 模块。"
+    - "页面日志必须包含 sample、updates、mode、mask 和 standalone 标记。"
+    - "线性融合参考只能作为显示对照，不能替代真实 BLEND_PYR 输出验收。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

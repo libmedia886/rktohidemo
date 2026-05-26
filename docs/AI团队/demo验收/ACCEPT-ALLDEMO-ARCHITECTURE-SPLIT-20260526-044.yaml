@@ -1,0 +1,31 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-044"
+  case_name: "ALLDEMO_STANDALONE_OSD_INFO_PARITY"
+  date: "2026-05-26"
+  status: "Accepted"
+  validation_commands:
+    - command: "git diff --check -- CMakeLists.txt src/pages/page_overlay.c src/pages/page_overlay.h src/pages/page_vpss.c src/pages/page_osd.c src/pages/page_transform.c"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "timeout -s INT -k 3s 7s ./scripts/run_alldemo.sh --only VPSS"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "timeout -s INT -k 3s 7s ./scripts/run_alldemo.sh --only OSD"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only TRANSFORM"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+  observed_runtime:
+    vpss:
+      - "VPSS overlay=perf_text vi=128 vpss=128 vmix=128 osd=99 vo=97."
+    osd:
+      - "OSD overlay=perf_text vi=182 resize=182 osd=182 vmix=154 vo=152."
+    transform:
+      - "TRANSFORM overlay=perf_text vi=180 vpss=180 transform=179 resize=179 osd=150 vo=150."
+  acceptance_limits:
+    - "本阶段确认 VPSS/OSD/TRANSFORM 的说明 OSD 恢复；其他 legacy proxy 页面仍由 legacy 原链路负责显示说明。"
+    - "后续每迁出一个 standalone 页面，都必须单独验收 OSD 说明层。"

@@ -1,0 +1,39 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-010"
+  case_name: "ALLDEMO_STANDALONE_VO_PAGE"
+  date: "2026-05-26"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "git diff --check -- CMakeLists.txt src/pages/page_vo.c src/pages/page_ops.c src/pages/page_ops.h src/pages/page_surface.c src/pages/page_surface.h src/alldemo.c"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 3s 7s ./scripts/run_alldemo.sh --only VO"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 20s ./scripts/run_alldemo.sh --only VO"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 5s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "pass_no_process"
+  observed_runtime:
+    vo_standalone:
+      - "VO no longer uses PAGE_IMPL_LEGACY_PROXY; it dispatches to page_vo_run."
+      - "Long probe reaches NORMAL, FREEZE MAIN, FREEZE PLANE, HIDE WARNING, and HIDE PLANE."
+      - "Logs show MEDIA_VO_FreezeMain, MEDIA_VO_FreezePlane, MEDIA_VO_HidePlane, and restore calls."
+    legacy_regression:
+      - "HIGHLIGHT_SUPPRESS_VI still reaches vi=120/suppress=119/resize=119 on the legacy path."
+    assets:
+      - "asset-check continues to pass after the VO migration."
+  acceptance_limits:
+    - "This stage accepts the VO standalone functional page only."
+    - "It does not claim remaining PAGE_IMPL_LEGACY_PROXY pages are migrated."

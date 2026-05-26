@@ -1,0 +1,30 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-023"
+  case_name: "ALLDEMO_STANDALONE_CAP_DEHAZE_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "CAP_DEHAZE 页面应从 legacy proxy 迁出，复用已验证的素材输入和真实 MEDIA_CAP_DEHAZE 模块，后续再接共享实时摄像头链路。"
+  scope:
+    - "在 src/pages/page_cap_dehaze_offline.c 中提炼通用 CAP dehaze runner。"
+    - "新增 page_cap_dehaze_run，使用 CAP_DEHAZE 页面名和 CAP DEHAZE 标题。"
+    - "保留 page_cap_dehaze_offline_run 原有页面名和标题。"
+    - "page_ops.c 将 CAP_DEHAZE 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CAP_DEHAZE 和 CAP_DEHAZE_OFFLINE 均使用 assets/loop/cap_dehaze 三张样本和 MEDIA_CAP_DEHAZE_66。"
+  non_scope:
+    - "本阶段不恢复 CAP_DEHAZE 的实时 VI/VPSS 输入链路。"
+    - "本阶段不改变 MEDIA_CAP_DEHAZE 参数和 SDK 接口。"
+    - "本阶段不迁移 DCP_FAST_DEHAZE 或其他剩余页面。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only CAP_DEHAZE 可以进入 standalone 页面。"
+    - "CAP_DEHAZE standalone 页面必须显示 module=live，samples=3，cap_frames 随样本切换增长。"
+    - "退出时 CAP_DEHAZE 模块和 input/output/display pool 均释放。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only CAP_DEHAZE_OFFLINE 仍可运行原 standalone 页面。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "同一模块的在线页和 offline 页可以先共用独立 runner，但日志必须保留各自 page name。"
+    - "迁移实时效果页时，必须注明本阶段是否恢复摄像头链路。"
+    - "复用 runner 后必须回归原页面入口，避免把 offline 页面改坏。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

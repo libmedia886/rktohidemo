@@ -1,0 +1,23 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-043"
+  case_name: "ALLDEMO_STANDALONE_OSD_VI_PAGE"
+  date: "2026-05-26"
+  status: "Accepted"
+  validation_commands:
+    - command: "git diff --check -- src/pages/page_osd.c src/pages/page_ops.c"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "timeout -s INT -k 3s 10s ./scripts/run_alldemo.sh --only OSD"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+  observed_runtime:
+    osd_standalone:
+      - "OSD standalone opened VI /dev/video-camera0 3840x2160 and bound VI -> RESIZE_RGA -> OSD -> VMIX -> VO."
+      - "Frame counters grew to vi=277 resize=277 osd=277 vmix=277 vo=277."
+      - "Cleanup stopped VI and destroyed pools 8/7/9/2."
+  acceptance_limits:
+    - "本阶段只验收 OSD 真实 VI standalone 页面。"
+    - "不声明 legacy OSD 的全部中文说明 OSD 已迁移。"

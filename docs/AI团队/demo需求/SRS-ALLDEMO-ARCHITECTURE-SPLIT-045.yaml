@@ -1,0 +1,26 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-045"
+  case_name: "ALLDEMO_STANDALONE_RESIZE_RGA_VI_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "RESIZE_RGA 页面拆分后必须继续使用真实摄像头 VI 输入，并保留屏幕上的流程、性能和动态裁剪说明。"
+  scope:
+    - "重写 src/pages/page_resize_rga.c，替换 page_surface 合成 NV12 图案实现。"
+    - "创建真实绑定链：VI 3840x2160 -> RESIZE_RGA 动态 crop/scale 1080x608 -> OSD -> VO。"
+    - "每 2 秒按原 legacy resize_demo_params_for_frame 逻辑重配裁剪窗口。"
+    - "OSD 文本显示标题、数据流、CPU/GPU/RGA、crop/zoom 和 VI/RESIZE_RGA/OSD/VO 帧计数。"
+    - "page_ops.c 将 RESIZE_RGA 注册为 PAGE_IMPL_STANDALONE。"
+  non_scope:
+    - "本阶段不迁移 legacy RESIZE_RGA 的全部中文说明面板。"
+    - "本阶段不修改 RESIZE_RGA SDK 接口或新增运行时 SetAttr API。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only RESIZE_RGA 可以进入 standalone 页面。"
+    - "运行日志显示 standalone=1、overlay=perf_text，VI/RESIZE_RGA/OSD/VO 帧计数增长。"
+    - "运行日志显示至少一次动态 crop 重配成功。"
+    - "退出后无 run_alldemo.sh 或 alldemo 残留进程。"
+  developer_rule_after_this_stage:
+    - "RESIZE_RGA standalone 必须使用真实 VI 输入，不能回到 page_surface 合成图案。"
+    - "实时链路页面迁移时必须保留屏幕 OSD 说明，不能只输出终端 printf。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

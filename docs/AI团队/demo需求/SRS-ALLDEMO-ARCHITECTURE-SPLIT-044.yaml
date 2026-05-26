@@ -1,0 +1,27 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-044"
+  case_name: "ALLDEMO_STANDALONE_OSD_INFO_PARITY"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "页面拆分后不能只保留媒体链路，还必须保留屏幕上的说明、流程和 CPU/GPU/RGA 运行状态信息。"
+  problem_statement:
+    - "部分 standalone 页面虽然恢复了真实 VI 链路，但丢失了 legacy 页面上的说明 OSD、性能占用和流程文字。"
+    - "如果只依赖终端 printf，现场演示时看屏幕无法理解当前模块、数据流和运行负载。"
+  scope:
+    - "新增 pages 公用 page_overlay 工具，提供文本 mask OSD 和 CPU/GPU/RGA 占用读取。"
+    - "VPSS standalone 增加 OSD 文本：标题、CPU/GPU/RGA、数据流和帧计数。"
+    - "OSD standalone 增加 OSD 文本：标题、CPU/GPU/RGA、数据流和帧计数。"
+    - "TRANSFORM standalone 增加 OSD 模块，并叠加标题、CPU/GPU/RGA、数据流、mode 和帧计数。"
+  non_scope:
+    - "本阶段先用 ASCII 文本恢复现场可读信息，不一次性迁移 legacy 全量中文说明面板。"
+    - "本阶段不修改媒体 SDK 的 OSD 接口。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "--only VPSS 日志显示 overlay=perf_text 且 VI/VPSS/VMIX/OSD/VO 帧计数增长。"
+    - "--only OSD 日志显示 overlay=perf_text 且 VI/RESIZE_RGA/OSD/VMIX/VO 帧计数增长。"
+    - "--only TRANSFORM 日志显示 overlay=perf_text 且 VI/VPSS/TRANSFORM/RESIZE_RGA/OSD/VO 帧计数增长。"
+  developer_rule_after_this_stage:
+    - "迁移 standalone 页面时，验收必须包含屏幕说明层；不能只用终端日志替代 OSD。"
+    - "实时链路页面应显示模块名、数据流、关键参数、CPU/GPU/RGA 或等效性能状态。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

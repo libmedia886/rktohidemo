@@ -4,3 +4,7 @@ build/
 core
 core.*
 vo_captures/
+recordings/
+assets/eis/*.mp4
+assets/loop/endoscope_cleanview/*.mp4
+assets/loop/endoscope_cleanview/*.nv12

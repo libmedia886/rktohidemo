@@ -1,0 +1,37 @@
+product_brief:
+  case_name: "ALLDEMO_ARCHITECTURE_SPLIT"
+  target_user: "AllDemo 开发人员、现场演示维护人员和后续页面功能实现人员"
+  demo_goal: "把当前过大的 src/alldemo.c 拆成围绕“单页”和“循环播放”的结构，让后续新增页面先实现可独立运行的 --only 单页，再按页表进入客户或工程循环播放。"
+  first_screen_message: "AllDemo 的主工作方式是单页可独立验证、循环播放只负责调度单页，不再把页面逻辑和轮播控制混在同一大文件里。"
+  must_show:
+    - "保留 --only <page> 作为每个页面的开发、调试和验收入口。"
+    - "保留无参数默认客户演示循环，并保留 --customer-demo 和 --engineering-demo 两个循环页表。"
+    - "循环播放通过子进程复用 --only 单页，避免循环调度直接复制页面实现。"
+    - "页面清单、页码、别名、摄像头输入需求要有统一登记入口。"
+    - "第一阶段拆分必须保持现有页面行为，不做视觉重设计。"
+  should_show:
+    - "后续每个新功能按 PRODUCT/SRS/IMPL/ACCEPT 记录，先单页跑通，再加入循环页表。"
+    - "页面相关代码逐步迁移到 pages/page_*.c；公共媒体链路、OSD 绘制、素材加载再分阶段下沉。"
+    - "循环播放模块只关心页表、停留时间、手动翻页、子进程生命周期和导航环境变量。"
+  avoid_showing:
+    - "不在第一阶段一次性迁移所有页面实现，避免引入大范围回归。"
+    - "不改变 /userdata/rktohi 源码和 libmedia API。"
+    - "不把文档拆分等同于运行验证；每阶段必须有编译和短运行证明。"
+  architecture_direction:
+    single_page: "--only <page> 是真实页面实现入口，页面自己负责输入、bind 链路、OSD、资源加载和退出清理。"
+    loop_playback: "客户/工程循环只选择页表并启动对应 --only 子进程，页码和模式通过环境变量传给单页。"
+    page_registry: "页面清单集中登记，提供页码、总页数、默认循环索引、别名、摄像头输入尺寸等查询。"
+    future_layout:
+      - "src/app/page_registry.[ch]"
+      - "src/app/loop_player.[ch]"
+      - "src/app/page_runner.[ch]"
+      - "src/media/*.c"
+      - "src/ui/*.c"
+      - "src/pages/page_*.c"
+  acceptance_feel:
+    - "开发人员能从文件名判断一个改动属于页面、循环播放、媒体公共能力还是 UI 绘制。"
+    - "新增一个页面时，最小路径是新增 page 文件、登记 page_registry、单页验证、再决定是否加入循环。"
+    - "默认客户演示和现有 --only 单页不因拆文件而退化。"
+  product_defects: []
+  product_verdict: "Need Incremental Implementation"
+  next_skill: "alldemo-requirements-boundary"

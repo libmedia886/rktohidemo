@@ -1,0 +1,29 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-010"
+  case_name: "ALLDEMO_STANDALONE_VO_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "VO 页面应从 legacy proxy 迁出，成为第一个保留功能语义的普通功能页 standalone 实现，证明非 info 页面也可以逐页拆分。"
+  scope:
+    - "新增 src/pages/page_vo.c，基于 page_surface 独立实现 VO 页面。"
+    - "VO 页面保留正常刷新、冻结主输出、冻结平面、隐藏平面、自动恢复的核心演示语义。"
+    - "page_ops.c 将 VO 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_vo.c 编入 alldemo。"
+    - "退出时必须恢复 VO main/plane 冻结和隐藏状态。"
+  non_scope:
+    - "本阶段不迁移 VI/VPSS/WBC 等 camera/bind 页面。"
+    - "本阶段不复制 legacy VO 页的中文 FreeType 视觉排版，只保留功能状态和 API 演示。"
+    - "本阶段不改变客户循环或工程循环页面顺序。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 20s ./scripts/run_alldemo.sh --only VO 可以进入 VO standalone 页面，状态机覆盖 NORMAL、FREEZE MAIN、FREEZE PLANE、HIDE WARNING、HIDE PLANE。"
+    - "VO 长窗口退出时调用恢复接口，解除 freeze/hide 状态。"
+    - "timeout -s INT -k 3s 5s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI 仍可运行 legacy live 页面，帧计数增长。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "功能页迁移优先复用 page_surface，不再复制 MEDIA_SYS/VO/pool 送帧样板。"
+    - "从 legacy proxy 迁出的页面必须保留核心行为语义，并用运行日志证明。"
+    - "涉及 VO freeze/hide 的页面退出前必须显式恢复状态。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

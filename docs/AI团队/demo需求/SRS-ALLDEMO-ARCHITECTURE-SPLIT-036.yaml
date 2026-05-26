@@ -1,0 +1,30 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-036"
+  case_name: "ALLDEMO_STANDALONE_HIGHLIGHT_SUPPRESS_VI_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "HIGHLIGHT_SUPPRESS_VI 页面应从 legacy proxy 迁出，保留真实 4K 相机输入和 bypass/高光压制切换。"
+  scope:
+    - "新增 src/pages/page_highlight_suppress_vi.c，提供 page_highlight_suppress_vi_run。"
+    - "页面创建真实绑定链：VI 3840x2160 -> HIGHLIGHT_SUPPRESS -> RESIZE_RGA 1072x608 -> VO。"
+    - "运行时每秒切换 passthrough，实现 bypass 与 suppress 两种状态轮播。"
+    - "日志输出 VI、HIGHLIGHT_SUPPRESS、RESIZE_RGA、VO 帧计数及模块性能。"
+    - "page_ops.c 将 HIGHLIGHT_SUPPRESS_VI 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_highlight_suppress_vi.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不迁移 EIS、EIS_VI、NPU 页面。"
+    - "本阶段不修改媒体 SDK 的高光压制接口。"
+    - "本阶段不恢复 legacy 里的 VMIX/OSD 叠字链路。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI 可以进入 standalone 页面。"
+    - "运行日志显示 bypass 与 suppress 两种模式切换，VI/HIGHLIGHT_SUPPRESS/RESIZE_RGA/VO 帧计数增长。"
+    - "退出时 VI、HIGHLIGHT_SUPPRESS、RESIZE_RGA、VO 与 pool 2/15/9 均释放。"
+    - "上一个已拆页面短探针仍可运行。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "HIGHLIGHT_SUPPRESS_VI standalone 必须使用真实 VI 绑定链，不能回落到 legacy proxy。"
+    - "验收以模块帧计数增长、bypass/suppress 切换和 pool 释放为准。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

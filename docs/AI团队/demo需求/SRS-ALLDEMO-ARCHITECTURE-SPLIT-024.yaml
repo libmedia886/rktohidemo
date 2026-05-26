@@ -1,0 +1,30 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-024"
+  case_name: "ALLDEMO_STANDALONE_RETINEX_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "RETINEX 页面应从 legacy proxy 迁出，复用 EXDark 样本和真实 MEDIA_RETINEX 模块，先完成单页独立化。"
+  scope:
+    - "在 src/pages/page_retinex_offline.c 中提炼通用 RETINEX runner。"
+    - "新增 page_retinex_run，使用 RETINEX 页面名和 RETINEX 标题。"
+    - "保留 page_retinex_offline_run 原有页面名和标题。"
+    - "page_ops.c 将 RETINEX 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "RETINEX 和 RETINEX_OFFLINE 均使用 assets/loop/retinex/exdark 样本和 MEDIA_RETINEX_73。"
+  non_scope:
+    - "本阶段不恢复 RETINEX 的实时 VI/VPSS 输入链路。"
+    - "本阶段不改变 MEDIA_RETINEX 参数和 SDK 接口。"
+    - "本阶段不迁移 CLAHE 或其他剩余页面。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only RETINEX 可以进入 standalone 页面。"
+    - "RETINEX standalone 页面必须显示 module=live，samples=100，retinex_frames 随样本切换增长。"
+    - "退出时 RETINEX 模块和 input/display pool 均释放。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only RETINEX_OFFLINE 仍可运行原 standalone 页面。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "同一图像增强模块的在线页和 offline 页可以共用 runner，但日志必须保留入口 page name。"
+    - "复用 offline 样本迁移在线入口时，验收必须注明实时摄像头链路不在本阶段范围。"
+    - "OpenCL 模块页验收必须观察 module=live、处理计数增长和资源释放。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

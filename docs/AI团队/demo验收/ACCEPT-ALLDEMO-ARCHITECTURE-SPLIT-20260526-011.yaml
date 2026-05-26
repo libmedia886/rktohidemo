@@ -1,0 +1,43 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-011"
+  case_name: "ALLDEMO_STANDALONE_HIGHLIGHT_SUPPRESS_PAGE"
+  date: "2026-05-26"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "git diff --check -- CMakeLists.txt src/pages/page_highlight_suppress.c src/pages/page_ops.c docs/AI团队/demo需求/SRS-ALLDEMO-ARCHITECTURE-SPLIT-011.yaml docs/AI团队/demo实现/IMPL-ALLDEMO-ARCHITECTURE-SPLIT-20260526-011.yaml docs/AI团队/demo验收/ACCEPT-ALLDEMO-ARCHITECTURE-SPLIT-20260526-011.yaml"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 3s 6s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 5s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only VO"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "pass_no_process"
+  observed_runtime:
+    highlight_suppress_standalone:
+      - "HIGHLIGHT_SUPPRESS no longer uses PAGE_IMPL_LEGACY_PROXY; it dispatches to page_highlight_suppress_run."
+      - "Standalone page creates MEDIA_HIGHLIGHT_SUPPRESS_120 with 640x640 NV12 input/output ports."
+      - "Probe reaches frames=120 processed=120, showing real module processing rather than fallback drawing only."
+      - "OpenCL/EGL backend is enabled, gpu=1 and kernel/queue perf values are reported."
+      - "Shutdown removes HIGHLIGHT_SUPPRESS_120 and destroys pool 7, pool 6, and display pool 1."
+    regression:
+      - "HIGHLIGHT_SUPPRESS_VI remains on the legacy path and reaches vi=120/suppress=120/resize=119."
+      - "VO standalone short probe continues to run and exits with restore calls."
+    assets:
+      - "asset-check continues to pass after the HIGHLIGHT_SUPPRESS migration."
+  acceptance_limits:
+    - "This stage accepts only the synthetic HIGHLIGHT_SUPPRESS standalone page."
+    - "HIGHLIGHT_SUPPRESS_VI is intentionally not migrated in this stage."
+    - "It does not claim remaining PAGE_IMPL_LEGACY_PROXY pages are migrated."

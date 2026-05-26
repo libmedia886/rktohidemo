@@ -1,0 +1,30 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-013"
+  case_name: "ALLDEMO_STANDALONE_TNR_CL_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "TNR_CL 合成降噪页应从 legacy proxy 迁出，成为独立页面文件，并保留真实 OpenCL 时域降噪模块处理路径。"
+  scope:
+    - "新增 src/pages/page_tnr_cl.c，基于 page_surface 独立创建显示面。"
+    - "页面加载 assets/loop/tnr_cl/synthetic_random_spatial_noise_640x640_120.nv12。"
+    - "页面创建 MEDIA_TNR_CL 真实模块，展示 noisy input 与 temporal output 对比。"
+    - "page_ops.c 将 TNR_CL 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_tnr_cl.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不迁移 camera/bind 类页面。"
+    - "本阶段不改变客户循环或工程循环页面顺序。"
+    - "本阶段不抽取通用 NV12 module page runtime；先保持 TNR_CL 页面局部实现，等更多同类页稳定后再归并。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 6s ./scripts/run_alldemo.sh --only TNR_CL 可以进入 standalone 页面。"
+    - "TNR_CL standalone 页面必须显示 module=live，asset_frames=120，processed 计数随 frames 增长。"
+    - "退出时 TNR_CL 模块和输入/输出/display pool 均释放。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only THERMAL 仍可运行 standalone THERMAL 页面。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "合成 NV12 效果页迁移时必须保留真实模块处理路径，不能只做静态说明页。"
+    - "同类页面继续使用 pool 6/7 作为 standalone 工作池，并避免和 display pool 1 冲突。"
+    - "每迁出一个页面，都要跑至少一个已迁出页面回归，确认 page_ops 调度未受影响。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

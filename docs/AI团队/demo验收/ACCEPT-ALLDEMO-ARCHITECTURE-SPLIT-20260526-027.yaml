@@ -1,0 +1,39 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-027"
+  case_name: "ALLDEMO_STANDALONE_CONV_CL_PAGE"
+  date: "2026-05-26"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "git diff --check -- CMakeLists.txt src/pages/page_ops.c src/pages/page_conv_cl.c docs/AI团队/demo需求/SRS-ALLDEMO-ARCHITECTURE-SPLIT-027.yaml docs/AI团队/demo实现/IMPL-ALLDEMO-ARCHITECTURE-SPLIT-20260526-027.yaml docs/AI团队/demo验收/ACCEPT-ALLDEMO-ARCHITECTURE-SPLIT-20260526-027.yaml"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only CONV_CL"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only DCP_FAST_DEHAZE"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "pass_no_process"
+  observed_runtime:
+    conv_cl_standalone:
+      - "CONV_CL no longer uses PAGE_IMPL_LEGACY_PROXY; it dispatches to page_conv_cl_run."
+      - "Standalone page creates CONV_CL_68 with RGBA8888 input and 3x3 sharpen kernel."
+      - "Probe reports module=live and processed grows from 30 to 150."
+      - "OpenCL gpu kernel/queue perf is printed."
+      - "Shutdown removes CONV_CL_68 and destroys pool 7, pool 6, and display pool 1."
+    regression:
+      - "DCP_FAST_DEHAZE standalone short probe continues to run with module=live."
+    assets:
+      - "asset-check continues to pass after the CONV_CL migration."
+  acceptance_limits:
+    - "This stage accepts CONV_CL as a standalone synthetic-input module page."
+    - "It does not claim the four-way realtime VPSS/CSC/VMIX comparison chain has been reimplemented outside legacy."
+    - "It does not claim remaining PAGE_IMPL_LEGACY_PROXY pages are migrated."

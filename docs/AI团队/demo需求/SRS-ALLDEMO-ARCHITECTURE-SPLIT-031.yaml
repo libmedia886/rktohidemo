@@ -1,0 +1,29 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-031"
+  case_name: "ALLDEMO_STANDALONE_OSD_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "OSD 页面应从 legacy proxy 迁出，使用单页文件验证动态 region overlay，方便后续新增页面。"
+  scope:
+    - "新增 src/pages/page_osd.c，提供 page_osd_run。"
+    - "页面生成 synthetic 640x640 NV12 输入。"
+    - "创建 MEDIA_OSD_60，动态更新 5 个 rect region。"
+    - "页面显示输入、OSD 输出、processed 计数和 module live/fallback 状态。"
+    - "page_ops.c 将 OSD 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_osd.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不恢复 VI -> OSD -> VMIX/VO 的实时绑定链路。"
+    - "本阶段不迁移 VI、VPSS、VMIX、WBC、NPU、EIS 系列页面。"
+    - "本阶段不修改媒体 SDK 的 OSD 接口。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only OSD 可以进入 standalone 页面并显示 processed 增长。"
+    - "退出时 OSD 模块、input/output/display pool 均释放。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only RGA 仍可运行真实模块 standalone 页面。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "OSD standalone 使用真实 MEDIA_OSD_SendFrame/GetFrame，不用 legacy proxy。"
+    - "动态 overlay 类页面应在 standalone 文件内维护 region update 和 processed 日志。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

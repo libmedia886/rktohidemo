@@ -1,0 +1,36 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-012"
+  case_name: "ALLDEMO_STANDALONE_THERMAL_PAGE"
+  date: "2026-05-26"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "git diff --check -- CMakeLists.txt src/pages/page_ops.c src/pages/page_thermal.c docs/AI团队/demo需求/SRS-ALLDEMO-ARCHITECTURE-SPLIT-012.yaml docs/AI团队/demo实现/IMPL-ALLDEMO-ARCHITECTURE-SPLIT-20260526-012.yaml docs/AI团队/demo验收/ACCEPT-ALLDEMO-ARCHITECTURE-SPLIT-20260526-012.yaml"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 3s 5s ./scripts/run_alldemo.sh --only THERMAL"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "pass_no_process"
+  observed_runtime:
+    thermal_standalone:
+      - "THERMAL no longer uses PAGE_IMPL_LEGACY_PROXY; it dispatches to page_thermal_run."
+      - "Standalone page loads 2 thermal PNG assets and renders 16 pseudo-color modes."
+      - "Probe reaches frames=60 and releases display pool 1 on shutdown."
+    regression:
+      - "HIGHLIGHT_SUPPRESS standalone real module path remains live, reaching processed=60."
+    assets:
+      - "asset-check continues to pass after the THERMAL migration."
+  acceptance_limits:
+    - "This stage accepts only the THERMAL standalone page."
+    - "It does not claim remaining PAGE_IMPL_LEGACY_PROXY pages are migrated."

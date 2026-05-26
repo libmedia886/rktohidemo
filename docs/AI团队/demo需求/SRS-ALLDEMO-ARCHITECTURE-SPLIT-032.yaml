@@ -1,0 +1,30 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-032"
+  case_name: "ALLDEMO_STANDALONE_VPSS_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "VPSS 页面应从 legacy proxy 迁出，使用单页文件验证多输出裁剪、缩放和翻转。"
+  scope:
+    - "新增 src/pages/page_vpss.c，提供 page_vpss_run。"
+    - "页面生成 synthetic 640x640 NV12 输入。"
+    - "创建 MEDIA_VPSS_63，输出 4 路 480x480 NV12。"
+    - "页面显示 FULL、CROP_ZOOM、FLIP、CENTER 四路输出和 processed 计数。"
+    - "page_ops.c 将 VPSS 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_vpss.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不恢复 VI -> VPSS -> VMIX/VO 的实时绑定链路。"
+    - "本阶段不迁移 VI、VMIX、WBC、NPU、EIS 系列页面。"
+    - "本阶段不修改媒体 SDK 的 VPSS 接口。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only VPSS 可以进入 standalone 页面并显示 processed 增长。"
+    - "日志 ready=1111 表示四路 VPSS 输出均取到帧。"
+    - "退出时 VPSS 模块、input/output/display pool 均释放。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only OSD 仍可运行真实模块 standalone 页面。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "VPSS standalone 使用真实 MEDIA_VPSS_Group_SendFrame 和各输出 GetFrame，不用 legacy proxy。"
+    - "多输出页面必须在日志中暴露每个输出 ready 状态。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

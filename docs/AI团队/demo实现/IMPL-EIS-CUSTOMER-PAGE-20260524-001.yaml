@@ -1,0 +1,33 @@
+implementation_record:
+  requirement_id: "SRS-EIS-CUSTOMER-PAGE-001"
+  case_name: "EIS_CUSTOMER_PAGE"
+  date: "2026-05-24"
+  status: "Implemented"
+  summary:
+    - "EIS 独立页已在 src/alldemo.c 中实现为 --only EIS 专用链路。"
+    - "输入为 assets/eis/eis_shaky_640x360.h264，页面内读取 Annex-B NAL 后送 VDEC。"
+    - "VDEC 输出进入 VPSS，VPSS 两路输出分别进入原始 VMIX 分支和 EIS GPU 分支。"
+    - "EIS 使用 crop_ratio=0.08、smoothing_window=15、estimate_width=320、search_radius=16、block_step=4。"
+    - "VMIX 将原始分支和 EIS 输出上下排列，OSD 叠加标题、数据流、分支标签和 GPU OpenCL 性能行。"
+    - "运行结束打印 VDEC/VPSS/EIS/VMIX/OSD/VO 帧计数和 EIS total/estimate/warp/fallback。"
+    - "README 和 effect_manifest.json 补充 EIS 独立页说明。"
+  changed_files:
+    alldemo:
+      - "README.md"
+      - "assets/effect_manifest.json"
+      - "docs/AI团队/demo需求/PRODUCT-EIS-CUSTOMER-PAGE.yaml"
+      - "docs/AI团队/demo需求/SRS-EIS-CUSTOMER-PAGE-001.yaml"
+      - "docs/AI团队/demo实现/IMPL-EIS-CUSTOMER-PAGE-20260524-001.yaml"
+      - "docs/AI团队/demo验收/ACCEPT-EIS-CUSTOMER-PAGE-20260524-001.yaml"
+  implementation_notes:
+    - "本轮不改 EIS 算法源码，只补独立页台账和演示说明。"
+    - "EIS 维持工程页/--only 展示，不默认加入客户轮播，避免现场默认循环过长。"
+    - "录制链路使用现有 wbc_h264_record 从 VO_WBC 抓取当前屏幕并编码 H264。"
+  issue_record:
+    - "docs/问题记录/20260523-1805-eis-vdec-demo-vdec-pool-size-must-match-mpp-info-change.md"
+    - "docs/问题记录/20260523-1805-eis-vdec-demo-must-drain-outputs-before-media-sys-exit.md"
+  validation_artifacts:
+    - "/tmp/alldemo_eis_srs001_build.log"
+    - "/tmp/alldemo_eis_srs001_run.log"
+    - "/tmp/alldemo_eis_srs001_record.log"
+    - "recordings/eis_vdec_vpss_vmix_osd_vo_wbc_20260524_*.mp4"

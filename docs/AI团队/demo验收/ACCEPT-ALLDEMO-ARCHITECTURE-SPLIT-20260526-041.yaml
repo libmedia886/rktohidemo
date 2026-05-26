@@ -1,0 +1,33 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-041"
+  case_name: "ALLDEMO_CAMERA_PAGE_VI_FIDELITY_GUARD"
+  date: "2026-05-26"
+  status: "Accepted"
+  validation_commands:
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only TRANSFORM"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only VPSS"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only CAP_DEHAZE"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "timeout -s INT -k 3s 10s ./scripts/run_alldemo.sh --only OSD"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+  observed_runtime:
+    transform:
+      - "TRANSFORM vi=181 vpss=181 transform=180 resize=180 vo=180 mode=UNDISTORT standalone=1."
+    vpss:
+      - "VPSS standalone=1 vi=242 vpss=242 vmix=242 osd=242 vo=242 outputs=4 tile=480x480."
+    cap_dehaze:
+      - "CAP_DEHAZE vi_frames=212 csc_frames=212 dehaze_frames=212 resize_frames=212 display_osd_frames=212."
+    osd:
+      - "OSD standalone=1 vi=277 resize=277 osd=277 vmix=277 vo=277 regions=8."
+  acceptance_limits:
+    - "本阶段恢复 camera 页面原始 VI 行为优先，VPSS/OSD 已完成真实 standalone VI 拆分，其余 restored_to_legacy_proxy 页面仍不声明完成 standalone VI 拆分。"
+    - "后续每迁移一个 camera 页面，必须重新从 legacy proxy 切回 PAGE_IMPL_STANDALONE 并完成运行探针。"

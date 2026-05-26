@@ -1,0 +1,39 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-006"
+  case_name: "ALLDEMO_STANDALONE_PAGE_SURFACE"
+  date: "2026-05-26"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "git diff --check -- CMakeLists.txt src/pages/page_surface.h src/pages/page_surface.c src/pages/page_license.c src/pages/page_ops.h src/pages/page_ops.c src/alldemo.c"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only LICENSE"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 5s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 4s ./scripts/run_alldemo.sh --customer-demo"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected_with_cleanup_warning"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "pass_no_process"
+  observed_runtime:
+    standalone_page_surface:
+      - "LICENSE continues to print standalone page banner and reaches frame 60."
+      - "page_surface handles display pool and VO lifecycle for LICENSE."
+    legacy_regression:
+      - "HIGHLIGHT_SUPPRESS_VI still reaches vi=119/suppress=119/resize=119 after page_surface extraction."
+      - "customer loop still forks --only VI; forced timeout run observed one pool_id=6 buffer cleanup warning, with no residual process."
+    assets:
+      - "asset-check continues to pass for loop/offline assets."
+  acceptance_limits:
+    - "This stage accepts the reusable standalone display surface only."
+    - "It does not claim camera/bind pages have been moved out of src/alldemo.c."

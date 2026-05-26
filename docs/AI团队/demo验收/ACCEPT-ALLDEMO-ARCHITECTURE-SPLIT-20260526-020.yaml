@@ -1,0 +1,38 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-020"
+  case_name: "ALLDEMO_STANDALONE_AVM2D_PAGE"
+  date: "2026-05-26"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "git diff --check -- CMakeLists.txt src/pages/page_ops.c src/pages/page_avm2d.c docs/AI团队/demo需求/SRS-ALLDEMO-ARCHITECTURE-SPLIT-020.yaml docs/AI团队/demo实现/IMPL-ALLDEMO-ARCHITECTURE-SPLIT-20260526-020.yaml docs/AI团队/demo验收/ACCEPT-ALLDEMO-ARCHITECTURE-SPLIT-20260526-020.yaml"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only AVM2D"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only BLEND_PYR"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "pass_no_process"
+  observed_runtime:
+    avm2d_standalone:
+      - "AVM2D no longer uses PAGE_IMPL_LEGACY_PROXY; it dispatches to page_avm2d_run."
+      - "Standalone page loads 25/25 four-camera video frame groups and two BEV output images."
+      - "Probe reports outputs=yes and frame counter growth from 30 to 120."
+      - "Shutdown destroys display pool 1 and exits media pipeline cleanly."
+    regression:
+      - "BLEND_PYR standalone short probe continues to run with module=live."
+    assets:
+      - "asset-check reports AVM2D 25/25 frames outputs=yes after the migration."
+  acceptance_limits:
+    - "This stage accepts only the AVM2D standalone asset-loop page."
+    - "It does not claim a real AVM2D algorithm module has been implemented."
+    - "It does not claim remaining PAGE_IMPL_LEGACY_PROXY pages are migrated."

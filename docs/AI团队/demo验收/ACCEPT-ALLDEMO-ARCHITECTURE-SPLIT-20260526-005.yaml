@@ -1,0 +1,40 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-005"
+  case_name: "ALLDEMO_FIRST_STANDALONE_PAGE"
+  date: "2026-05-26"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "git diff --check -- CMakeLists.txt src/alldemo.c src/pages/page_ops.h src/pages/page_ops.c src/pages/page_license.c src/app/page_registry.c src/app/tile_state.c src/app/tile_state.h"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only LICENSE"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 7s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 5s ./scripts/run_alldemo.sh --customer-demo"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "pass_no_process"
+  observed_runtime:
+    standalone_page:
+      - "--only LICENSE prints standalone page banner, proving page_ops dispatch bypasses legacy main."
+      - "LICENSE frames advance to 60 in the timeout probe."
+      - "LICENSE exits by destroying display pool and media pipeline."
+    legacy_regression:
+      - "HIGHLIGHT_SUPPRESS_VI still uses the legacy live bind path and reaches vi=150/suppress=150/resize=150."
+      - "customer demo still forks the default --only VI child page and reaches VI/resize frame count 119."
+    assets:
+      - "asset-check continues to pass for loop/offline assets."
+  acceptance_limits:
+    - "This stage accepts the standalone page mechanism and LICENSE migration only."
+    - "It does not claim all concrete page implementations have been moved out of src/alldemo.c."

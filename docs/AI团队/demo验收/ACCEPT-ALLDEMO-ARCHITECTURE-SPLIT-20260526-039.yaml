@@ -1,0 +1,40 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-039"
+  case_name: "ALLDEMO_STANDALONE_EIS_VI_PAGE"
+  date: "2026-05-26"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "git diff --check -- CMakeLists.txt src/pages/page_ops.c src/pages/page_eis_vi.c docs/AI团队/demo需求/SRS-ALLDEMO-ARCHITECTURE-SPLIT-039.yaml docs/AI团队/demo实现/IMPL-ALLDEMO-ARCHITECTURE-SPLIT-20260526-039.yaml docs/AI团队/demo验收/ACCEPT-ALLDEMO-ARCHITECTURE-SPLIT-20260526-039.yaml"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only EIS_VI"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only EIS"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "pass_no_process"
+  observed_runtime:
+    eis_vi_standalone:
+      - "EIS_VI no longer uses PAGE_IMPL_LEGACY_PROXY; it dispatches to page_eis_vi_run."
+      - "Standalone page creates VI_0, EIS_215, VPSS_216, and VO_0."
+      - "Probe reports VI/EIS/VPSS/VO frame counts growing from about 28 to 182."
+      - "Probe reports EIS stats with total/estimate/warp timing, comp values, and fallback=0."
+      - "Shutdown disconnects VPSS_216.output0 -> VO_0.input0, EIS_215.output -> VPSS_216.input, VI_0.output -> EIS_215.input, then destroys pool 2/1/0."
+    legacy_proxy:
+      - "grep PAGE_IMPL_LEGACY_PROXY returns no page_ops.c entries."
+    regression:
+      - "EIS standalone short probe continues to run with EIS stats and clean pool release."
+    assets:
+      - "asset-check continues to pass after the EIS_VI migration."
+  acceptance_limits:
+    - "本阶段只验收 EIS_VI standalone 实时相机稳像页面。"
+    - "不声明 legacy EIS_VI OSD 中文叠字已迁移。"

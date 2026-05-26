@@ -1,0 +1,31 @@
+implementation_summary:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-046"
+  case_name: "ALLDEMO_STANDALONE_RGA_VI_PAGE"
+  changed_files:
+    - "src/pages/page_rga.c"
+    - "src/pages/page_ops.c"
+    - "docs/AI团队/demo需求/SRS-ALLDEMO-ARCHITECTURE-SPLIT-046.yaml"
+    - "docs/AI团队/demo实现/IMPL-ALLDEMO-ARCHITECTURE-SPLIT-20260526-046.yaml"
+    - "docs/AI团队/demo验收/ACCEPT-ALLDEMO-ARCHITECTURE-SPLIT-20260526-046.yaml"
+  implementation_scope:
+    - "删除 RGA page_surface 合成画面路径，改为独立真实 VI 绑定链。"
+    - "配置 VI /dev/video-camera0 3840x2160@30fps，pool 2。"
+    - "配置 RGA_59 输出 1080x608 stride 1088，pool 9。"
+    - "配置 OSD_81 输出 1080x608，pool 8，叠加标题、流程、CPU/GPU/RGA、OP/crop 和帧计数。"
+    - "通过 MEDIA_RGA_SetGrpAttr 在绑定链路上切换 COPY/CROP_ZOOM/FLIP/ROTATE 操作。"
+  validation:
+    - command: "git diff --check -- src/pages/page_rga.c src/pages/page_ops.c"
+      result: "PASS"
+      evidence: "No whitespace errors."
+    - command: "cmake --build build -j"
+      result: "PASS"
+      evidence: "alldemo target rebuilt successfully."
+    - command: "timeout -s INT -k 3s 13s ./scripts/run_alldemo.sh --only RGA"
+      result: "PASS"
+      evidence: "RGA standalone=1 overlay=perf_text, VI/RGA/OSD/VO counters grew and OP changed through COPY/CROP_ZOOM/FLIP_H/FLIP_V/ROTATE90."
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      result: "PASS"
+      evidence: "No residual alldemo or run_alldemo.sh process."
+  remaining_work:
+    - "继续迁移仍保留 legacy proxy 的 WBC/CSC_RGA/CSC_CL/CLAHE/RETINEX/DEHAZE/CONV_CL/VMIX/STEREO_3D 等页面。"
+  next_skill: "alldemo-software-acceptance"

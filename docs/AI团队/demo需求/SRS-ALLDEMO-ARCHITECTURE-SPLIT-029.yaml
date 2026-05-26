@@ -1,0 +1,29 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-029"
+  case_name: "ALLDEMO_STANDALONE_RESIZE_RGA_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "RESIZE_RGA 页面应从 legacy proxy 迁出，后续新增页面时无需进入 alldemo_legacy.c 的大循环。"
+  scope:
+    - "新增 src/pages/page_resize_rga.c，提供 page_resize_rga_run。"
+    - "页面生成 synthetic 960x540 NV12 输入。"
+    - "创建 MEDIA_RESIZE_RGA_61，将输入缩放为 640x640 NV12 输出。"
+    - "页面显示输入、输出、processed 计数和 module live/fallback 状态。"
+    - "page_ops.c 将 RESIZE_RGA 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_resize_rga.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不恢复 VI -> RESIZE_RGA -> VMIX/VO 的实时绑定页面。"
+    - "本阶段不迁移 RGA、VI、VPSS、VMIX、WBC、OSD、NPU、EIS 系列页面。"
+    - "本阶段不修改媒体 SDK 的 RESIZE_RGA 接口。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only RESIZE_RGA 可以进入 standalone 页面并显示 processed 增长。"
+    - "退出时 RESIZE_RGA 模块、input/output/display pool 均释放。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only CSC_RGA 仍可运行真实模块 standalone 页面。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "RESIZE_RGA standalone 使用真实 MEDIA_RESIZE_RGA 模块和 GetFrame 输出，不用 legacy proxy。"
+    - "新增处理类页面必须输出 processed 计数，验收以计数增长和资源释放日志为准。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

@@ -1,0 +1,40 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-037"
+  case_name: "ALLDEMO_STANDALONE_NPU_PAGE"
+  date: "2026-05-26"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "git diff --check -- CMakeLists.txt src/pages/page_ops.c src/pages/page_npu.c docs/AI团队/demo需求/SRS-ALLDEMO-ARCHITECTURE-SPLIT-037.yaml docs/AI团队/demo实现/IMPL-ALLDEMO-ARCHITECTURE-SPLIT-20260526-037.yaml docs/AI团队/demo验收/ACCEPT-ALLDEMO-ARCHITECTURE-SPLIT-20260526-037.yaml"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only NPU"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "pass_no_process"
+  observed_runtime:
+    npu_standalone:
+      - "NPU no longer uses PAGE_IMPL_LEGACY_PROXY; it dispatches to page_npu_run."
+      - "Standalone page creates VDEC_110, RGA_111, NPU_112, RGA_113, and VO_0."
+      - "Probe reports VDEC/RGA/NPU/VO frame counts growing from about 29 to 209."
+      - "Probe reports det=5 and top0=person with score around 0.85-0.88."
+      - "Shutdown disconnects RGA_113.output0 -> VO_0.input0, NPU_112.output0 -> RGA_113.input0, RGA_111.output0 -> NPU_112.input, VDEC_110.output -> RGA_111.input0, then destroys pool 5/4/3."
+    regression:
+      - "HIGHLIGHT_SUPPRESS_VI standalone short probe continues to run with frame counts growing and bypass/suppress switching."
+    assets:
+      - "asset-check continues to pass after the NPU migration."
+    issue_record:
+      - "Recorded VDEC pool sizing and NPU RGB drain fix in docs/问题记录/20260526-1138-npu-standalone-vdec-pool-and-rgb-drain.md."
+  acceptance_limits:
+    - "本阶段只验收 NPU standalone 视频检测页面。"
+    - "不声明 legacy NPU VMIX/OSD 中文叠字和画框链路已迁移。"

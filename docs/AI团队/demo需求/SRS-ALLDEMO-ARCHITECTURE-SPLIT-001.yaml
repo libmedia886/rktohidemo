@@ -1,0 +1,59 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-001"
+  case_name: "ALLDEMO_ARCHITECTURE_SPLIT"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "当前工程入口过大，后续新增 VI 高光压制、图像增强、融合等页面时容易互相干扰；需要先建立单页与循环播放分层，降低后续开发和验收成本。"
+  scope:
+    - "新增 page_registry 模块，集中维护页面清单、默认客户循环页表、工程循环页表、页码/总页数、默认页索引、页面别名和摄像头输入需求查询。"
+    - "新增 loop_player 模块，承接默认客户/工程循环播放父进程逻辑，包括子进程启动、停留时间、音量键翻页、导航环境变量和子进程退出清理。"
+    - "保留 src/alldemo.c 作为当前阶段的主程序和页面实现承载文件，后续阶段再迁移 pages/page_*.c。"
+    - "更新 CMakeLists.txt，让 alldemo 由多个源文件构建。"
+    - "新增实现记录和验收记录，说明第一阶段完成范围、验证命令和残留风险。"
+  non_scope:
+    - "第一阶段不迁移全部页面绘制、bind 链路、素材加载和算法展示实现。"
+    - "第一阶段不重做 UI 视觉，不改变客户默认页的展示内容和顺序。"
+    - "第一阶段不修改 /userdata/rktohi 源码、不同步新 libmedia API。"
+    - "第一阶段不编辑 docs/AI团队/srs_status.yaml。"
+    - "第一阶段不删除历史录制文件或未跟踪素材。"
+  target_architecture:
+    single_page_contract:
+      - "单页入口仍为 ./scripts/run_alldemo.sh --only <page>。"
+      - "单页页面读取 page_registry 提供的页码/总页数/别名/输入尺寸规则。"
+      - "单页可独立编译和短运行验证。"
+    loop_playback_contract:
+      - "无参数默认进入 customer demo 循环。"
+      - "--customer-demo 使用客户循环页表；--engineering-demo 使用工程循环页表。"
+      - "循环播放通过 exec self --only <page> 复用单页。"
+      - "循环环境变量保持 ALLDEMO_LOOP_PAGE、ALLDEMO_LOOP_TOTAL、ALLDEMO_LOOP_MODE、ALLDEMO_LOOP_PROFILE。"
+    file_boundary:
+      - "src/app/page_registry.h: page_registry 公共查询和 demo_loop_t 类型。"
+      - "src/app/page_registry.c: 页面清单、页表、别名、摄像头输入需求、页码规则。"
+      - "src/app/loop_player.h: 循环播放器入口。"
+      - "src/app/loop_player.c: 子进程循环播放和导航键处理。"
+      - "src/alldemo.c: 暂时保留页面实现、媒体链路、OSD 绘制和 main。"
+  compatibility_requirements:
+    - "现有 --only HIGHLIGHT_SUPPRESS_VI 和别名 VI_HIGHLIGHT_SUPPRESS 必须继续可用。"
+    - "默认客户循环仍包含 HIGHLIGHT_SUPPRESS_VI。"
+    - "工程循环仍包含 HIGHLIGHT_SUPPRESS 和 HIGHLIGHT_SUPPRESS_VI。"
+    - "module_page_number/module_page_total 在循环子进程中必须优先使用环境变量页码。"
+    - "没有环境变量时，页码查询必须回退到模块页表。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以重新编译并链接 build/alldemo。"
+    - "./scripts/run_alldemo.sh --asset-check 可以执行通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI 能启动单页，日志出现 HIGHLIGHT_SUPPRESS_VI 运行链路或帧计数，退出后无残留 alldemo 进程。"
+    - "timeout -s INT -k 3s 6s ./scripts/run_alldemo.sh --customer-demo 能启动循环父进程和至少一个 --only 子进程，退出后无残留 alldemo 进程。"
+    - "README、assets/effect_manifest.json、上一轮 VI 高光压制改动不因本次拆分回退。"
+  validation_plan:
+    build:
+      - "git diff --check"
+      - "cmake --build build -j"
+    run:
+      - "./scripts/run_alldemo.sh --asset-check"
+      - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI"
+      - "timeout -s INT -k 3s 6s ./scripts/run_alldemo.sh --customer-demo"
+      - "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+  open_questions:
+    - "后续第二阶段是否优先拆 pages/page_highlight_suppress_vi.c，还是先拆公共 media/display_chain，需要结合下一个新增页面决定。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

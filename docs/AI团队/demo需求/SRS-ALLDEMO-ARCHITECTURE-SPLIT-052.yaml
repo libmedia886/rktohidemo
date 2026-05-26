@@ -1,0 +1,28 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-052"
+  case_name: "ALLDEMO_REMAINING_LEGACY_PROXY_PAGES_TO_VI_STANDALONE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "最后保留 legacy proxy 的 CONV_CL、STEREO_3D、VMIX、WBC 页面必须拆成独立页面文件可维护入口，并按原测试例子保留真实摄像头 VI 和屏幕 OSD 信息。"
+  scope:
+    - "page_ops.c 不再保留 PAGE_IMPL_LEGACY_PROXY 页面。"
+    - "VMIX 使用真实 VI -> VPSS 四路 -> VMIX -> OSD -> VO 链路，并显示 CPU/GPU/RGA、flow、帧计数。"
+    - "WBC 使用真实 VI -> RESIZE_RGA -> OSD -> VO，同时启动 VO_WBC 抓屏并显示 WBC 计数。"
+    - "CONV_CL 使用真实 VI -> RESIZE_RGA -> CSC_RGA -> CONV_CL -> CSC_RGA -> RESIZE_RGA -> OSD -> VO，动态切换 SHARPEN/EDGE/BLUR 3x3 kernel。"
+    - "STEREO_3D 使用真实 VI -> VPSS 两路裁剪/旋转 -> STEREO_3D side-by-side -> RESIZE_RGA -> OSD -> VO。"
+  non_scope:
+    - "本阶段不删除旧 page_surface 合成页面函数，仅从 page registry 切走，保留为后续对照。"
+    - "本阶段不强制复刻 legacy CONV_CL 四宫格同屏比较布局；先完成真实 VI live 链路和 OSD/计数闭环。"
+    - "本阶段不修改媒体库 API 或算法模块内部实现。"
+  acceptance_criteria:
+    - "grep -n PAGE_IMPL_LEGACY_PROXY src/pages/page_ops.c 无结果。"
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "VMIX/WBC/CONV_CL/STEREO_3D 的 --only 运行均显示 standalone=1、overlay=perf_text。"
+    - "四个页面均使用 /dev/video-camera0 真实 VI 输入，且下游模块帧计数增长到 VO。"
+    - "退出后无 run_alldemo.sh 或 alldemo 残留进程。"
+  developer_rule_after_this_stage:
+    - "新增或迁移页面时不得把原真实 VI 测试例子替换成合成图案。"
+    - "standalone 页面必须在屏幕 OSD 上显示标题、真实 flow、CPU/GPU/RGA 和关键帧计数。"
+    - "page_ops.c 出现 PAGE_IMPL_LEGACY_PROXY 视为拆分回退，必须先说明原因再合入。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

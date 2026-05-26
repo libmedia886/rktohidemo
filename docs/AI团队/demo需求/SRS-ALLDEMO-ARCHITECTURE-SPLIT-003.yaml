@@ -1,0 +1,27 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-003"
+  case_name: "ALLDEMO_PAGE_RUNTIME_CONTEXT"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "新增页面时，main 不应该重复理解 page_registry 的属性组合；需要一个运行配置层，把页面描述转换成 main 可直接使用的运行开关。"
+  scope:
+    - "新增 page_runtime 模块，负责从 only_tile 和 solid_test 派生页面运行配置。"
+    - "page_runtime 输出 camera 输入需求、4K/1080p 输入选择、bind-display 类型和各 use_*_bind_display 布尔值。"
+    - "src/alldemo.c 读取 page_runtime_t，而不是在 main 中直接调用 page_bind_display/tile_uses_* 派生页面运行状态。"
+    - "更新 CMakeLists.txt，把 page_runtime.c 纳入 alldemo 构建。"
+  non_scope:
+    - "本阶段不迁移具体页面处理函数。"
+    - "本阶段不改变页面页表、循环顺序、视觉内容或媒体链路。"
+    - "本阶段不修改 /userdata/rktohi 或 libmedia API。"
+  developer_rule_after_this_stage:
+    - "新增页面先登记 page_desc，再通过 page_runtime 读取运行配置。"
+    - "main 中新增页面时优先引用 page_rt 字段，不再直接新增页面属性组合判断。"
+    - "具体页面函数迁移到 src/pages/page_*.c 前，仍允许保留在 src/alldemo.c。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "timeout -s INT -k 3s 7s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI 可以启动真实 VI 高光压制页面，帧计数增长并 clean shutdown。"
+    - "timeout -s INT -k 3s 5s ./scripts/run_alldemo.sh --customer-demo 可以启动默认 loop 并运行 --only VI 子页。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

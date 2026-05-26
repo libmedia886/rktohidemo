@@ -1,0 +1,32 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-021"
+  case_name: "ALLDEMO_STANDALONE_PANO_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "PANO 六路全景拼接页应从 legacy proxy 迁出，独立加载 PTO 与六路输入图，并优先保留真实 MEDIA_PANO 模块输出。"
+  scope:
+    - "新增 src/pages/page_pano.c，基于 page_surface 独立创建显示面。"
+    - "页面加载 assets/loop/pano/sample2/calib_file.pto 和 camera_0..5.jpg。"
+    - "页面默认尝试 MEDIA_PANO_74，构建 PTO LUT 后输出 8378x4190 panorama preview。"
+    - "当 PANO live 被禁用或模块不可用时，页面退到 reference-strip 预览并明确记录 mode。"
+    - "page_ops.c 将 PANO 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+    - "CMakeLists.txt 将 page_pano.c 编入 alldemo。"
+  non_scope:
+    - "本阶段不迁移 NPU、STEREO_3D 或摄像头绑定类页面。"
+    - "本阶段不修改 PTO/LUT 算法或 libmedia 的 PANO 实现。"
+    - "本阶段不改变客户循环或工程循环页面顺序。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 15s ./scripts/run_alldemo.sh --only PANO 可以进入 standalone 页面。"
+    - "PANO standalone 页面必须显示 loaded=1，inputs=6，输出尺寸 8378x4190。"
+    - "若真实模块可用，日志必须显示 mode=module-preview，PANO_74 启动并输出帧计数增长。"
+    - "退出时 PANO 模块和 input/output/display pool 均释放。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only AVM2D 仍可运行 standalone 页面。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "大输出缓存页面要先缓存模块输出，再在显示循环里缩放预览。"
+    - "有 fallback 的页面必须在日志和验收中写明实际 mode，不能把 reference fallback 说成 live。"
+    - "PTO/LUT 类页面验收必须观察模块初始化、输出计数和 pool 释放。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

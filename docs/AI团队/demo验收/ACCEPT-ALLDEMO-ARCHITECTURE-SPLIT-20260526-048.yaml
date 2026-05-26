@@ -1,0 +1,28 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-048"
+  case_name: "ALLDEMO_STANDALONE_CSC_CL_VI_PAGE"
+  date: "2026-05-26"
+  status: "Accepted"
+  validation_commands:
+    - command: "git diff --check -- src/pages/page_csc.c src/pages/page_ops.c"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only CSC_CL"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+  observed_runtime:
+    csc_cl_standalone:
+      - "CSC_CL standalone opened VI /dev/video-camera0 3840x2160 and bound VI -> CSC_CL -> RESIZE_RGA -> OSD -> VO."
+      - "Frame counters grew to vi=215 csc=215 resize=215 osd=215 vo=215 with overlay=perf_text."
+      - "Observed OpenCL kernel/queue time around 2.16-2.80 ms."
+      - "Cleanup stopped VI, disconnected all binds, removed OSD_81, RESIZE_RGA_61, CSC_CL_76, and destroyed pools 14/13/12/2."
+      - "Post-run pgrep found no residual alldemo or run_alldemo.sh process."
+  acceptance_limits:
+    - "本阶段只验收 CSC_CL 真实 VI standalone 页面。"
+    - "不声明 legacy CSC_CL 的全量中文说明卡片已迁移。"

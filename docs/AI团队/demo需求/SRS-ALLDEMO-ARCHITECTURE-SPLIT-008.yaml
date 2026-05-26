@@ -1,0 +1,31 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-008"
+  case_name: "ALLDEMO_LIGHTWEIGHT_MAIN_AND_LEGACY_FALLBACK"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "src/alldemo.c 不能继续作为所有页面和主入口的混合大文件；主入口要先变轻，后续逐页迁移只改 page_ops 和 src/pages 下的文件。"
+  scope:
+    - "将原 src/alldemo.c 的 legacy 大实现移动到 src/legacy/alldemo_legacy.c。"
+    - "新增 src/legacy/alldemo_legacy.h，暴露 alldemo_legacy_main(argc, argv)。"
+    - "新建轻量 src/alldemo.c，只负责信号处理、--only 解析、page_ops standalone 分发和 legacy fallback。"
+    - "CMakeLists.txt 同时编译 src/alldemo.c 和 src/legacy/alldemo_legacy.c。"
+    - "standalone 页面必须在新入口直接运行；未迁移页面必须继续走 legacy fallback，保持现有行为。"
+  non_scope:
+    - "本阶段不移动 legacy 文件内部的具体页面实现。"
+    - "本阶段不改变客户循环、工程循环或现有页面顺序。"
+    - "本阶段不改变任何页面视觉内容或媒体链路。"
+  acceptance_criteria:
+    - "src/alldemo.c 行数显著下降，成为轻量入口。"
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only VENC 可以由新入口直接分发 standalone info 页面。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only LICENSE 可以由新入口直接分发 standalone 专用页面。"
+    - "timeout -s INT -k 3s 5s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI 可以 fallback 到 legacy live 页面且帧计数增长。"
+    - "timeout -s INT -k 3s 4s ./scripts/run_alldemo.sh --customer-demo 可以继续 fork --only VI 子页。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "后续新增页面不再修改主入口 src/alldemo.c；只改 page_registry/page_ops 和对应 src/pages/page_xxx.c。"
+    - "legacy 文件只作为未迁移页面的 fallback，不作为新增页面入口。"
+    - "每迁移一批页面，都要验证 standalone 页面、legacy live 页面和 customer loop。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

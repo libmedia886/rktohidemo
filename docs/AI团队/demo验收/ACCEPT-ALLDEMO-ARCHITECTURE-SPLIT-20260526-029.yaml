@@ -1,0 +1,37 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-029"
+  case_name: "ALLDEMO_STANDALONE_RESIZE_RGA_PAGE"
+  date: "2026-05-26"
+  status: "Accepted By Runtime Probe"
+  validation_commands:
+    - command: "git diff --check -- CMakeLists.txt src/pages/page_ops.c src/pages/page_resize_rga.c docs/AI团队/demo需求/SRS-ALLDEMO-ARCHITECTURE-SPLIT-029.yaml docs/AI团队/demo实现/IMPL-ALLDEMO-ARCHITECTURE-SPLIT-20260526-029.yaml docs/AI团队/demo验收/ACCEPT-ALLDEMO-ARCHITECTURE-SPLIT-20260526-029.yaml"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only RESIZE_RGA"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only CSC_RGA"
+      cwd: "/userdata/alldemo"
+      result: "pass_timeout_expected"
+    - command: "./scripts/run_alldemo.sh --asset-check"
+      cwd: "/userdata/alldemo"
+      result: "pass"
+    - command: "pgrep -af '/userdata/alldemo/.*/alldemo|build/alldemo|run_alldemo.sh'"
+      cwd: "/userdata/alldemo"
+      result: "pass_no_process"
+  observed_runtime:
+    resize_rga_standalone:
+      - "RESIZE_RGA no longer uses PAGE_IMPL_LEGACY_PROXY; it dispatches to page_resize_rga_run."
+      - "Standalone page creates RESIZE_RGA_61 with input pool 8 and output pool 9."
+      - "Probe reports processed growth from 30 to 180 for 960x540 -> 640x640 NV12 resize."
+      - "Shutdown removes RESIZE_RGA_61 and destroys pool 9, pool 8, and display pool 1."
+    regression:
+      - "CSC_RGA standalone short probe continues to run with module=live path=rga."
+    assets:
+      - "asset-check continues to pass after the RESIZE_RGA migration."
+  acceptance_limits:
+    - "本阶段只验收 RESIZE_RGA standalone synthetic-input 模块页。"
+    - "不声明 VI -> RESIZE_RGA -> VMIX/VO 实时绑定链路已迁移。"

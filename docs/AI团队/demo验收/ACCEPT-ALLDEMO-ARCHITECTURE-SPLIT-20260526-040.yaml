@@ -1,0 +1,24 @@
+acceptance_record:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-040"
+  case_name: "ALLDEMO_STANDALONE_TRANSFORM_PAGE"
+  date: "2026-05-26"
+  status: "Accepted"
+  validation_commands:
+    - command: "git diff --check -- CMakeLists.txt src/app/page_registry.c src/pages/page_ops.c src/pages/page_transform.c docs/AI团队/demo需求/SRS-ALLDEMO-ARCHITECTURE-SPLIT-040.yaml docs/AI团队/demo实现/IMPL-ALLDEMO-ARCHITECTURE-SPLIT-20260526-040.yaml docs/AI团队/demo验收/ACCEPT-ALLDEMO-ARCHITECTURE-SPLIT-20260526-040.yaml"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "cmake --build build -j"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+    - command: "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only TRANSFORM"
+      cwd: "/userdata/alldemo"
+      result: "PASS"
+  observed_runtime:
+    transform_standalone:
+      - "TRANSFORM standalone opened VI /dev/video-camera0 3840x2160 and bound VI -> VPSS -> TRANSFORM -> RESIZE_RGA -> VO."
+      - "Frame counters grew: vi=181 vpss=181 transform=180 resize=180 vo=180."
+      - "Modes rotated through RAW, UNDISTORT, ROTATE ZOOM, and PERSPECTIVE."
+      - "Cleanup stopped VI, unbound modules, destroyed pools 9/15/14/2, and exited media system."
+  acceptance_limits:
+    - "本阶段只验收 TRANSFORM standalone 实时 4K LUT 页面。"
+    - "不声明 legacy TRANSFORM OSD 中文叠字和四宫格说明面板已迁移。"

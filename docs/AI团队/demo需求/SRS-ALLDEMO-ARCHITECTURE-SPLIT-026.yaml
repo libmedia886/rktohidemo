@@ -1,0 +1,30 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-026"
+  case_name: "ALLDEMO_STANDALONE_DCP_FAST_DEHAZE_PAGE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "DCP_FAST_DEHAZE 页面应从 legacy proxy 迁出，复用雾图素材并验证真实 MEDIA_DCP_FAST_DEHAZE 模块。"
+  scope:
+    - "在 src/pages/page_cap_dehaze_offline.c 的 dehaze runner 中增加 DCP 分支。"
+    - "新增 page_dcp_fast_dehaze_run，使用 DCP_FAST_DEHAZE 页面名和 DCP FAST DEHAZE 标题。"
+    - "DCP_FAST_DEHAZE 使用 assets/loop/cap_dehaze 三张 RGB 样本。"
+    - "页面创建 MEDIA_DCP_FAST_DEHAZE_67，发送 RGB888 input 并取 output0。"
+    - "page_ops.c 将 DCP_FAST_DEHAZE 从 PAGE_IMPL_LEGACY_PROXY 改为 PAGE_IMPL_STANDALONE。"
+  non_scope:
+    - "本阶段不恢复 DCP_FAST_DEHAZE 的实时 VI/VPSS 输入链路。"
+    - "本阶段不改变 MEDIA_DCP_FAST_DEHAZE SDK 接口或算法参数。"
+    - "本阶段不迁移 CONV_CL、CSC 或 RGA 页面。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "timeout -s INT -k 3s 8s ./scripts/run_alldemo.sh --only DCP_FAST_DEHAZE 可以进入 standalone 页面。"
+    - "DCP_FAST_DEHAZE standalone 页面必须显示 module=live，samples=3，dcp_frames 随样本切换增长。"
+    - "退出时 DCP_FAST_DEHAZE 模块和 input/output/display pool 均释放。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only CAP_DEHAZE 仍可运行真实模块 standalone 页面。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "同类 dehaze 模块可以共享素材加载和页面绘制，但 setup/process/cleanup 必须按真实模块分支执行。"
+    - "日志必须区分 cap_frames 和 dcp_frames，避免验收混淆。"
+    - "复用 runner 后必须回归相邻入口。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

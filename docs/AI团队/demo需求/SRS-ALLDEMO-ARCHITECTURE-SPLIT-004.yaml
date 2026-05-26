@@ -1,0 +1,29 @@
+software_requirement_specification:
+  requirement_id: "SRS-ALLDEMO-ARCHITECTURE-SPLIT-004"
+  case_name: "ALLDEMO_ALL_PAGE_REGISTRY_AND_TILE_STATE"
+  source_product_brief: "docs/AI团队/demo需求/PRODUCT-ALLDEMO-ARCHITECTURE-SPLIT.yaml"
+  user_value: "所有页面都需要进入统一登记、统一状态和统一 page ops 入口，后续才能逐页从 legacy main 迁移到独立 page 文件。"
+  scope:
+    - "补齐 page_registry 的 g_module_pages，使其覆盖 g_tiles 中全部页面名。"
+    - "补齐 page_desc_t，使 AVM、AVM2D、SVM3D、VENC、VDEC、RTSP_SEND、RTSP_RECV、PIC_IO、LICENSE、VMIX_RGA、EXPOSURE_FUSION_CL 等工程页也有描述。"
+    - "新增 tile_state 模块，承接 g_tiles、tile status 文案/颜色、find_tile_index、set_tile_status、mark_showcase_modules、active_module_count。"
+    - "新增 pages/page_ops 模板，所有已登记页面先走 PAGE_IMPL_LEGACY_MAIN，作为后续逐页迁移的统一入口。"
+    - "--only 校验改为 page_ops_find + tile_state 双重校验，避免页面只存在于局部数组中。"
+  non_scope:
+    - "本阶段不把具体页面实现函数迁出 src/alldemo.c。"
+    - "本阶段不改变默认客户循环和工程循环顺序。"
+    - "本阶段不改变页面视觉布局或媒体链路。"
+  acceptance_criteria:
+    - "git diff --check 无 whitespace error。"
+    - "cmake --build build -j 可以通过。"
+    - "./scripts/run_alldemo.sh --asset-check 可以通过。"
+    - "timeout -s INT -k 3s 7s ./scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI 可以启动真实 VI 高光压制页面，帧计数增长并 clean shutdown。"
+    - "timeout -s INT -k 3s 5s ./scripts/run_alldemo.sh --customer-demo 可以启动默认 loop 并运行 --only VI 子页。"
+    - "timeout -s INT -k 3s 3s ./scripts/run_alldemo.sh --only LICENSE 可以启动非默认工程页并 clean shutdown。"
+    - "pgrep 检查无残留 alldemo/run_alldemo.sh 进程。"
+  developer_rule_after_this_stage:
+    - "新增页面必须先有 page_desc 和 page_ops 入口。"
+    - "legacy-main 页面可以继续运行；迁移页面时再把 page_ops 改为独立实现。"
+    - "tile 状态相关代码不再写回 src/alldemo.c。"
+  confirmed_by_product: true
+  next_skill: "alldemo-implementation-engineer"

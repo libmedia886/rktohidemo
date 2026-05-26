@@ -726,6 +726,48 @@ int MEDIA_NPU_GetModelInfo(int grp, MEDIA_NPU_MODEL_INFO *info);
 int MEDIA_NPU_GetFrame(int grp, MEDIA_BUFFER *buf, int timeout_ms);
 int MEDIA_NPU_ReleaseFrame(int grp, MEDIA_BUFFER buf);
 
+// Thermal super-resolution on RKNN/NPU.
+// First implementation targets single-input GRAY8 thermal frames, normally 320x256 -> 1280x1024 x4.
+typedef struct {
+    const char *model_path;     // RKNN model path
+    int input_width;            // input width, e.g. 320
+    int input_height;           // input height, e.g. 256
+    int input_format;           // MEDIA_FORMAT_GRAY8
+    int input_stride;           // 0 = input_width
+    int input_depth;            // 0 = 4
+    int output_width;           // 0 = input_width * scale
+    int output_height;          // 0 = input_height * scale
+    int output_stride;          // 0 = output_width
+    int output_pool_id;         // must point to buffers sized for output_stride * output_height
+    int scale;                  // 0 = 4; only x4 is supported in the first version
+    int core_mask;              // 0 = RKNN default, 7 = RKNN_NPU_CORE_0_1_2
+    int passthrough;            // 1 = nearest x4 bypass, keeping output dimensions stable
+} MEDIA_THERMAL_SR_NPU_ATTR;
+
+typedef struct {
+    double infer_ms;            // RKNN input+run time; -1 when bypass/fallback
+    double post_ms;             // RKNN output conversion time; -1 when bypass/fallback
+    double total_ms;            // module processing time
+    int npu_enabled;            // 1 when last frame used RKNN successfully
+    int fallback_used;          // 1 when last frame fell back to nearest x4
+    int input_width;
+    int input_height;
+    int output_width;
+    int output_height;
+} MEDIA_THERMAL_SR_NPU_PERF;
+
+int MEDIA_THERMAL_SR_NPU_CreateGrp(int grp, const MEDIA_THERMAL_SR_NPU_ATTR *attr);
+int MEDIA_THERMAL_SR_NPU_DestroyGrp(int grp);
+int MEDIA_THERMAL_SR_NPU_Start(int grp);
+int MEDIA_THERMAL_SR_NPU_Stop(int grp);
+int MEDIA_THERMAL_SR_NPU_Enable(int grp);
+int MEDIA_THERMAL_SR_NPU_Disable(int grp);
+int MEDIA_THERMAL_SR_NPU_SendFrame(int grp, MEDIA_BUFFER buf, int timeout_ms);
+int MEDIA_THERMAL_SR_NPU_GetFrame(int grp, MEDIA_BUFFER *buf, int timeout_ms);
+int MEDIA_THERMAL_SR_NPU_ReleaseFrame(int grp, MEDIA_BUFFER buf);
+int MEDIA_THERMAL_SR_NPU_SetPassthrough(int grp, int enable);
+int MEDIA_THERMAL_SR_NPU_GetLastPerf(int grp, MEDIA_THERMAL_SR_NPU_PERF *perf);
+
 // Retinex (图像增强算法)
 typedef struct {
     int scale_count;     // 输入数量：1/2/3
