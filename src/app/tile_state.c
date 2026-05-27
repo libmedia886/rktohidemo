@@ -28,6 +28,7 @@ module_tile_t g_tiles[] = {
     {"PANO", 0, 0, TILE_OFFLINE}, {"AVM", 0, 0, TILE_OFFLINE},
     {"AVM2D", 0, 0, TILE_OFFLINE},
     {"SVM3D", 0, 0, TILE_OFFLINE}, {"DETECT_NPU", 0, 0, TILE_OFFLINE},
+    {"SEGMENT_NPU", 0, 0, TILE_OFFLINE},
     {"VENC", 0, 0, TILE_OFFLINE}, {"VDEC", 0, 0, TILE_OFFLINE},
     {"RTSP_SEND", 0, 0, TILE_OFFLINE}, {"RTSP_RECV", 0, 0, TILE_OFFLINE},
     {"PIC_IO", 0, 0, TILE_OFFLINE}, {"LICENSE", 0, 0, TILE_OFFLINE},

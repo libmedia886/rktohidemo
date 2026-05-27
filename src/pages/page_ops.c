@@ -30,6 +30,7 @@ int page_eis_vi_run(volatile sig_atomic_t *running);
 int page_mcf_fusion_cl_run(volatile sig_atomic_t *running);
 int page_npu_run(volatile sig_atomic_t *running);
 int page_osd_run(volatile sig_atomic_t *running);
+int page_segment_npu_run(volatile sig_atomic_t *running);
 int page_highlight_suppress_vi_run(volatile sig_atomic_t *running);
 int page_blend_pyr_run(volatile sig_atomic_t *running);
 int page_avm2d_run(volatile sig_atomic_t *running);
@@ -117,6 +118,7 @@ static const page_ops_t g_page_ops[] = {
     {"RGA", PAGE_IMPL_STANDALONE, page_rga_run},
     {"RTSP_RECV", PAGE_IMPL_STANDALONE, page_info_rtsp_recv_run},
     {"RTSP_SEND", PAGE_IMPL_STANDALONE, page_info_rtsp_send_run},
+    {"SEGMENT_NPU", PAGE_IMPL_STANDALONE, page_segment_npu_run},
     {"STEREO_3D", PAGE_IMPL_STANDALONE, page_stereo_3d_live_run},
     {"SVM3D", PAGE_IMPL_STANDALONE, page_info_svm3d_run},
     {"THERMAL", PAGE_IMPL_STANDALONE, page_thermal_run},

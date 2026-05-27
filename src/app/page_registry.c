@@ -19,7 +19,7 @@ static const char *g_module_pages[] = {
     "VI", "VPSS", "VO", "WBC", "RGA", "RESIZE_RGA", "CSC_RGA", "CSC_CL", "OSD",
     "CLAHE", "RETINEX", "RETINEX_OFFLINE", "TNR_CL", "HIGHLIGHT_SUPPRESS",
     "HIGHLIGHT_SUPPRESS_VI", "EIS", "EIS_VI", "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE",
-    "DCP_FAST_DEHAZE", "THERMAL", "THERMAL_SR_NPU", "DETECT_NPU", "CONV_CL", "TRANSFORM", "BLEND_PYR", "EDOF_CL",
+    "DCP_FAST_DEHAZE", "THERMAL", "THERMAL_SR_NPU", "DETECT_NPU", "SEGMENT_NPU", "CONV_CL", "TRANSFORM", "BLEND_PYR", "EDOF_CL",
     "EXPOSURE_FUSION_CL", "MCF_FUSION_CL", "DUALVIEW", "STEREO_3D", "VMIX",
     "VMIX_RGA", "PANO", "AVM", "AVM2D", "SVM3D", "VENC", "VDEC",
     "RTSP_SEND", "RTSP_RECV", "PIC_IO", "LICENSE",
@@ -28,7 +28,7 @@ static const char *g_module_pages[] = {
 static const char *g_default_pages[] = {
     "VI", "VPSS", "VMIX", "OSD", "RGA", "RESIZE_RGA", "CSC_CL", "CLAHE",
     "RETINEX", "RETINEX_OFFLINE", "TNR_CL", "HIGHLIGHT_SUPPRESS_VI",
-    "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "THERMAL", "THERMAL_SR_NPU", "DETECT_NPU",
+    "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "THERMAL", "THERMAL_SR_NPU", "DETECT_NPU", "SEGMENT_NPU",
     "EDOF_CL", "MCF_FUSION_CL", "PANO", "AVM2D",
 };
 
@@ -225,6 +225,11 @@ static const page_desc_t g_page_descs[] = {
     {"DETECT_NPU",
      "数据流：H264解码，经RGA预处理后送DETECT_NPU检测并叠框，底层复用MEDIA_NPU/RKNN运行时。",
      "展示重点：检测框、类别、置信度和NPU帧计数叠加显示。",
+     0,
+     PAGE_BIND_NONE},
+    {"SEGMENT_NPU",
+     "数据流：街景图片序列 -> SEGMENT_NPU(RKNN PP-LiteSeg) -> 原图/分割overlay上下对比。",
+     "展示重点：像素级语义分割mask、类别颜色覆盖和RK3588 NPU推理耗时。",
      0,
      PAGE_BIND_NONE},
     {"VENC",

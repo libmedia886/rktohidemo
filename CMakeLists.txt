@@ -34,6 +34,7 @@ add_executable(alldemo
     src/pages/page_npu.c
     src/pages/page_osd.c
     src/pages/page_pano.c
+    src/pages/page_segment_npu.c
     src/pages/page_rga.c
     src/pages/page_resize_rga.c
     src/pages/page_retinex.c
@@ -56,6 +57,7 @@ set(ALDDEMO_INCLUDE_DIRS
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     /usr/include/libdrm
     /usr/include/freetype2
+    /userdata/rknpu2/runtime/RK3588/Linux/librknn_api/include
 )
 
 target_include_directories(alldemo PRIVATE ${ALDDEMO_INCLUDE_DIRS})
