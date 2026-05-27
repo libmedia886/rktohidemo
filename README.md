@@ -71,6 +71,7 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --only RETINEX_OFFLINE
 /userdata/alldemo/scripts/run_alldemo.sh --only EIS
 /userdata/alldemo/scripts/run_alldemo.sh --only EIS_VI
+/userdata/alldemo/scripts/run_alldemo.sh --only EIS_DETECT_NPU
 /userdata/alldemo/scripts/run_alldemo.sh --only TNR_CL
 /userdata/alldemo/scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS
 /userdata/alldemo/scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI
@@ -103,6 +104,7 @@ cmake --build build -j
 `RETINEX_OFFLINE` 单独模式不占用摄像头，使用 `scripts/run_alldemo.sh` 从 `/userdata/rktohi/research/retinex/normalized/exdark_boat` 同步到 `assets/loop/retinex/exdark` 的前 100 张 EXDark 低照度图片；每 1 秒切换一张，将原图缩放为 640x640 NV12 后送入 RETINEX，使用 gain=40 生成目标增强图，并做上下等尺寸对比。默认客户循环中该页紧跟实时 `RETINEX` 页，完整播放约 100 秒，并保存 `vo_captures/retinex_offline_vo_*.bmp` 供复看。
 `EIS` 单独模式不占用摄像头，使用 `assets/eis/eis_shaky_640x360.h264` 抖动素材，走 `H264文件 -> VDEC -> VPSS(两路输出) -> RAW/EIS_GPU -> VMIX -> OSD -> VO`；上半屏显示原始 VPSS 分支，下半屏显示 EIS GPU 稳像分支，EIS 内部自计算帧间补偿矩阵，使用 `crop_ratio=0.08`，OSD 显示 OpenCL total/estimate/warp 耗时、fallback 状态和完整链路。该页可配合 `wbc_h264_record` 录制当前屏幕并转成 MP4，用于复看最终 GPU 效果。
 `EIS_VI` 单独模式使用实时摄像头输入，走 `VI 3840x2160 -> EIS -> VPSS 1072x608 -> OSD -> VO`；该页保留 `EIS` 离线素材对比页不变，专门用于验证真实 VI 输入进入电子稳像后的显示链路。屏幕 OSD 叠加标题、真实链路、输入/输出尺寸、EIS total/estimate/warp 耗时和画面标签，日志同步输出 VI/EIS/VPSS/OSD/VO 帧计数。
+`EIS_DETECT_NPU` 单独模式不占用摄像头，使用 `assets/eis/eis_shaky_640x360.h264`，走 `H264文件 -> VDEC -> VPSS(上路原图/下路EIS) -> EIS -> VPSS(显示640x360/模型640x640) -> RGA(NV12转RGB888) -> DETECT_NPU(YOLOv5) -> VMIX -> OSD -> VO`；原视频放在上方，EIS稳像结果放在下方，NPU只作为检测分支输出检测框，避免把640x640模型输入直接显示出来。屏幕叠加 EIS 耗时、VDEC/VPSS/EIS/RGA/NPU/VMIX/OSD/VO 帧计数、检测框、类别和置信度。`--only EIS_NPU` 和 `--only EIS_NPU_DETECT` 是同一页面的别名。
 `TNR_CL` 单独模式不占用摄像头，使用高噪声合成 NV12 序列进入 `TNR_CL` OpenCL 空间降噪 + 轻时域模块，屏幕显示输入噪声帧和降噪输出对比；当前展示参数为 `threshold=0.07`、`static_alpha=0.82`、`motion_alpha=1.0`，模块先做单帧边缘保持空间降噪，稳定区域只混少量历史帧，运动区域完全使用当前帧以减少拖影。日志输出 motion/blend/queue GPU 耗时、has_prev 和参数值，用于确认 1080p60 设计之外的 alldemo 展示闭环。
 `HIGHLIGHT_SUPPRESS` 单独模式不占用摄像头，使用合成 NV12 强反光场景进入 `HIGHLIGHT_SUPPRESS`，做输入/输出上下等尺寸对比，展示 soft-knee 高光压制是否让白色刺眼反光变柔和。
 `HIGHLIGHT_SUPPRESS_VI` 单独模式使用 3840x2160 实时摄像头输入，走 `VI 3840x2160 -> HIGHLIGHT_SUPPRESS -> RESIZE_RGA 1080x608 -> VMIX_RGA -> OSD -> VO`；页面每 1 秒在 `BYPASS` 原图和正常高光压制输出之间自动切换，屏幕显示 low/high/knee/ratio/strength 参数、VI/HIGHLIGHT_SUPPRESS/RESIZE 帧计数、GPU/CPU模块耗时和真实 bind 链路。`--only VI_HIGHLIGHT_SUPPRESS` 是同一页面的别名。

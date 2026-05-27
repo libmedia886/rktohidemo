@@ -25,6 +25,7 @@ add_executable(alldemo
     src/pages/page_dualview.c
     src/pages/page_edof_cl.c
     src/pages/page_eis.c
+    src/pages/page_eis_detect_npu.c
     src/pages/page_eis_vi.c
     src/pages/page_highlight_suppress.c
     src/pages/page_highlight_suppress_vi.c

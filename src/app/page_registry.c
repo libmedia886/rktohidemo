@@ -18,7 +18,7 @@
 static const char *g_module_pages[] = {
     "VI", "VPSS", "VO", "WBC", "RGA", "RESIZE_RGA", "CSC_RGA", "CSC_CL", "OSD",
     "CLAHE", "RETINEX", "RETINEX_OFFLINE", "TNR_CL", "HIGHLIGHT_SUPPRESS",
-    "HIGHLIGHT_SUPPRESS_VI", "EIS", "EIS_VI", "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE",
+    "HIGHLIGHT_SUPPRESS_VI", "EIS", "EIS_VI", "EIS_DETECT_NPU", "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE",
     "DCP_FAST_DEHAZE", "THERMAL", "THERMAL_SR_NPU", "DETECT_NPU", "SEGMENT_NPU", "CONV_CL", "TRANSFORM", "BLEND_PYR", "EDOF_CL",
     "EXPOSURE_FUSION_CL", "MCF_FUSION_CL", "DUALVIEW", "STEREO_3D", "VMIX",
     "VMIX_RGA", "PANO", "AVM", "AVM2D", "SVM3D", "VENC", "VDEC",
@@ -227,6 +227,11 @@ static const page_desc_t g_page_descs[] = {
      "展示重点：检测框、类别、置信度和NPU帧计数叠加显示。",
      0,
      PAGE_BIND_NONE},
+    {"EIS_DETECT_NPU",
+     "数据流：eis_shaky_640x360.h264 -> VDEC -> VPSS原图上屏 / VPSS->EIS->VPSS显示+模型分支->RGA->DETECT_NPU -> VMIX -> OSD -> VO。",
+     "展示重点：上方原视频、下方EIS稳像结果，并把YOLOv5/RKNN检测框映射到下方画面。",
+     0,
+     PAGE_BIND_NONE},
     {"SEGMENT_NPU",
      "数据流：街景图片序列 -> SEGMENT_NPU(RKNN PP-LiteSeg) -> 原图/分割overlay上下对比。",
      "展示重点：像素级语义分割mask、类别颜色覆盖和RK3588 NPU推理耗时。",
@@ -365,9 +370,7 @@ const char *alldemo_default_page_name(int index) {
 
 const page_desc_t *page_desc_find(const char *name) {
     if (!name || !*name) return NULL;
-    if (strcasecmp(name, "NPU") == 0 || strcasecmp(name, "YOLO_DETECT_NPU") == 0) {
-        name = "DETECT_NPU";
-    }
+    name = canonical_tile_name(name);
     for (size_t i = 0; i < ARRAY_SIZE(g_page_descs); ++i) {
         if (strcasecmp(g_page_descs[i].name, name) == 0) return &g_page_descs[i];
     }
@@ -404,6 +407,7 @@ static int is_mcf_tile_name(const char *name) {
 const char *canonical_tile_name(const char *name) {
     if (is_mcf_tile_name(name)) return "MCF_FUSION_CL";
     if (name && strcasecmp(name, "VI_HIGHLIGHT_SUPPRESS") == 0) return "HIGHLIGHT_SUPPRESS_VI";
+    if (name && (strcasecmp(name, "EIS_NPU") == 0 || strcasecmp(name, "EIS_NPU_DETECT") == 0)) return "EIS_DETECT_NPU";
     if (name && (strcasecmp(name, "NPU") == 0 || strcasecmp(name, "YOLO_DETECT_NPU") == 0)) return "DETECT_NPU";
     return name;
 }

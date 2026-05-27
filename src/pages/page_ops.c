@@ -25,6 +25,7 @@ int page_csc_cl_run(volatile sig_atomic_t *running);
 int page_csc_rga_run(volatile sig_atomic_t *running);
 int page_dualview_run(volatile sig_atomic_t *running);
 int page_edof_cl_run(volatile sig_atomic_t *running);
+int page_eis_detect_npu_run(volatile sig_atomic_t *running);
 int page_eis_run(volatile sig_atomic_t *running);
 int page_eis_vi_run(volatile sig_atomic_t *running);
 int page_mcf_fusion_cl_run(volatile sig_atomic_t *running);
@@ -103,6 +104,7 @@ static const page_ops_t g_page_ops[] = {
     {"DUALVIEW", PAGE_IMPL_STANDALONE, page_dualview_run},
     {"EDOF_CL", PAGE_IMPL_STANDALONE, page_edof_cl_run},
     {"EIS", PAGE_IMPL_STANDALONE, page_eis_run},
+    {"EIS_DETECT_NPU", PAGE_IMPL_STANDALONE, page_eis_detect_npu_run},
     {"EIS_VI", PAGE_IMPL_STANDALONE, page_eis_vi_run},
     {"EXPOSURE_FUSION_CL", PAGE_IMPL_STANDALONE, page_info_exposure_fusion_cl_run},
     {"HIGHLIGHT_SUPPRESS", PAGE_IMPL_STANDALONE, page_highlight_suppress_run},
