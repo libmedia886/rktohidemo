@@ -50,9 +50,11 @@ add_executable(alldemo
     src/pages/page_vmix.c
     src/pages/page_vo.c
     src/pages/page_vpss.c
+    src/pages/page_wavelet_nr_cl.c
     src/pages/page_wbc.c
 )
 add_executable(wbc_h264_record tools/wbc_h264_record.c)
+add_executable(h264_transcode_min tools/h264_transcode_min.c)
 
 set(ALDDEMO_INCLUDE_DIRS
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -64,6 +66,7 @@ set(ALDDEMO_INCLUDE_DIRS
 
 target_include_directories(alldemo PRIVATE ${ALDDEMO_INCLUDE_DIRS})
 target_include_directories(wbc_h264_record PRIVATE ${ALDDEMO_INCLUDE_DIRS})
+target_include_directories(h264_transcode_min PRIVATE ${ALDDEMO_INCLUDE_DIRS})
 
 set(ALDDEMO_MEDIA_LIBS
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/libmedia.a
@@ -91,6 +94,7 @@ set(ALDDEMO_MEDIA_LIBS
 
 target_link_libraries(alldemo ${ALDDEMO_MEDIA_LIBS})
 target_link_libraries(wbc_h264_record ${ALDDEMO_MEDIA_LIBS})
+target_link_libraries(h264_transcode_min ${ALDDEMO_MEDIA_LIBS})
 
 set_target_properties(alldemo PROPERTIES
     BUILD_RPATH "${CMAKE_CURRENT_SOURCE_DIR}/lib"
@@ -99,4 +103,9 @@ set_target_properties(alldemo PROPERTIES
 set_target_properties(wbc_h264_record PROPERTIES
     BUILD_RPATH "${CMAKE_CURRENT_SOURCE_DIR}/lib"
     INSTALL_RPATH "$ORIGIN/../lib"
+)
+set_target_properties(h264_transcode_min PROPERTIES
+    BUILD_RPATH "$ORIGIN/../lib"
+    INSTALL_RPATH "$ORIGIN/../lib"
+    LINK_FLAGS "-Wl,--disable-new-dtags"
 )

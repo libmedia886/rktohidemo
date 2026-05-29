@@ -13,6 +13,7 @@ int page_thermal_run(volatile sig_atomic_t *running);
 int page_thermal_lowlight_fusion_cl_run(volatile sig_atomic_t *running);
 int page_thermal_sr_npu_run(volatile sig_atomic_t *running);
 int page_tnr_cl_run(volatile sig_atomic_t *running);
+int page_wavelet_nr_cl_run(volatile sig_atomic_t *running);
 int page_retinex_run(volatile sig_atomic_t *running);
 int page_retinex_live_run(volatile sig_atomic_t *running);
 int page_retinex_offline_run(volatile sig_atomic_t *running);
@@ -136,6 +137,7 @@ static const page_ops_t g_page_ops[] = {
     {"VMIX_RGA", PAGE_IMPL_STANDALONE, page_info_vmix_rga_run},
     {"VO", PAGE_IMPL_STANDALONE, page_vo_run},
     {"VPSS", PAGE_IMPL_STANDALONE, page_vpss_run},
+    {"WAVELET_NR_CL", PAGE_IMPL_STANDALONE, page_wavelet_nr_cl_run},
     {"WBC", PAGE_IMPL_STANDALONE, page_wbc_live_run},
 };
 

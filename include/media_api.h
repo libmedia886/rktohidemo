@@ -1170,6 +1170,47 @@ int MEDIA_HIGHLIGHT_SUPPRESS_SetStrength(int grp, float strength);
 int MEDIA_HIGHLIGHT_SUPPRESS_SetKnee(int grp, float knee);
 int MEDIA_HIGHLIGHT_SUPPRESS_GetLastPerf(int grp, MEDIA_HIGHLIGHT_SUPPRESS_PERF *perf);
 
+// WAVELET_NR_CL (NV12 GPU 小波空间降噪模块)
+typedef struct {
+    int width;
+    int height;
+    int format;
+    int input_depth;
+    int output_pool_id;
+    int input_stride;
+    int output_stride;
+    int levels;
+    float threshold_y;
+    float strength;
+    int uv_enable;
+    float uv_strength;
+    int passthrough;
+} MEDIA_WAVELET_NR_CL_ATTR;
+
+typedef struct {
+    double cpu_ms;
+    double gpu_kernel_ms;
+    double gpu_queue_ms;
+    int gpu_enabled;
+} MEDIA_WAVELET_NR_CL_PERF;
+
+int MEDIA_WAVELET_NR_CL_CreateGrp(int grp, const MEDIA_WAVELET_NR_CL_ATTR *attr);
+int MEDIA_WAVELET_NR_CL_DestroyGrp(int grp);
+int MEDIA_WAVELET_NR_CL_Start(int grp);
+int MEDIA_WAVELET_NR_CL_Stop(int grp);
+int MEDIA_WAVELET_NR_CL_Enable(int grp);
+int MEDIA_WAVELET_NR_CL_Disable(int grp);
+int MEDIA_WAVELET_NR_CL_SendFrame(int grp, MEDIA_BUFFER buf, int timeout_ms);
+int MEDIA_WAVELET_NR_CL_GetFrame(int grp, MEDIA_BUFFER *buf, int timeout_ms);
+int MEDIA_WAVELET_NR_CL_ReleaseFrame(int grp, MEDIA_BUFFER buf);
+int MEDIA_WAVELET_NR_CL_SetPassthrough(int grp, int enable);
+int MEDIA_WAVELET_NR_CL_SetLevels(int grp, int levels);
+int MEDIA_WAVELET_NR_CL_SetThresholdY(int grp, float threshold_y);
+int MEDIA_WAVELET_NR_CL_SetStrength(int grp, float strength);
+int MEDIA_WAVELET_NR_CL_SetUvEnable(int grp, int enable);
+int MEDIA_WAVELET_NR_CL_SetUvStrength(int grp, float strength);
+int MEDIA_WAVELET_NR_CL_GetLastPerf(int grp, MEDIA_WAVELET_NR_CL_PERF *perf);
+
 // EDOF_CL (使用 OpenCL GPU 的双输入扩景深融合模块)
 typedef struct {
     int width;
@@ -1307,6 +1348,11 @@ typedef enum {
 } MEDIA_THERMAL_LOWLIGHT_FUSION_CL_MODE;
 
 typedef enum {
+    MEDIA_THERMAL_LOWLIGHT_FUSION_CL_ALGO_PYRAMID = 0,
+    MEDIA_THERMAL_LOWLIGHT_FUSION_CL_ALGO_TIF = 1,
+} MEDIA_THERMAL_LOWLIGHT_FUSION_CL_ALGO;
+
+typedef enum {
     MEDIA_THERMAL_LOWLIGHT_FUSION_CL_INPUT_THERMAL = 0,
     MEDIA_THERMAL_LOWLIGHT_FUSION_CL_INPUT_LOWLIGHT = 1,
 } MEDIA_THERMAL_LOWLIGHT_FUSION_CL_INPUT;
@@ -1324,6 +1370,9 @@ typedef struct {
     float hot_threshold;
     float hot_soft_width;
     float overlay_alpha;
+    int pyramid_levels;  // 0 = default 2; valid explicit range 1..4
+    int algo;            // 0 = pyramid/detail-max, 1 = TIF-style saliency fusion
+    int tif_base_radius; // 0 = default 8 (17x17); valid explicit range 1..32
 } MEDIA_THERMAL_LOWLIGHT_FUSION_CL_ATTR;
 
 typedef struct {

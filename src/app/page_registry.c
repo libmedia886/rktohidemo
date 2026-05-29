@@ -19,7 +19,7 @@
 
 static const char *g_module_pages[] = {
     "VI", "VPSS", "VO", "WBC", "RGA", "RESIZE_RGA", "CSC_RGA", "CSC_CL", "OSD",
-    "CLAHE", "RETINEX", "RETINEX_OFFLINE", "TNR_CL", "HIGHLIGHT_SUPPRESS",
+    "CLAHE", "RETINEX", "RETINEX_OFFLINE", "TNR_CL", "WAVELET_NR_CL", "HIGHLIGHT_SUPPRESS",
     "HIGHLIGHT_SUPPRESS_VI", "EIS", "EIS_VI", "EIS_DETECT_NPU", "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE",
     "DCP_FAST_DEHAZE", "THERMAL", "THERMAL_LOWLIGHT_FUSION_CL", "THERMAL_SR_NPU", "DETECT_NPU", "SEGMENT_NPU", "CONV_CL", "TRANSFORM", "BLEND_PYR", "EDOF_CL",
     "EXPOSURE_FUSION_CL", "MCF_FUSION_CL", "DUALVIEW", "STEREO_3D", "VMIX",
@@ -29,7 +29,7 @@ static const char *g_module_pages[] = {
 
 static const char *g_default_pages[] = {
     "VI", "VPSS", "VMIX", "OSD", "RGA", "RESIZE_RGA", "CSC_CL", "CLAHE",
-    "RETINEX", "RETINEX_OFFLINE", "TNR_CL", "HIGHLIGHT_SUPPRESS_VI",
+    "RETINEX", "RETINEX_OFFLINE", "TNR_CL", "WAVELET_NR_CL", "HIGHLIGHT_SUPPRESS_VI",
     "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "THERMAL", "THERMAL_LOWLIGHT_FUSION_CL", "THERMAL_SR_NPU", "DETECT_NPU", "SEGMENT_NPU",
     "EDOF_CL", "MCF_FUSION_CL", "PANO", "AVM2D",
 };
@@ -37,7 +37,7 @@ static const char *g_default_pages[] = {
 static const char *g_engineering_pages[] = {
     "VI", "VPSS", "VO", "WBC", "OSD", "RESIZE_RGA", "THERMAL", "THERMAL_LOWLIGHT_FUSION_CL", "BLEND_PYR",
     "EDOF_CL", "MCF_FUSION_CL", "RGA", "CSC_RGA", "CSC_CL", "CLAHE",
-    "RETINEX", "RETINEX_OFFLINE", "TNR_CL", "HIGHLIGHT_SUPPRESS",
+    "RETINEX", "RETINEX_OFFLINE", "TNR_CL", "WAVELET_NR_CL", "HIGHLIGHT_SUPPRESS",
     "HIGHLIGHT_SUPPRESS_VI", "EIS", "EIS_VI", "CAP_DEHAZE",
     "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "VMIX", "STEREO_3D",
     "PANO", "AVM2D",
@@ -107,6 +107,11 @@ static const page_desc_t g_page_descs[] = {
     {"TNR_CL",
      "数据流：合成NV12噪声序列 -> TNR_CL OpenCL时域融合 -> 输入/输出对比。",
      "展示重点：块级运动门控时域降噪，观察静态区域噪声收敛和GPU耗时。",
+     0,
+     PAGE_BIND_NONE},
+    {"WAVELET_NR_CL",
+     "数据流：H264噪声视频 -> VDEC -> VPSS原图/WAVELET_NR_CL -> VO上下对比。",
+     "展示重点：复用TNR_CL H264素材验证Y分量小波空间降噪，观察空间噪声压制和GPU耗时。",
      0,
      PAGE_BIND_NONE},
     {"HIGHLIGHT_SUPPRESS",

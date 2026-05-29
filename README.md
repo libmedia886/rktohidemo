@@ -39,7 +39,7 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --no-rotate-main
 ```
 
-默认客户演示分页策略：轮播用户容易看懂、画面效果明显、稳定上屏的页面：`VI`、`VPSS`、`VMIX`、`OSD`、`RGA`、`RESIZE_RGA`、`CSC_CL`、`CLAHE`、`RETINEX`、`RETINEX_OFFLINE`、`TNR_CL`、`HIGHLIGHT_SUPPRESS_VI`、`CAP_DEHAZE`、`CAP_DEHAZE_OFFLINE`、`CONV_CL`、`TRANSFORM`、`THERMAL`、`THERMAL_LOWLIGHT_FUSION_CL`、`EDOF_CL`、`MCF_FUSION_CL`、`PANO`。偏工程验证或调试意味更强的 `VO`、`WBC`、`CSC_RGA`、`STEREO_3D` 保留在工程演示或 `--only` 模式，避免客户现场误解为黑屏、冻结、格式细节或调试页。
+默认客户演示分页策略：轮播用户容易看懂、画面效果明显、稳定上屏的页面：`VI`、`VPSS`、`VMIX`、`OSD`、`RGA`、`RESIZE_RGA`、`CSC_CL`、`CLAHE`、`RETINEX`、`RETINEX_OFFLINE`、`TNR_CL`、`WAVELET_NR_CL`、`HIGHLIGHT_SUPPRESS_VI`、`CAP_DEHAZE`、`CAP_DEHAZE_OFFLINE`、`CONV_CL`、`TRANSFORM`、`THERMAL`、`THERMAL_LOWLIGHT_FUSION_CL`、`EDOF_CL`、`MCF_FUSION_CL`、`PANO`。偏工程验证或调试意味更强的 `VO`、`WBC`、`CSC_RGA`、`STEREO_3D` 保留在工程演示或 `--only` 模式，避免客户现场误解为黑屏、冻结、格式细节或调试页。
 
 如果要看完整工程页表：
 
@@ -82,6 +82,7 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --only EIS_VI
 /userdata/alldemo/scripts/run_alldemo.sh --only EIS_DETECT_NPU
 /userdata/alldemo/scripts/run_alldemo.sh --only TNR_CL
+/userdata/alldemo/scripts/run_alldemo.sh --only WAVELET_NR_CL
 /userdata/alldemo/scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS
 /userdata/alldemo/scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS_VI
 /userdata/alldemo/scripts/run_alldemo.sh --only EDOF_CL
@@ -105,7 +106,7 @@ cmake --build build -j
 `CAP_DEHAZE_OFFLINE` 单独模式不占用摄像头，使用从 `/userdata/rktohi/demo/cap_dehaze/input` 同步来的 3 张低能见度样张轮播，逐张生成原图和 CAP_DEHAZE 输出两张图做上下等尺寸对比；该页紧跟默认客户循环中的实时 `CAP_DEHAZE` 页，使用相同 guided radius、t0、beta 和 `refine_scale=0.25`，用于实时画面效果不明显时让客户看清去雾差异，并保存 `vo_captures/cap_dehaze_offline_vo_*.bmp` 供复看。
 `DCP_FAST_DEHAZE` 单独模式使用实时摄像头输入，走 `VI -> CSC_RGA BGR888 -> DCP_FAST_DEHAZE passthrough/增强 -> RESIZE_RGA 1080x608 -> VMIX -> OSD -> VO`，屏幕显示中文数据流、参数、为什么这样做和实测 FPS/CPU/GPU/RGA 指标。DCP_FAST_DEHAZE 尚未纳入本轮 4K 输入通过列表。
 `THERMAL` 单独模式使用 `/userdata/rktohi/demo/thermal/1.png` 和 `2.png` 原始 demo 图，一屏展示 16 种热成像伪彩模式，同一张输入图按不同色表映射，便于直接比较 RAINBOW、BLACK HOT、WHITE HOT、IRON、SEPIA 等模式差异；源图每 3 秒自动切换。页面按当前源图缓存整页 NV12 结果，避免每帧重算 16 个伪彩格，日志输出帧数、样张索引、cache 状态和 CPU/GPU/RGA 占用率，并保存 `vo_captures/thermal_vo_*.bmp` 供复看。
-`THERMAL_LOWLIGHT_FUSION_CL` 单独模式不占用摄像头，使用 `scripts/run_alldemo.sh` 从 `/userdata/rktohi/build/thermal_lowlight_fusion_cl_real_preview` 同步到 `assets/loop/thermal_lowlight_fusion_cl_real_preview` 的真实预览图；每 3 秒切换 carLight、manlight、nightCar、walkingnight 样张，同屏展示 `input0_ir`、`input1_vi`、`mode0_gray_fusion` 和 `mode1_black_red_overlay` 四宫格，用于快速查看热成像微光融合模块的灰度融合和黑红热目标叠加效果。
+`THERMAL_LOWLIGHT_FUSION_CL` 单独模式不占用摄像头，使用 `scripts/run_alldemo.sh` 从 `/userdata/rktohi/build/thermal_lowlight_fusion_cl_real_preview` 同步到 `assets/loop/thermal_lowlight_fusion_cl_real_preview` 的真实预览图；每 3 秒切换 carLight、manlight、nightCar、walkingnight 样张，同屏展示 `input0_ir`、`input1_vi`、`Pyramid algo=0` 和 `TIF algo=1 radius=8` 四宫格，用于快速查看热成像微光融合模块的两种 GPU 融合算法差异；黑红热目标叠加 mode1 仍保留在模块能力中。
 `CONV_CL` 单独模式使用 3840x2160 实时摄像头输入，页面侧先把 VI 的 NV12 帧下采样到处理尺寸并转换为 RGBA staging 后送入单个 CONV_CL 组，按顺序切换 kernel size 和卷积表输出 2x2 页面送 VO。默认轮播停留 30 秒：前 10 秒保留原来的 SHARPEN、EDGE、EMBOSS、BLUR 四种 3x3 卷积核同屏比较；中间 10 秒显示 RAW、SHARP 3x3、SHARP 11x11、SHARP 21x21；最后 10 秒显示 RAW、BLUR 3x3、BLUR 11x11、BLUR 21x21；屏幕显示中文数据流、阶段说明、四格帧计数、CPU/GPU/RGA 占用率和 OpenCL kernel/queue 耗时，并保存 `vo_captures/conv_cl_vo_*.bmp` 供复看。
 `VMIX` 单独模式使用 3840x2160 实时摄像头输入，走 `VI 3840x2160 -> VPSS(4路480x480同源输入) -> VMIX(input0..3) -> OSD -> VO` bind 链路；VMIX 页面把四路输入做位置叠放和 alpha 透明混合，屏幕上显示中文数据流、各路 alpha、VI/VMIX 帧计数和 CPU/GPU/RGA 指标，并保存 `vo_captures/vmix_vo_*.bmp` 供复看。
 `VPSS` 单独模式使用 3840x2160 实时摄像头输入，走 `VI 3840x2160 -> VPSS(4路输出) -> VMIX -> OSD -> VO` bind 链路，并在同屏展示 VPSS 多输出能力：全幅缩放、动态裁剪后缩放、水平/垂直翻转切换、中心缩放变化；页面保存 `vo_captures/vpss_vo_*.bmp` 供复看。
@@ -115,7 +116,8 @@ cmake --build build -j
 `EIS` 单独模式不占用摄像头，使用 `assets/eis/eis_shaky_640x360.h264` 抖动素材，走 `H264文件 -> VDEC -> VPSS(两路输出) -> RAW/EIS_GPU -> VMIX -> OSD -> VO`；上半屏显示原始 VPSS 分支，下半屏显示 EIS GPU 稳像分支，EIS 内部自计算帧间补偿矩阵，使用 `crop_ratio=0.08`，OSD 显示 OpenCL total/estimate/warp 耗时、fallback 状态和完整链路。该页可配合 `wbc_h264_record` 录制当前屏幕并转成 MP4，用于复看最终 GPU 效果。
 `EIS_VI` 单独模式使用实时摄像头输入，走 `VI 3840x2160 -> EIS -> VPSS 1072x608 -> OSD -> VO`；该页保留 `EIS` 离线素材对比页不变，专门用于验证真实 VI 输入进入电子稳像后的显示链路。屏幕 OSD 叠加标题、真实链路、输入/输出尺寸、EIS total/estimate/warp 耗时和画面标签，日志同步输出 VI/EIS/VPSS/OSD/VO 帧计数。
 `EIS_DETECT_NPU` 单独模式不占用摄像头，使用 `assets/eis/eis_shaky_640x360.h264`，走 `H264文件 -> VDEC -> VPSS(上路原图/下路EIS) -> EIS -> VPSS(显示640x360/模型640x640) -> RGA(NV12转RGB888) -> DETECT_NPU(YOLOv5) -> VMIX -> OSD -> VO`；原视频放在上方，EIS稳像结果放在下方，NPU只作为检测分支输出检测框，避免把640x640模型输入直接显示出来。屏幕叠加 EIS 耗时、VDEC/VPSS/EIS/RGA/NPU/VMIX/OSD/VO 帧计数、检测框、类别和置信度。`--only EIS_NPU` 和 `--only EIS_NPU_DETECT` 是同一页面的别名。
-`TNR_CL` 单独模式不占用摄像头，使用高噪声合成 NV12 序列进入 `TNR_CL` OpenCL 空间降噪 + 轻时域模块，屏幕显示输入噪声帧和降噪输出对比；当前展示参数为 `threshold=0.07`、`static_alpha=0.82`、`motion_alpha=1.0`，模块先做单帧边缘保持空间降噪，稳定区域只混少量历史帧，运动区域完全使用当前帧以减少拖影。日志输出 motion/blend/queue GPU 耗时、has_prev 和参数值，用于确认 1080p60 设计之外的 alldemo 展示闭环。
+`TNR_CL` 单独模式不占用摄像头，使用公开视频低照度素材裁剪成 640x640 并叠加可控轻噪声后编码为 H264，运行时走 `H264文件 -> VDEC -> VPSS双路 -> 原图/TNR_CL -> VO页面`，屏幕显示输入噪声帧和降噪输出对比；当前单页展示参数为 `threshold=0.12`、`static_alpha=0.62`、`motion_alpha=0.96`，稳定区域混入更多历史帧以让演示效果更明显，运动区域仍主要使用当前帧以减少拖影。日志输出 VDEC/VPSS/TNR_CL/VO 帧计数和 motion/blend/queue GPU 耗时，用于确认 H264 解码实时展示闭环。
+`WAVELET_NR_CL` 单独模式不占用摄像头，复用 `TNR_CL` 的 H264 噪声视频素材，运行时走 `H264文件 -> VDEC -> VPSS双路 -> 原图/WAVELET_NR_CL -> VO页面`，做输入/输出上下等尺寸对比，展示 Y 分量 Haar 小波空间降噪效果；当前单页展示参数为 `levels=1`、`threshold_y=6/255`、`strength=0.65`，页面明确标注这是空间降噪，不做时域融合，因此不会引入拖影。日志输出 VDEC/VPSS/WAVELET_NR_CL 处理闭环、processed 帧数、GPU kernel/queue 耗时，用于和 `TNR_CL` 的时域效果区分。
 `HIGHLIGHT_SUPPRESS` 单独模式不占用摄像头，使用合成 NV12 强反光场景进入 `HIGHLIGHT_SUPPRESS`，做输入/输出上下等尺寸对比，展示 soft-knee 高光压制是否让白色刺眼反光变柔和。
 `HIGHLIGHT_SUPPRESS_VI` 单独模式使用 3840x2160 实时摄像头输入，走 `VI 3840x2160 -> HIGHLIGHT_SUPPRESS -> RESIZE_RGA 1080x608 -> VMIX_RGA -> OSD -> VO`；页面每 1 秒在 `BYPASS` 原图和正常高光压制输出之间自动切换，屏幕显示 low/high/knee/ratio/strength 参数、VI/HIGHLIGHT_SUPPRESS/RESIZE 帧计数、GPU/CPU模块耗时和真实 bind 链路。`--only VI_HIGHLIGHT_SUPPRESS` 是同一页面的别名。
 `EDOF_CL` 单独模式使用 `assets/loop/edof/mfi_whu` 的 `a.jpg/b.jpg/fused.png` 样张做三栏对比，每 3 秒切换一组；默认客户页使用参考融合结果稳定展示并避免慢速 OpenCL 线程影响 Ctrl+C 清理，页面按样张索引缓存整页 NV12 结果，日志输出帧数、样张索引、更新次数、模式、cache 状态和 CPU/GPU/RGA 指标，并保存 `vo_captures/edof_cl_vo_*.bmp` 供复看。需要验证实时模块路径时可显式设置 `ALLDEMO_EDOF_CL_LIVE=1`。
