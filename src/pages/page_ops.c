@@ -10,6 +10,7 @@ int page_license_run(volatile sig_atomic_t *running);
 int page_vo_run(volatile sig_atomic_t *running);
 int page_highlight_suppress_run(volatile sig_atomic_t *running);
 int page_thermal_run(volatile sig_atomic_t *running);
+int page_thermal_lowlight_fusion_cl_run(volatile sig_atomic_t *running);
 int page_thermal_sr_npu_run(volatile sig_atomic_t *running);
 int page_tnr_cl_run(volatile sig_atomic_t *running);
 int page_retinex_run(volatile sig_atomic_t *running);
@@ -124,6 +125,7 @@ static const page_ops_t g_page_ops[] = {
     {"STEREO_3D", PAGE_IMPL_STANDALONE, page_stereo_3d_live_run},
     {"SVM3D", PAGE_IMPL_STANDALONE, page_info_svm3d_run},
     {"THERMAL", PAGE_IMPL_STANDALONE, page_thermal_run},
+    {"THERMAL_LOWLIGHT_FUSION_CL", PAGE_IMPL_STANDALONE, page_thermal_lowlight_fusion_cl_run},
     {"THERMAL_SR_NPU", PAGE_IMPL_STANDALONE, page_thermal_sr_npu_run},
     {"TNR_CL", PAGE_IMPL_STANDALONE, page_tnr_cl_run},
     {"TRANSFORM", PAGE_IMPL_STANDALONE, page_transform_run},

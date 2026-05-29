@@ -14,12 +14,14 @@
 #define RGA_DEMO_OP_COUNT 7
 #define RETINEX_OFFLINE_SECONDS 1
 #define RETINEX_OFFLINE_TARGET_SAMPLES 100
+#define THERMAL_LOWLIGHT_FUSION_SECONDS 3
+#define THERMAL_LOWLIGHT_FUSION_TARGET_SAMPLES 4
 
 static const char *g_module_pages[] = {
     "VI", "VPSS", "VO", "WBC", "RGA", "RESIZE_RGA", "CSC_RGA", "CSC_CL", "OSD",
     "CLAHE", "RETINEX", "RETINEX_OFFLINE", "TNR_CL", "HIGHLIGHT_SUPPRESS",
     "HIGHLIGHT_SUPPRESS_VI", "EIS", "EIS_VI", "EIS_DETECT_NPU", "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE",
-    "DCP_FAST_DEHAZE", "THERMAL", "THERMAL_SR_NPU", "DETECT_NPU", "SEGMENT_NPU", "CONV_CL", "TRANSFORM", "BLEND_PYR", "EDOF_CL",
+    "DCP_FAST_DEHAZE", "THERMAL", "THERMAL_LOWLIGHT_FUSION_CL", "THERMAL_SR_NPU", "DETECT_NPU", "SEGMENT_NPU", "CONV_CL", "TRANSFORM", "BLEND_PYR", "EDOF_CL",
     "EXPOSURE_FUSION_CL", "MCF_FUSION_CL", "DUALVIEW", "STEREO_3D", "VMIX",
     "VMIX_RGA", "PANO", "AVM", "AVM2D", "SVM3D", "VENC", "VDEC",
     "RTSP_SEND", "RTSP_RECV", "PIC_IO", "LICENSE",
@@ -28,12 +30,12 @@ static const char *g_module_pages[] = {
 static const char *g_default_pages[] = {
     "VI", "VPSS", "VMIX", "OSD", "RGA", "RESIZE_RGA", "CSC_CL", "CLAHE",
     "RETINEX", "RETINEX_OFFLINE", "TNR_CL", "HIGHLIGHT_SUPPRESS_VI",
-    "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "THERMAL", "THERMAL_SR_NPU", "DETECT_NPU", "SEGMENT_NPU",
+    "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "THERMAL", "THERMAL_LOWLIGHT_FUSION_CL", "THERMAL_SR_NPU", "DETECT_NPU", "SEGMENT_NPU",
     "EDOF_CL", "MCF_FUSION_CL", "PANO", "AVM2D",
 };
 
 static const char *g_engineering_pages[] = {
-    "VI", "VPSS", "VO", "WBC", "OSD", "RESIZE_RGA", "THERMAL", "BLEND_PYR",
+    "VI", "VPSS", "VO", "WBC", "OSD", "RESIZE_RGA", "THERMAL", "THERMAL_LOWLIGHT_FUSION_CL", "BLEND_PYR",
     "EDOF_CL", "MCF_FUSION_CL", "RGA", "CSC_RGA", "CSC_CL", "CLAHE",
     "RETINEX", "RETINEX_OFFLINE", "TNR_CL", "HIGHLIGHT_SUPPRESS",
     "HIGHLIGHT_SUPPRESS_VI", "EIS", "EIS_VI", "CAP_DEHAZE",
@@ -145,6 +147,11 @@ static const page_desc_t g_page_descs[] = {
     {"THERMAL",
      "数据流：同一红外灰度图映射到多种热成像伪彩模式。",
      "展示重点：同一灰度输入映射为多种热成像色表。",
+     0,
+     PAGE_BIND_NONE},
+    {"THERMAL_LOWLIGHT_FUSION_CL",
+     "数据流：热成像IR图 + 微光VI图 -> THERMAL_LOWLIGHT_FUSION_CL预览结果。",
+     "展示重点：使用rktohi真实预览素材对比IR、VI、灰度融合和黑红热目标叠加。",
      0,
      PAGE_BIND_NONE},
     {"THERMAL_SR_NPU",
@@ -307,6 +314,11 @@ int loop_page_rotate_seconds(const demo_loop_t *loop, const char *module) {
         int full_cycle = RETINEX_OFFLINE_SECONDS * RETINEX_OFFLINE_TARGET_SAMPLES;
         if (seconds < full_cycle) seconds = full_cycle;
     }
+    if (module && strcasecmp(module, "THERMAL_LOWLIGHT_FUSION_CL") == 0) {
+        int full_cycle = THERMAL_LOWLIGHT_FUSION_SECONDS *
+            THERMAL_LOWLIGHT_FUSION_TARGET_SAMPLES;
+        if (seconds < full_cycle) seconds = full_cycle;
+    }
     return seconds;
 }
 
@@ -406,6 +418,10 @@ static int is_mcf_tile_name(const char *name) {
 
 const char *canonical_tile_name(const char *name) {
     if (is_mcf_tile_name(name)) return "MCF_FUSION_CL";
+    if (name && (strcasecmp(name, "TLF") == 0 ||
+                 strcasecmp(name, "THERMAL_LOWLIGHT") == 0)) {
+        return "THERMAL_LOWLIGHT_FUSION_CL";
+    }
     if (name && strcasecmp(name, "VI_HIGHLIGHT_SUPPRESS") == 0) return "HIGHLIGHT_SUPPRESS_VI";
     if (name && (strcasecmp(name, "EIS_NPU") == 0 || strcasecmp(name, "EIS_NPU_DETECT") == 0)) return "EIS_DETECT_NPU";
     if (name && (strcasecmp(name, "NPU") == 0 || strcasecmp(name, "YOLO_DETECT_NPU") == 0)) return "DETECT_NPU";

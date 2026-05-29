@@ -42,6 +42,7 @@ add_executable(alldemo
     src/pages/page_retinex_offline.c
     src/pages/page_stereo_3d.c
     src/pages/page_thermal.c
+    src/pages/page_thermal_lowlight_fusion_cl.c
     src/pages/page_thermal_sr_npu.c
     src/pages/page_tnr_cl.c
     src/pages/page_transform.c

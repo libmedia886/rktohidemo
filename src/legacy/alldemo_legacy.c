@@ -704,6 +704,12 @@ static loop_asset_t g_loop_assets[] = {
         "/userdata/rktohi/demo/thermal/1.png",
         "/userdata/rktohi/demo/thermal/2.png",
     }, 2, {{0}}, 0},
+    {"THERMAL_LOWLIGHT_FUSION_CL", "THERMAL LOWLIGHT REAL PREVIEW", {
+        "assets/loop/thermal_lowlight_fusion_cl_real_preview/carLight_input0_ir.jpg",
+        "assets/loop/thermal_lowlight_fusion_cl_real_preview/carLight_input1_vi.jpg",
+        "assets/loop/thermal_lowlight_fusion_cl_real_preview/carLight_mode0_gray_fusion.jpg",
+        "assets/loop/thermal_lowlight_fusion_cl_real_preview/carLight_mode1_black_red_overlay.jpg",
+    }, 4, {{0}}, 0},
     {"TRANSFORM", "TRANSFORM LOOP", {
         "assets/loop/transform/transform_1.png",
     }, 1, {{0}}, 0},

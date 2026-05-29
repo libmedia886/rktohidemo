@@ -39,7 +39,7 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --no-rotate-main
 ```
 
-默认客户演示分页策略：轮播用户容易看懂、画面效果明显、稳定上屏的页面：`VI`、`VPSS`、`VMIX`、`OSD`、`RGA`、`RESIZE_RGA`、`CSC_CL`、`CLAHE`、`RETINEX`、`RETINEX_OFFLINE`、`TNR_CL`、`HIGHLIGHT_SUPPRESS_VI`、`CAP_DEHAZE`、`CAP_DEHAZE_OFFLINE`、`CONV_CL`、`TRANSFORM`、`THERMAL`、`EDOF_CL`、`MCF_FUSION_CL`、`PANO`。偏工程验证或调试意味更强的 `VO`、`WBC`、`CSC_RGA`、`STEREO_3D` 保留在工程演示或 `--only` 模式，避免客户现场误解为黑屏、冻结、格式细节或调试页。
+默认客户演示分页策略：轮播用户容易看懂、画面效果明显、稳定上屏的页面：`VI`、`VPSS`、`VMIX`、`OSD`、`RGA`、`RESIZE_RGA`、`CSC_CL`、`CLAHE`、`RETINEX`、`RETINEX_OFFLINE`、`TNR_CL`、`HIGHLIGHT_SUPPRESS_VI`、`CAP_DEHAZE`、`CAP_DEHAZE_OFFLINE`、`CONV_CL`、`TRANSFORM`、`THERMAL`、`THERMAL_LOWLIGHT_FUSION_CL`、`EDOF_CL`、`MCF_FUSION_CL`、`PANO`。偏工程验证或调试意味更强的 `VO`、`WBC`、`CSC_RGA`、`STEREO_3D` 保留在工程演示或 `--only` 模式，避免客户现场误解为黑屏、冻结、格式细节或调试页。
 
 如果要看完整工程页表：
 
@@ -72,6 +72,7 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --only CAP_DEHAZE_OFFLINE
 /userdata/alldemo/scripts/run_alldemo.sh --only DCP_FAST_DEHAZE
 /userdata/alldemo/scripts/run_alldemo.sh --only THERMAL
+/userdata/alldemo/scripts/run_alldemo.sh --only THERMAL_LOWLIGHT_FUSION_CL
 /userdata/alldemo/scripts/run_alldemo.sh --only CONV_CL
 /userdata/alldemo/scripts/run_alldemo.sh --only VMIX
 /userdata/alldemo/scripts/run_alldemo.sh --only CLAHE
@@ -104,6 +105,7 @@ cmake --build build -j
 `CAP_DEHAZE_OFFLINE` 单独模式不占用摄像头，使用从 `/userdata/rktohi/demo/cap_dehaze/input` 同步来的 3 张低能见度样张轮播，逐张生成原图和 CAP_DEHAZE 输出两张图做上下等尺寸对比；该页紧跟默认客户循环中的实时 `CAP_DEHAZE` 页，使用相同 guided radius、t0、beta 和 `refine_scale=0.25`，用于实时画面效果不明显时让客户看清去雾差异，并保存 `vo_captures/cap_dehaze_offline_vo_*.bmp` 供复看。
 `DCP_FAST_DEHAZE` 单独模式使用实时摄像头输入，走 `VI -> CSC_RGA BGR888 -> DCP_FAST_DEHAZE passthrough/增强 -> RESIZE_RGA 1080x608 -> VMIX -> OSD -> VO`，屏幕显示中文数据流、参数、为什么这样做和实测 FPS/CPU/GPU/RGA 指标。DCP_FAST_DEHAZE 尚未纳入本轮 4K 输入通过列表。
 `THERMAL` 单独模式使用 `/userdata/rktohi/demo/thermal/1.png` 和 `2.png` 原始 demo 图，一屏展示 16 种热成像伪彩模式，同一张输入图按不同色表映射，便于直接比较 RAINBOW、BLACK HOT、WHITE HOT、IRON、SEPIA 等模式差异；源图每 3 秒自动切换。页面按当前源图缓存整页 NV12 结果，避免每帧重算 16 个伪彩格，日志输出帧数、样张索引、cache 状态和 CPU/GPU/RGA 占用率，并保存 `vo_captures/thermal_vo_*.bmp` 供复看。
+`THERMAL_LOWLIGHT_FUSION_CL` 单独模式不占用摄像头，使用 `scripts/run_alldemo.sh` 从 `/userdata/rktohi/build/thermal_lowlight_fusion_cl_real_preview` 同步到 `assets/loop/thermal_lowlight_fusion_cl_real_preview` 的真实预览图；每 3 秒切换 carLight、manlight、nightCar、walkingnight 样张，同屏展示 `input0_ir`、`input1_vi`、`mode0_gray_fusion` 和 `mode1_black_red_overlay` 四宫格，用于快速查看热成像微光融合模块的灰度融合和黑红热目标叠加效果。
 `CONV_CL` 单独模式使用 3840x2160 实时摄像头输入，页面侧先把 VI 的 NV12 帧下采样到处理尺寸并转换为 RGBA staging 后送入单个 CONV_CL 组，按顺序切换 kernel size 和卷积表输出 2x2 页面送 VO。默认轮播停留 30 秒：前 10 秒保留原来的 SHARPEN、EDGE、EMBOSS、BLUR 四种 3x3 卷积核同屏比较；中间 10 秒显示 RAW、SHARP 3x3、SHARP 11x11、SHARP 21x21；最后 10 秒显示 RAW、BLUR 3x3、BLUR 11x11、BLUR 21x21；屏幕显示中文数据流、阶段说明、四格帧计数、CPU/GPU/RGA 占用率和 OpenCL kernel/queue 耗时，并保存 `vo_captures/conv_cl_vo_*.bmp` 供复看。
 `VMIX` 单独模式使用 3840x2160 实时摄像头输入，走 `VI 3840x2160 -> VPSS(4路480x480同源输入) -> VMIX(input0..3) -> OSD -> VO` bind 链路；VMIX 页面把四路输入做位置叠放和 alpha 透明混合，屏幕上显示中文数据流、各路 alpha、VI/VMIX 帧计数和 CPU/GPU/RGA 指标，并保存 `vo_captures/vmix_vo_*.bmp` 供复看。
 `VPSS` 单独模式使用 3840x2160 实时摄像头输入，走 `VI 3840x2160 -> VPSS(4路输出) -> VMIX -> OSD -> VO` bind 链路，并在同屏展示 VPSS 多输出能力：全幅缩放、动态裁剪后缩放、水平/垂直翻转切换、中心缩放变化；页面保存 `vo_captures/vpss_vo_*.bmp` 供复看。

@@ -35,6 +35,8 @@ sync_rktohi_demo_assets() {
     local output_root="$RKTOHI_ROOT/research/avm_2d_parking/outputs/dyfcalid"
     local retinex_root="$RKTOHI_ROOT/research/retinex/normalized/exdark_boat"
     local retinex_dst="assets/loop/retinex/exdark"
+    local thermal_lowlight_root="$RKTOHI_ROOT/build/thermal_lowlight_fusion_cl_real_preview"
+    local thermal_lowlight_dst="assets/loop/thermal_lowlight_fusion_cl_real_preview"
     local frame
 
     for frame in $(seq -f "%03g" 0 24); do
@@ -81,6 +83,15 @@ sync_rktohi_demo_assets() {
         fi
     else
         echo "warning: missing retinex exdark root: $retinex_root" >&2
+    fi
+
+    if [[ -d "$thermal_lowlight_root" ]]; then
+        local preview
+        while IFS= read -r preview; do
+            sync_file "$preview" "$thermal_lowlight_dst/$(basename "$preview")" 0644
+        done < <(find "$thermal_lowlight_root" -maxdepth 1 -type f -name '*.jpg' | sort)
+    else
+        echo "warning: missing thermal lowlight preview root: $thermal_lowlight_root" >&2
     fi
 }
 

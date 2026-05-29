@@ -1300,6 +1300,57 @@ int MEDIA_MCF_FUSION_CL_GetFrame(int grp, MEDIA_BUFFER *buf, int timeout_ms);
 int MEDIA_MCF_FUSION_CL_ReleaseFrame(int grp, MEDIA_BUFFER buf);
 int MEDIA_MCF_FUSION_CL_GetLastPerf(int grp, MEDIA_MCF_FUSION_CL_PERF *perf);
 
+// THERMAL_LOWLIGHT_FUSION_CL (OpenCL GPU thermal + lowlight NV12 fusion)
+typedef enum {
+    MEDIA_THERMAL_LOWLIGHT_FUSION_CL_MODE_GRAY = 0,
+    MEDIA_THERMAL_LOWLIGHT_FUSION_CL_MODE_BLACK_RED = 1,
+} MEDIA_THERMAL_LOWLIGHT_FUSION_CL_MODE;
+
+typedef enum {
+    MEDIA_THERMAL_LOWLIGHT_FUSION_CL_INPUT_THERMAL = 0,
+    MEDIA_THERMAL_LOWLIGHT_FUSION_CL_INPUT_LOWLIGHT = 1,
+} MEDIA_THERMAL_LOWLIGHT_FUSION_CL_INPUT;
+
+typedef struct {
+    int width;
+    int height;
+    int format;
+    int input_depth;
+    int output_pool_id;
+    int input_stride;
+    int output_stride;
+    int mode;
+    float thermal_weight;
+    float hot_threshold;
+    float hot_soft_width;
+    float overlay_alpha;
+} MEDIA_THERMAL_LOWLIGHT_FUSION_CL_ATTR;
+
+typedef struct {
+    double y_kernel_ms;
+    double uv_kernel_ms;
+    double gpu_total_ms;
+} MEDIA_THERMAL_LOWLIGHT_FUSION_CL_PERF;
+
+int MEDIA_THERMAL_LOWLIGHT_FUSION_CL_CreateGrp(
+    int grp,
+    const MEDIA_THERMAL_LOWLIGHT_FUSION_CL_ATTR *attr);
+int MEDIA_THERMAL_LOWLIGHT_FUSION_CL_DestroyGrp(int grp);
+int MEDIA_THERMAL_LOWLIGHT_FUSION_CL_Start(int grp);
+int MEDIA_THERMAL_LOWLIGHT_FUSION_CL_Stop(int grp);
+int MEDIA_THERMAL_LOWLIGHT_FUSION_CL_Enable(int grp);
+int MEDIA_THERMAL_LOWLIGHT_FUSION_CL_Disable(int grp);
+int MEDIA_THERMAL_LOWLIGHT_FUSION_CL_SendFrame(
+    int grp,
+    int input_id,
+    MEDIA_BUFFER buf,
+    int timeout_ms);
+int MEDIA_THERMAL_LOWLIGHT_FUSION_CL_GetFrame(int grp, MEDIA_BUFFER *buf, int timeout_ms);
+int MEDIA_THERMAL_LOWLIGHT_FUSION_CL_ReleaseFrame(int grp, MEDIA_BUFFER buf);
+int MEDIA_THERMAL_LOWLIGHT_FUSION_CL_GetLastPerf(
+    int grp,
+    MEDIA_THERMAL_LOWLIGHT_FUSION_CL_PERF *perf);
+
 // OSD (干净的多 region overlay 模块)
 #define MEDIA_OSD_CONTENT_NONE     0
 #define MEDIA_OSD_CONTENT_RECT     1
