@@ -1,0 +1,7 @@
+fruit_plate_640x640.h264 was generated from:
+https://commons.wikimedia.org/wiki/File:Apples_in_a_bascket.jpg
+https://commons.wikimedia.org/wiki/File:Bananas.JPG
+https://commons.wikimedia.org/wiki/File:Oranges_-_whole-halved-segment.jpg
+
+The local H264 is a 640x640 slideshow-style elementary stream for the FRUIT_DETECT_NPU demo input.
+Each segment shows one fruit category only: apple, banana, then orange.

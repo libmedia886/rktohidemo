@@ -50,6 +50,7 @@
     {"name": "AVM", "source": "assets/loop/avm_inputs/*.jpg", "effect": "2D surround view"},
     {"name": "SVM3D", "source": "assets/svm3d/svm_3d_assets.json", "effect": "3D surround-view sweep"},
     {"name": "DETECT_NPU", "source": "assets/loop/npu/bus_640x640.h264", "effect": "VDEC + RGA + MEDIA_NPU/RKNN YOLOv5 detection boxes, labels, confidence, and frame counters"},
+    {"name": "FRUIT_DETECT_NPU", "source": "assets/loop/fruit_detect/fruit_plate_640x640.h264 generated from public single-fruit apple/banana/orange images", "effect": "VDEC + RGA + existing DETECT_NPU YOLOv5/RKNN, filtered to apple/banana/orange boxes and confidence"},
     {"name": "SEGMENT_NPU", "source": "assets/loop/npu/bus_640x640.h264", "effect": "DETECT_NPU H264 VDEC video source with RKNN PP-LiteSeg Cityscapes INT8 semantic segmentation side branch, CPU mask overlay cache, and run/post/total timing"},
     {"name": "VENC", "source": "composited frame", "effect": "H.264 stream encode"},
     {"name": "VDEC", "source": "RTSP loopback", "effect": "network return preview"},
