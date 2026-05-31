@@ -82,6 +82,7 @@ cmake --build build -j
 /userdata/alldemo/scripts/run_alldemo.sh --only EIS_VI
 /userdata/alldemo/scripts/run_alldemo.sh --only EIS_DETECT_NPU
 /userdata/alldemo/scripts/run_alldemo.sh --only FRUIT_DETECT_NPU
+/userdata/alldemo/scripts/run_alldemo.sh --only HELMET_DETECT_NPU
 /userdata/alldemo/scripts/run_alldemo.sh --only TNR_CL
 /userdata/alldemo/scripts/run_alldemo.sh --only WAVELET_NR_CL
 /userdata/alldemo/scripts/run_alldemo.sh --only HIGHLIGHT_SUPPRESS
@@ -128,6 +129,7 @@ cmake --build build -j
 `PANO` 单独模式使用 `assets/loop/pano/sample2` 的六张图片和 PTO 标定文件，主画面显示六路输入图和 panorama 输出，不占用摄像头；默认客户页走真实 PANO 模块路径，按 PTO 输出完整全景域 8378x4190 NV12，再由页面缩小到显示框，并按 JPEG EXIF orientation 修正输入方向。需要临时回到 reference-strip 兜底预览时可显式设置 `ALLDEMO_PANO_LIVE=0`。页面按输出生成状态缓存整页 NV12 结果，日志输出帧数、输出状态、模式、cache 状态、预览尺寸、完整全景域和 CPU/GPU/RGA 指标，并保存 `vo_captures/pano_vo_*.bmp` 供复看。
 `DETECT_NPU` 单独模式是产品化检测模块展示页，底层复用 `MEDIA_NPU/RKNN` 通用运行时，链路是 `H264文件 -> VDEC -> RGA(NV12转RGB) -> DETECT_NPU(YOLOv5) -> RGA(RGB转NV12) -> OSD -> VO`，不占用摄像头；屏幕叠加检测框、类别、置信度和 VDEC/RGA/NPU/OSD/VO 帧计数。`--only NPU` 和 `--only YOLO_DETECT_NPU` 保留为兼容别名。
 `FRUIT_DETECT_NPU` 单独模式不新增底层模块，复用 `DETECT_NPU`/MEDIA_NPU/RKNN 通用运行时，使用通过 deepNIR 独立测试的 10 类水果 YOLOv8n RKNN 模型和 deepNIR 数据集样本生成的 640x640 H264 轮播素材；链路为 `deepNIR H264水果图片轮播 -> VDEC -> RGA(NV12转RGB) -> DETECT_NPU(YOLOv8) -> RGA(RGB转NV12) -> OSD -> VO`，页面展示 apple、avocado、blueberry、capsicum、cherry、kiwi、mango、orange、rockmelon、strawberry 的检测框、类别和置信度。`--only FRUIT_NPU` 和 `--only FRUIT_DETECT` 是同一页面别名。
+`HELMET_DETECT_NPU` 单独模式不新增底层模块，复用 `DETECT_NPU`/MEDIA_NPU/RKNN 通用运行时，使用 GDUT-HWD 安全帽数据集训练的 YOLOv8n RKNN FP 模型和 640x640 H264 轮播素材；链路为 `GDUT-HWD H264安全帽图片轮播 -> VDEC -> RGA(NV12转RGB) -> DETECT_NPU(YOLOv8) -> RGA(RGB转NV12) -> OSD -> VO`，页面展示 blue_helmet、white_helmet、yellow_helmet、red_helmet 和 no_helmet 的检测框、类别和置信度。`--only HELMET_NPU` 和 `--only HELMET_DETECT` 是同一页面别名。
 `SEGMENT_NPU` 单独模式是产品化语义分割展示页，使用 RKNN Toolkit 2.3.2 转换的 `PP-LiteSeg Cityscapes` RK3588 INT8 模型，输入为 `assets/loop/npu/bus_640x640.h264` 真实 H264 视频流，链路为 `H264 -> VDEC -> RGA(512x512 RGB) -> SEGMENT_NPU旁路抽帧 -> CPU mask overlay -> 页面VO`；页面上半屏显示 VDEC 视频帧，下半屏显示 CPU 生成的像素级 mask overlay，OSD 显示 RKNN run/post/total 耗时、视频帧号和 mask 帧号。该页主视频正常逐帧刷新，分割旁路每 4 帧投递一次 NPU 请求；NPU 忙时沿用上一张 mask，用于展示 NPU 像素级视觉能力，和 `DETECT_NPU` 的检测框能力互补。
 
 ## 快速自检
@@ -153,6 +155,14 @@ cmake --build build -j
 ```
 
 这个脚本只启动 `FRUIT_DETECT_NPU`，确认页面使用 `deepnir_10fruit_640x640.h264`、`deepnir_10fruit_yolov8n_640_fp.rknn`，并检查日志中 NPU/OSD/VO 计数和 deepNIR 类别检测结果。
+
+安全帽检测页只验 GDUT-HWD 例子时，运行：
+
+```bash
+/userdata/alldemo/scripts/check_helmet_detect_demo.sh
+```
+
+这个脚本只启动 `HELMET_DETECT_NPU`，确认页面使用 `gdut_hwd_helmet_640x640.h264`、`gdut_hwd_helmet_yolov8n_640_fp.rknn`，并检查日志中 NPU/OSD/VO 计数和安全帽颜色/no_helmet 检测结果。
 
 正常运行时，屏幕标题区会显示当前页码、实测 FPS、单帧耗时、CPU/GPU/RGA 占用；底部状态栏会重复显示同一组实时指标，方便展示时直接说明“实时性”和“低 CPU 占用”。摄像头未出帧时主画面会明确显示 `CAMERA OFFLINE`。如果当前系统没有暴露可读 GPU/RGA load 节点，对应指标会显示 `N/A`。
 当前 `--only VI` 使用 3840x2160 实时摄像头输入，后续保持原页面显示尺寸，走 `VI 3840x2160 -> RESIZE_RGA 1080x608 -> VMIX(NV12) -> OSD -> VO` bind 显示链路，不再 CPU 拷贝 VI 图像帧；屏幕下方会显示数据流 bind 面板，直接列出谁绑定到谁，例如 `VI0.output -> RESIZE_RGA61.input0`、`RESIZE_RGA61.output0 -> VMIX80.input0`、`VMIX80.output0 -> OSD81.input`、`OSD81.output0 -> VO0.input0`。端口名由程序在 `output0/output` 和 `input0/input` 中自动探测，绑定成功后按实际命中的端口显示；当前 4K 路径用实时帧计数和 VO 抓帧验收。

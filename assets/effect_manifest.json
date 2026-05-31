@@ -52,6 +52,7 @@
     {"name": "SVM3D", "source": "assets/svm3d/svm_3d_assets.json", "effect": "3D surround-view sweep"},
     {"name": "DETECT_NPU", "source": "assets/loop/npu/bus_640x640.h264", "effect": "VDEC + RGA + MEDIA_NPU/RKNN YOLOv5 detection boxes, labels, confidence, and frame counters"},
     {"name": "FRUIT_DETECT_NPU", "source": "assets/loop/fruit_detect/deepnir_10fruit_640x640.h264 generated from deepNIR 10-fruit samples", "effect": "VDEC + RGA + DETECT_NPU YOLOv8/RKNN, 10 fruit classes with boxes, labels, confidence, and frame counters"},
+    {"name": "HELMET_DETECT_NPU", "source": "assets/loop/helmet_detect/gdut_hwd_helmet_640x640.h264 generated from GDUT-HWD samples", "effect": "VDEC + RGA + DETECT_NPU YOLOv8/RKNN, helmet/no-helmet classes with blue/white/yellow/red helmet color labels"},
     {"name": "SEGMENT_NPU", "source": "assets/loop/npu/bus_640x640.h264", "effect": "DETECT_NPU H264 VDEC video source with RKNN PP-LiteSeg Cityscapes INT8 semantic segmentation side branch, CPU mask overlay cache, and run/post/total timing"},
     {"name": "VENC", "source": "composited frame", "effect": "H.264 stream encode"},
     {"name": "VDEC", "source": "RTSP loopback", "effect": "network return preview"},

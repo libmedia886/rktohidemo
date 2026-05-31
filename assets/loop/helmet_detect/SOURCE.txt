@@ -1,0 +1,6 @@
+Dataset: GDUT-HWD from https://github.com/wujixiu/helmet-detection
+Purpose: HELMET_DETECT_NPU demo loop.
+Classes: blue_helmet, white_helmet, yellow_helmet, red_helmet, no_helmet.
+Video: gdut_hwd_helmet_640x640.h264
+Frame source: 50 held-out test images, 10 images selected for each class by large target area.
+Transform: RGB source images were letterboxed to 640x640 and encoded as 30 fps Constrained Baseline H.264 with no B frames.

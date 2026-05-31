@@ -31,6 +31,7 @@ int page_eis_detect_npu_run(volatile sig_atomic_t *running);
 int page_eis_run(volatile sig_atomic_t *running);
 int page_eis_vi_run(volatile sig_atomic_t *running);
 int page_fruit_detect_npu_run(volatile sig_atomic_t *running);
+int page_helmet_detect_npu_run(volatile sig_atomic_t *running);
 int page_mcf_fusion_cl_run(volatile sig_atomic_t *running);
 int page_npu_run(volatile sig_atomic_t *running);
 int page_osd_run(volatile sig_atomic_t *running);
@@ -110,6 +111,7 @@ static const page_ops_t g_page_ops[] = {
     {"EIS_DETECT_NPU", PAGE_IMPL_STANDALONE, page_eis_detect_npu_run},
     {"EIS_VI", PAGE_IMPL_STANDALONE, page_eis_vi_run},
     {"FRUIT_DETECT_NPU", PAGE_IMPL_STANDALONE, page_fruit_detect_npu_run},
+    {"HELMET_DETECT_NPU", PAGE_IMPL_STANDALONE, page_helmet_detect_npu_run},
     {"EXPOSURE_FUSION_CL", PAGE_IMPL_STANDALONE, page_info_exposure_fusion_cl_run},
     {"HIGHLIGHT_SUPPRESS", PAGE_IMPL_STANDALONE, page_highlight_suppress_run},
     {"HIGHLIGHT_SUPPRESS_VI", PAGE_IMPL_STANDALONE, page_highlight_suppress_vi_run},

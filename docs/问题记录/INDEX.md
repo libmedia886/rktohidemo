@@ -5,6 +5,7 @@ Update it whenever adding or editing issue notes.
 
 | Date | Status | Kind | Issue | Summary | Related |
 | --- | --- | --- | --- | --- | --- |
+| 2026-05-31 17:31:21 | fixed | runtime | [Helmet detect H264 with B frames stalls NPU demo feed](20260531-1731-helmet-detect-h264-with-b-frames-stalls-npu-demo-feed.md) | HELMET_DETECT_NPU timed out when the demo H264 was encoded as High profile with B frames. |  |
 | 2026-05-29 13:51:08 | fixed | runtime | [THERMAL_LOWLIGHT_FUSION_CL second mode fails in same process](20260529-1351-thermal-lowlight-fusion-cl-second-mode-fails-in-same-process.md) | Running gray and black-red thermal lowlight fusion modes sequentially in one process hits CL image creation error -34; isolated pair-mode processes work. |  |
 | 2026-05-29 13:51:08 | fixed | runtime | [THERMAL_LOWLIGHT_FUSION_CL page used invalid pool ids](20260529-1351-thermal-lowlight-fusion-cl-page-used-invalid-pool-ids.md) | The live fusion page initially used pool ids 62-64, but rktohi buffer manager only accepts ids 0..15. |  |
 | 2026-05-26 17:49:51 | open | validation | [CAP/DCP bind chain shows green RGB format during visual parity check](20260526-1749-cap-dcp-bind-chain-shows-green-rgb-format-during-visual-parity-c.md) | CAP_DEHAZE and DCP_FAST_DEHAZE bind-chain display matched the old single-pane layout but rendered a green half-frame, so the stable CPU live page was kept an... |  |

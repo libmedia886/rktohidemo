@@ -28,6 +28,7 @@ add_executable(alldemo
     src/pages/page_eis_detect_npu.c
     src/pages/page_eis_vi.c
     src/pages/page_fruit_detect_npu.c
+    src/pages/page_helmet_detect_npu.c
     src/pages/page_highlight_suppress.c
     src/pages/page_highlight_suppress_vi.c
     src/pages/page_info.c

@@ -21,7 +21,7 @@ static const char *g_module_pages[] = {
     "VI", "VPSS", "VO", "WBC", "RGA", "RESIZE_RGA", "CSC_RGA", "CSC_CL", "OSD",
     "CLAHE", "RETINEX", "RETINEX_OFFLINE", "TNR_CL", "WAVELET_NR_CL", "HIGHLIGHT_SUPPRESS",
     "HIGHLIGHT_SUPPRESS_VI", "EIS", "EIS_VI", "EIS_DETECT_NPU", "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE",
-    "DCP_FAST_DEHAZE", "THERMAL", "THERMAL_LOWLIGHT_FUSION_CL", "THERMAL_SR_NPU", "DETECT_NPU", "FRUIT_DETECT_NPU", "SEGMENT_NPU", "CONV_CL", "TRANSFORM", "BLEND_PYR", "EDOF_CL",
+    "DCP_FAST_DEHAZE", "THERMAL", "THERMAL_LOWLIGHT_FUSION_CL", "THERMAL_SR_NPU", "DETECT_NPU", "FRUIT_DETECT_NPU", "HELMET_DETECT_NPU", "SEGMENT_NPU", "CONV_CL", "TRANSFORM", "BLEND_PYR", "EDOF_CL",
     "EXPOSURE_FUSION_CL", "MCF_FUSION_CL", "DUALVIEW", "STEREO_3D", "VMIX",
     "VMIX_RGA", "PANO", "AVM", "AVM2D", "SVM3D", "VENC", "VDEC",
     "RTSP_SEND", "RTSP_RECV", "PIC_IO", "LICENSE",
@@ -30,7 +30,7 @@ static const char *g_module_pages[] = {
 static const char *g_default_pages[] = {
     "VI", "VPSS", "VMIX", "OSD", "RGA", "RESIZE_RGA", "CSC_CL", "CLAHE",
     "RETINEX", "RETINEX_OFFLINE", "TNR_CL", "WAVELET_NR_CL", "HIGHLIGHT_SUPPRESS_VI",
-    "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "THERMAL", "THERMAL_LOWLIGHT_FUSION_CL", "THERMAL_SR_NPU", "DETECT_NPU", "FRUIT_DETECT_NPU", "SEGMENT_NPU",
+    "CAP_DEHAZE", "CAP_DEHAZE_OFFLINE", "CONV_CL", "TRANSFORM", "THERMAL", "THERMAL_LOWLIGHT_FUSION_CL", "THERMAL_SR_NPU", "DETECT_NPU", "FRUIT_DETECT_NPU", "HELMET_DETECT_NPU", "SEGMENT_NPU",
     "EDOF_CL", "MCF_FUSION_CL", "PANO", "AVM2D",
 };
 
@@ -244,6 +244,11 @@ static const page_desc_t g_page_descs[] = {
      "展示重点：使用通过deepNIR独立测试的10类水果YOLOv8 RKNN模型，展示类别、置信度、检测框和NPU帧计数。",
      0,
      PAGE_BIND_NONE},
+    {"HELMET_DETECT_NPU",
+     "数据流：GDUT-HWD安全帽素材转H264 -> VDEC -> RGA -> DETECT_NPU(YOLOv8/RKNN) -> OSD -> VO。",
+     "展示重点：检测是否佩戴安全帽，并区分blue、white、yellow、red四种安全帽和no_helmet类别。",
+     0,
+     PAGE_BIND_NONE},
     {"EIS_DETECT_NPU",
      "数据流：eis_shaky_640x360.h264 -> VDEC -> VPSS原图上屏 / VPSS->EIS->VPSS显示+模型分支->RGA->DETECT_NPU -> VMIX -> OSD -> VO。",
      "展示重点：上方原视频、下方EIS稳像结果，并把YOLOv5/RKNN检测框映射到下方画面。",
@@ -435,6 +440,7 @@ const char *canonical_tile_name(const char *name) {
     if (name && strcasecmp(name, "VI_HIGHLIGHT_SUPPRESS") == 0) return "HIGHLIGHT_SUPPRESS_VI";
     if (name && (strcasecmp(name, "EIS_NPU") == 0 || strcasecmp(name, "EIS_NPU_DETECT") == 0)) return "EIS_DETECT_NPU";
     if (name && (strcasecmp(name, "FRUIT_NPU") == 0 || strcasecmp(name, "FRUIT_DETECT") == 0)) return "FRUIT_DETECT_NPU";
+    if (name && (strcasecmp(name, "HELMET_NPU") == 0 || strcasecmp(name, "HELMET_DETECT") == 0)) return "HELMET_DETECT_NPU";
     if (name && (strcasecmp(name, "NPU") == 0 || strcasecmp(name, "YOLO_DETECT_NPU") == 0)) return "DETECT_NPU";
     return name;
 }
