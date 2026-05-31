@@ -1047,7 +1047,7 @@ static void draw_tnr_live_page(uint8_t *dst, int stride, int width, int height,
     page_surface_draw_text(dst, stride, width, height, 60, 58,
                            "TNR CL H264", 9, 235, 108, 176);
     page_surface_draw_text(dst, stride, width, height, 60, 142,
-                           "ZONE NOISE RESOLUTION CHART", 3, 210, 144, 84);
+                           "ROTATING ZONE NOISE CHART", 3, 210, 144, 84);
 
     page_surface_fill_rect_nv12(dst, stride, width, height, TNR_PANE_X - 14, TNR_TOP_Y - 48,
                                 TNR_W + 28, TNR_H + 82, 16, 128, 128);
@@ -1061,7 +1061,7 @@ static void draw_tnr_live_page(uint8_t *dst, int stride, int width, int height,
     if (ctx && ctx->output_ready) draw_nv12_scaled(dst, stride, width, height, TNR_PANE_X, TNR_BOTTOM_Y, TNR_W, TNR_H, ctx->output);
 
     page_surface_draw_text(dst, stride, width, height, 70, 1595,
-                           "FLOW H264 CHART->VDEC->VPSS RAW/TNR->VO PAGE",
+                           "FLOW ROTATING H264 CHART->VDEC->VPSS RAW/TNR->VO",
                            2, 190, 144, 84);
     page_surface_draw_text(dst, stride, width, height, 70, 1660,
                            "NOISE SIGMA 4/12/24/40  TH 12 STATIC 50 MOTION 96",

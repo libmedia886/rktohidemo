@@ -3,6 +3,12 @@
   "height": 640,
   "frames": 120,
   "fps": 30,
+  "motion": {
+    "type": "sinusoidal_rotation",
+    "amplitude_degrees": 5.0,
+    "scale": 0.92,
+    "period_frames": 120
+  },
   "zones": [
     {
       "name": "LOW",

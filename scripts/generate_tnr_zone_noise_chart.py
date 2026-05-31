@@ -14,6 +14,8 @@ W = 640
 H = 640
 FPS = 30
 FRAMES = 120
+ROTATION_DEGREES = 5.0
+ROTATION_SCALE = 0.92
 PAGE_W = 1080
 PAGE_H = 1920
 PANE_X = (PAGE_W - W) // 2
@@ -117,6 +119,18 @@ def clean_frame() -> np.ndarray:
     return img
 
 
+def rotation_angle(frame_idx: int) -> float:
+    return ROTATION_DEGREES * math.sin(2.0 * math.pi * frame_idx / FRAMES)
+
+
+def move_content(clean: np.ndarray, frame_idx: int) -> np.ndarray:
+    angle = rotation_angle(frame_idx)
+    mat = cv2.getRotationMatrix2D((W / 2.0, H / 2.0), angle, ROTATION_SCALE)
+    return cv2.warpAffine(clean, mat, (W, H), flags=cv2.INTER_LINEAR,
+                          borderMode=cv2.BORDER_CONSTANT,
+                          borderValue=(42, 42, 42))
+
+
 def apply_zone_noise(clean: np.ndarray, frame_idx: int) -> np.ndarray:
     noisy = clean.astype(np.float32)
     rng = np.random.default_rng(0x3456 + frame_idx * 977)
@@ -159,14 +173,21 @@ def generate(root: Path, keep_nv12: bool = False) -> None:
     noisy_png = out_dir / "tnr_zone_chart_noisy_reference.png"
     zones_json = out_dir / "tnr_zone_chart_zones.json"
     clean = clean_frame()
-    noisy0 = apply_zone_noise(clean, 0)
-    cv2.imwrite(str(clean_png), clean)
+    clean0 = move_content(clean, 0)
+    noisy0 = apply_zone_noise(clean0, 0)
+    cv2.imwrite(str(clean_png), clean0)
     cv2.imwrite(str(noisy_png), noisy0)
     zones_json.write_text(json.dumps({
         "width": W,
         "height": H,
         "frames": FRAMES,
         "fps": FPS,
+        "motion": {
+            "type": "sinusoidal_rotation",
+            "amplitude_degrees": ROTATION_DEGREES,
+            "scale": ROTATION_SCALE,
+            "period_frames": FRAMES
+        },
         "zones": [
             {"name": n, "sigma": s, "x0": x0, "y0": y0, "x1": x1, "y1": y1}
             for n, s, x0, y0, x1, y1 in ZONES
@@ -181,7 +202,7 @@ def generate(root: Path, keep_nv12: bool = False) -> None:
         with tempfile.NamedTemporaryFile(prefix="tnr_zone_", suffix=".nv12", delete=False) as fp:
             temp_path = Path(fp.name)
             for frame_idx in range(FRAMES):
-                fp.write(bgr_to_nv12(apply_zone_noise(clean, frame_idx)))
+                fp.write(bgr_to_nv12(apply_zone_noise(move_content(clean, frame_idx), frame_idx)))
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
             "-f", "rawvideo", "-pix_fmt", "nv12", "-s:v", f"{W}x{H}",
