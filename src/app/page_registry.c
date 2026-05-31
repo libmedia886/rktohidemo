@@ -240,7 +240,7 @@ static const page_desc_t g_page_descs[] = {
      0,
      PAGE_BIND_NONE},
     {"FRUIT_DETECT_NPU",
-     "数据流：deepNIR测试集水果素材转H264 -> VDEC -> RGA -> DETECT_NPU(YOLOv8/RKNN) -> OSD -> VO。",
+     "数据流：deepNIR数据集水果素材转H264 -> VDEC -> RGA -> DETECT_NPU(YOLOv8/RKNN) -> OSD -> VO。",
      "展示重点：使用通过deepNIR独立测试的10类水果YOLOv8 RKNN模型，展示类别、置信度、检测框和NPU帧计数。",
      0,
      PAGE_BIND_NONE},

@@ -1,7 +1,8 @@
 deepnir_10fruit_640x640.h264 is the current FRUIT_DETECT_NPU demo and test input.
-It was generated from sampled test images in the deepNIR object-detection dataset
-downloaded from the Zenodo mirror, so the example video matches the accepted
-deepNIR 10-class model instead of a generic fruit-plate image set:
+It was generated from 50 sampled images in the deepNIR object-detection dataset
+downloaded from the Zenodo mirror: 5 samples for each of the 10 supported fruit
+classes. The example video matches the accepted deepNIR 10-class model instead
+of a generic fruit-plate image set:
 https://zenodo.org/records/6324489
 
 The current YOLOv8 RKNN demo model detects:
