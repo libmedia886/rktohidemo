@@ -1,0 +1,43 @@
+{
+  "width": 640,
+  "height": 640,
+  "frames": 120,
+  "fps": 30,
+  "zones": [
+    {
+      "name": "LOW",
+      "sigma": 4.0,
+      "x0": 0,
+      "y0": 0,
+      "x1": 320,
+      "y1": 320
+    },
+    {
+      "name": "MID",
+      "sigma": 12.0,
+      "x0": 320,
+      "y0": 0,
+      "x1": 640,
+      "y1": 320
+    },
+    {
+      "name": "HIGH",
+      "sigma": 24.0,
+      "x0": 0,
+      "y0": 320,
+      "x1": 320,
+      "y1": 640
+    },
+    {
+      "name": "EXTREME",
+      "sigma": 40.0,
+      "x0": 320,
+      "y0": 320,
+      "x1": 640,
+      "y1": 640
+    }
+  ],
+  "h264": "assets/loop/tnr_cl/online_lowlight_noisy_640x640_120.h264",
+  "clean_reference": "assets/loop/tnr_cl/tnr_zone_chart_clean_reference.png",
+  "noisy_reference": "assets/loop/tnr_cl/tnr_zone_chart_noisy_reference.png"
+}

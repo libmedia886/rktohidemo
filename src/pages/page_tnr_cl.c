@@ -49,7 +49,7 @@
 #define LICENSE_PATH "/root/licence.dat"
 
 #define TNR_THRESHOLD 0.12f
-#define TNR_STATIC_ALPHA 0.62f
+#define TNR_STATIC_ALPHA 0.50f
 #define TNR_MOTION_ALPHA 0.96f
 
 typedef struct {
@@ -1047,24 +1047,24 @@ static void draw_tnr_live_page(uint8_t *dst, int stride, int width, int height,
     page_surface_draw_text(dst, stride, width, height, 60, 58,
                            "TNR CL H264", 9, 235, 108, 176);
     page_surface_draw_text(dst, stride, width, height, 60, 142,
-                           "H264 VDEC REALTIME INPUT", 3, 210, 144, 84);
+                           "ZONE NOISE RESOLUTION CHART", 3, 210, 144, 84);
 
     page_surface_fill_rect_nv12(dst, stride, width, height, TNR_PANE_X - 14, TNR_TOP_Y - 48,
                                 TNR_W + 28, TNR_H + 82, 16, 128, 128);
     page_surface_fill_rect_nv12(dst, stride, width, height, TNR_PANE_X - 14, TNR_BOTTOM_Y - 48,
                                 TNR_W + 28, TNR_H + 82, 16, 128, 128);
     page_surface_draw_text(dst, stride, width, height, TNR_PANE_X, TNR_TOP_Y - 34,
-                           "NOISY INPUT", 3, 220, 108, 176);
+                           "NOISY INPUT ZONES", 3, 220, 108, 176);
     page_surface_draw_text(dst, stride, width, height, TNR_PANE_X, TNR_BOTTOM_Y - 34,
-                           "TEMPORAL OUTPUT", 3, 220, 108, 176);
+                           "TNR OUTPUT DETAIL CHECK", 3, 220, 108, 176);
     if (ctx && ctx->input_ready) draw_nv12_scaled(dst, stride, width, height, TNR_PANE_X, TNR_TOP_Y, TNR_W, TNR_H, ctx->input);
     if (ctx && ctx->output_ready) draw_nv12_scaled(dst, stride, width, height, TNR_PANE_X, TNR_BOTTOM_Y, TNR_W, TNR_H, ctx->output);
 
     page_surface_draw_text(dst, stride, width, height, 70, 1595,
-                           "FLOW H264->VDEC->VPSS RAW/TNR->VO PAGE",
+                           "FLOW H264 CHART->VDEC->VPSS RAW/TNR->VO PAGE",
                            2, 190, 144, 84);
     page_surface_draw_text(dst, stride, width, height, 70, 1660,
-                           "THRESHOLD 12 STATIC 62 MOTION 96 BLOCK 16",
+                           "NOISE SIGMA 4/12/24/40  TH 12 STATIC 50 MOTION 96",
                            2, 190, 144, 84);
     page_surface_draw_text(dst, stride, width, height, 70, 1725,
                            processed, 3, 210, 108, 176);
