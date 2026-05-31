@@ -1,7 +1,12 @@
-fruit_plate_640x640.h264 was generated from:
-https://commons.wikimedia.org/wiki/File:Apples_in_a_bascket.jpg
-https://commons.wikimedia.org/wiki/File:Bananas.JPG
-https://commons.wikimedia.org/wiki/File:Oranges_-_whole-halved-segment.jpg
+deepnir_10fruit_640x640.h264 is the current FRUIT_DETECT_NPU demo and test input.
+It was generated from sampled test images in the deepNIR object-detection dataset
+downloaded from the Zenodo mirror, so the example video matches the accepted
+deepNIR 10-class model instead of a generic fruit-plate image set:
+https://zenodo.org/records/6324489
 
-The local H264 is a 640x640 slideshow-style elementary stream for the FRUIT_DETECT_NPU demo input.
-Each segment shows one fruit category only: apple, banana, then orange.
+The current YOLOv8 RKNN demo model detects:
+apple, avocado, blueberry, capsicum, cherry, kiwi, mango, orange, rockmelon, strawberry.
+
+fruit_plate_640x640.h264 is a legacy sample generated from older public
+apple/banana/orange images. It is kept only as historical reference and is not
+used by FRUIT_DETECT_NPU.

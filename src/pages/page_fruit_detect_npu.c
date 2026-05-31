@@ -31,10 +31,10 @@
 #define NPU_VDEC_FRAME_SIZE (NPU_STRIDE * NPU_H * 2)
 #define NPU_RGB_FRAME_SIZE (NPU_W * NPU_H * 3)
 #define NPU_NV12_FRAME_SIZE (NPU_STRIDE * NPU_H * 3 / 2)
-#define NPU_H264_PATH "assets/loop/fruit_detect/fruit_plate_640x640.h264"
-#define NPU_MODEL_PATH "assets/npu/yolov5s-640-640.rknn"
-#define NPU_LABEL_PATH "assets/npu/coco_80_labels_list.txt"
-#define NPU_MAX_DRAW_OBJECTS 12
+#define NPU_H264_PATH "assets/loop/fruit_detect/deepnir_10fruit_640x640.h264"
+#define NPU_MODEL_PATH "assets/npu/deepnir_10fruit_yolov8n_640_fp.rknn"
+#define NPU_LABEL_PATH "assets/npu/deepnir_10fruit_labels.txt"
+#define NPU_MAX_DRAW_OBJECTS 4
 #define NPU_TEXT_MASK_W 620
 #define NPU_TEXT_MASK_H 32
 #define LICENSE_PATH "/root/licence.dat"
@@ -224,10 +224,6 @@ static void copy_npu_result(const MEDIA_NPU_RESULT *src, npu_result_snapshot_t *
     for (int i = 0; i < count; ++i) {
         const MEDIA_NPU_OBJECT *obj = &src->u.detect.objects[i];
         const char *label = obj->label ? obj->label : "object";
-        if (strcmp(label, "banana") != 0 && strcmp(label, "apple") != 0 &&
-            strcmp(label, "orange") != 0) {
-            continue;
-        }
         if (dst->object_count >= NPU_MAX_DRAW_OBJECTS) break;
         npu_object_t *out = &dst->objects[dst->object_count++];
         out->x = obj->x;
@@ -265,6 +261,12 @@ static int update_npu_box_regions(const npu_result_snapshot_t *det) {
         MEDIA_OSD_REGION_ATTR attr = {0};
         if (!det || i >= det->object_count) {
             attr.enabled = 0;
+            attr.x = 0;
+            attr.y = 0;
+            attr.width = 2;
+            attr.height = 2;
+            attr.zorder = 20 + i;
+            attr.global_alpha = 0;
             if (MEDIA_OSD_UpdateRegion(NPU_OSD_GRP, region_id, &attr) != 0) return -1;
             continue;
         }
@@ -330,11 +332,11 @@ static int update_npu_overlay(uint64_t vdec_count, uint64_t pre_count,
     }
 
     if (page_overlay_set_text(NPU_OSD_GRP, 0, 12, 12, 2,
-                              "FRUIT_DETECT_NPU YOLOV5 RKNN",
+                              "FRUIT_DETECT_NPU DEEPNIR YOLOV8 RKNN",
                               masks[0], sizeof(masks[0]), NPU_TEXT_MASK_W, NPU_TEXT_MASK_H,
                               160, 255, 220, 255) != 0) return -1;
     if (page_overlay_set_text(NPU_OSD_GRP, 1, 12, 560, 1,
-                              "FLOW H264 FRUIT->VDEC->RGA->DETECT_NPU->RGA->OSD->VO",
+                              "FLOW DEEPNIR_H264->VDEC->RGA->YOLOV8_NPU->RGA->OSD->VO",
                               masks[1], sizeof(masks[1]), NPU_TEXT_MASK_W, NPU_TEXT_MASK_H,
                               190, 230, 255, 255) != 0) return -1;
     if (page_overlay_set_text(NPU_OSD_GRP, 2, 12, 576, 1,
@@ -415,7 +417,7 @@ static int setup_npu_chain(npu_chain_t *chain) {
 
     npu.model_path = NPU_MODEL_PATH;
     npu.label_path = path_readable(NPU_LABEL_PATH) ? NPU_LABEL_PATH : NULL;
-    npu.adapter_name = "yolov5";
+    npu.adapter_name = "yolov8";
     npu.backend = MEDIA_NPU_BACKEND_RKNN;
     npu.task = MEDIA_NPU_TASK_DETECT;
     npu.input_width = NPU_W;
@@ -424,7 +426,7 @@ static int setup_npu_chain(npu_chain_t *chain) {
     npu.input_layout = MEDIA_NPU_LAYOUT_NHWC;
     npu.input_depth = 4;
     npu.passthrough = 1;
-    npu.score_thresh = 0.18f;
+    npu.score_thresh = 0.60f;
     npu.nms_thresh = 0.45f;
     if (MEDIA_NPU_CreateGrp(NPU_GRP, &npu) != 0 ||
         MEDIA_NPU_Start(NPU_GRP) != 0) {
@@ -677,7 +679,7 @@ int page_fruit_detect_npu_run(volatile sig_atomic_t *running) {
            NPU_OSD_GRP, chain.osd_src_port ? chain.osd_src_port : "output0",
            chain.vo_in_port ? chain.vo_in_port : "input0",
            info.model_name ? info.model_name : NPU_MODEL_PATH,
-           info.adapter_name ? info.adapter_name : "yolov5");
+           info.adapter_name ? info.adapter_name : "yolov8");
 
     int frame = 0;
     while (!running || *running) {
