@@ -1128,6 +1128,7 @@ int MEDIA_TNR_CL_SetPassthrough(int grp, int enable);
 int MEDIA_TNR_CL_SetThreshold(int grp, float threshold);
 int MEDIA_TNR_CL_SetStaticAlpha(int grp, float alpha);
 int MEDIA_TNR_CL_SetMotionAlpha(int grp, float alpha);
+int MEDIA_TNR_CL_SetSpatialStrength(int grp, float strength);
 int MEDIA_TNR_CL_GetLastPerf(int grp, MEDIA_TNR_CL_PERF *perf);
 
 // HIGHLIGHT_SUPPRESS (NV12 高光软压制模块)
